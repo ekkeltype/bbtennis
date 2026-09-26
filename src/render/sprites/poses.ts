@@ -7,11 +7,13 @@ export type Layer = 'under' | 'mid' | 'over';
 /**
  * One frame of a player in screen space (cell pixels): the pelvis (`root`) and head offsets from
  * the standing skeleton, torso twist, the eight free joints, racket angle (k·45° counter-clockwise
- * from pointing right, gripped by the right hand), draw layers, shoe grids and leg draw order.
+ * from pointing right, gripped by the right hand), draw layers, shoe grids, leg draw order and the
+ * sideways shift of hanging hair (`hairSway`, one of `HAIR_SWAYS`).
  */
 export interface Pose {
   root: Pt;
   head: Pt;
+  hairSway: number;
   twist: Twist;
   elbowL: Pt;
   handL: Pt;
@@ -35,11 +37,13 @@ type Toe = 'fwd' | 'left' | 'right' | 'up';
 
 /**
  * A frame in body space: back-view cell coordinates (the player's right is screen-right), depths
- * relative to the torso and toe directions relative to the body. `lead` is the leg nearer the net.
+ * relative to the torso and toe directions relative to the body. `lead` is the leg nearer the net;
+ * `hairSway` shifts hanging hair toward the player's right (+) or left (−).
  */
 interface BodyPose {
   root: Pt;
   head: Pt;
+  hairSway: number;
   twist: Twist;
   elbowL: Pt;
   handL: Pt;
@@ -63,6 +67,7 @@ type Limb = readonly [number, number, number, number];
 interface Draft {
   root?: XY;
   head?: XY;
+  sway?: number;
   twist?: Twist;
   armL: Limb;
   armR: Limb;
@@ -80,6 +85,7 @@ function body(d: Draft): BodyPose {
   return {
     root: pt(...(d.root ?? [0, 0])),
     head: pt(...(d.head ?? [0, 0])),
+    hairSway: d.sway ?? 0,
     twist: d.twist ?? 'N',
     elbowL: pt(d.armL[0], d.armL[1]),
     handL: pt(d.armL[2], d.armL[3]),
@@ -97,7 +103,10 @@ function body(d: Draft): BodyPose {
   };
 }
 
-/** Body-space frames; `runRight` is derived from `runLeft` (mirrored, racket kept in the right hand). */
+/**
+ * Body-space frames; `runRight` is derived from `runLeft` (mirrored, racket kept in the right hand).
+ * Runs sway hanging hair a pixel: it trails the lateral run and swings with the stride otherwise.
+ */
 const BODY: Record<Exclude<AnimName, 'runRight'>, BodyPose[]> = {
   idle: [
     body({ armL: [16, 24, 17, 29], armR: [31, 24, 30, 29], legL: [21, 36, 20, 46], legR: [26, 36, 27, 46], racket: 1 }),
@@ -108,12 +117,12 @@ const BODY: Record<Exclude<AnimName, 'runRight'>, BodyPose[]> = {
   ],
   runLeft: [
     body({
-      twist: 'L', lead: 'R', toes: ['left', 'left'],
+      twist: 'L', lead: 'R', toes: ['left', 'left'], sway: 1,
       armL: [16, 21, 13, 23], armR: [30, 23, 31, 27],
       legL: [18, 35, 16, 46], legR: [28, 35, 31, 44], racket: 1,
     }),
     body({
-      twist: 'L', lead: 'R', toes: ['left', 'left'], root: [0, 1],
+      twist: 'L', lead: 'R', toes: ['left', 'left'], root: [0, 1], sway: 1,
       armL: [16, 23, 14, 26], armR: [30, 24, 31, 28],
       legL: [19, 37, 19, 46], legR: [26, 36, 29, 42], racket: 1,
     }),
@@ -123,12 +132,12 @@ const BODY: Record<Exclude<AnimName, 'runRight'>, BodyPose[]> = {
       legL: [21, 36, 22, 46], legR: [23, 34, 25, 41], racket: 1,
     }),
     body({
-      twist: 'L', lead: 'R', toes: ['left', 'left'],
+      twist: 'L', lead: 'R', toes: ['left', 'left'], sway: 1,
       armL: [18, 23, 20, 27], armR: [30, 22, 30, 26], depth: { armL: 'aft' },
       legL: [28, 35, 31, 44], legR: [18, 35, 16, 46], racket: 1,
     }),
     body({
-      twist: 'L', lead: 'R', toes: ['left', 'left'], root: [0, 1],
+      twist: 'L', lead: 'R', toes: ['left', 'left'], root: [0, 1], sway: 1,
       armL: [18, 24, 19, 28], armR: [30, 23, 31, 27], depth: { armL: 'aft' },
       legL: [26, 36, 29, 42], legR: [19, 37, 19, 46], racket: 1,
     }),
@@ -140,8 +149,9 @@ const BODY: Record<Exclude<AnimName, 'runRight'>, BodyPose[]> = {
   ],
   runToward: [
     body({
+      sway: -1,
       armL: [17, 23, 19, 21], armR: [31, 21, 30, 25], depth: { armL: 'fore', armR: 'aft' },
-      legL: [21, 36, 21, 46], legR: [26, 37, 27, 41], toes: ['fwd', 'up'], racket: 1,
+      legL: [21, 36, 21, 46], legR: [26, 35, 27, 43], toes: ['fwd', 'up'], racket: 1,
     }),
     body({
       root: [0, -1],
@@ -149,8 +159,9 @@ const BODY: Record<Exclude<AnimName, 'runRight'>, BodyPose[]> = {
       legL: [21, 35, 21, 45], legR: [26, 36, 26, 44], racket: 1,
     }),
     body({
+      sway: 1,
       armL: [16, 21, 17, 25], armR: [30, 23, 28, 21], depth: { armL: 'aft', armR: 'fore', racket: 'fore' },
-      legL: [21, 37, 20, 41], legR: [26, 36, 26, 46], toes: ['up', 'fwd'], racket: 2,
+      legL: [21, 35, 20, 43], legR: [26, 36, 26, 46], toes: ['up', 'fwd'], racket: 2,
     }),
     body({
       root: [0, -1],
@@ -159,12 +170,18 @@ const BODY: Record<Exclude<AnimName, 'runRight'>, BodyPose[]> = {
     }),
   ],
   runAway: [
-    body({ armL: [15, 23, 13, 26], armR: [32, 23, 33, 26], legL: [20, 36, 19, 43], legR: [26, 36, 27, 46], racket: 1 }),
+    body({
+      sway: 1,
+      armL: [15, 23, 13, 26], armR: [32, 23, 33, 26], legL: [20, 36, 19, 43], legR: [26, 36, 27, 46], racket: 1,
+    }),
     body({
       root: [0, 1], armL: [15, 24, 14, 28], armR: [32, 24, 33, 28],
       legL: [20, 37, 20, 46], legR: [27, 37, 27, 46], racket: 1,
     }),
-    body({ armL: [15, 23, 13, 26], armR: [32, 23, 33, 26], legL: [21, 36, 20, 46], legR: [27, 36, 28, 43], racket: 1 }),
+    body({
+      sway: -1,
+      armL: [15, 23, 13, 26], armR: [32, 23, 33, 26], legL: [21, 36, 20, 46], legR: [27, 36, 28, 43], racket: 1,
+    }),
     body({
       root: [0, 1], armL: [15, 24, 14, 28], armR: [32, 24, 33, 28],
       legL: [20, 37, 20, 46], legR: [27, 37, 27, 46], racket: 1,
@@ -286,6 +303,7 @@ function mirrorSwap(p: BodyPose): BodyPose {
   return {
     root: pt(-p.root.x, p.root.y),
     head: pt(-p.head.x, p.head.y),
+    hairSway: -p.hairSway,
     twist: TWIST_MIRROR[p.twist],
     elbowL: mirrorPt(p.elbowR),
     handL: mirrorPt(p.handR),
@@ -319,6 +337,7 @@ function toView(p: BodyPose, view: View): Pose {
   return {
     root: pt(far ? -p.root.x : p.root.x, p.root.y),
     head: pt(far ? -p.head.x : p.head.x, p.head.y),
+    hairSway: far ? -p.hairSway : p.hairSway,
     twist: p.twist,
     elbowL: at(p.elbowL),
     handL: at(p.handL),

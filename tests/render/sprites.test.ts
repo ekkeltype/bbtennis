@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { Look } from '../../src/core/types';
+import { contrastRatio } from '../../src/render/color';
 import { RAMPS } from '../../src/render/palette';
 import { ANIMS, ANIM_NAMES, CELL, VIEWS, frameIndex, type AnimName, type View } from '../../src/render/sprites/animations';
 import {
   HAIR_STYLES,
+  HAIR_SWAYS,
   RAMP_SIZE,
+  SHOES,
   SLOT,
+  headRows,
   lintGrid,
   lintParts,
   lintRamps,
@@ -31,9 +35,26 @@ const FRAMES: Record<AnimName, number> = {
   dejected: 2,
 };
 const LOCOMOTION: AnimName[] = ['idle', 'runLeft', 'runRight', 'runToward', 'runAway'];
-const SKIN = new Set<number>([SLOT.skinHi, SLOT.skinMid, SLOT.skinLo]);
 const RACKET = new Set<number>([SLOT.racketHi, SLOT.racketLo, SLOT.strings]);
 const BAND = new Set<number>([SLOT.bandMid, SLOT.bandLo]);
+const HAIR = new Set<number>([SLOT.hairHi, SLOT.hairMid, SLOT.hairLo]);
+const SHIRT = new Set<number>([SLOT.shirtHi, SLOT.shirtMid, SLOT.shirtLo]);
+/** Socks and shoes share the fixed neutral shoe slots. */
+const SOCK = new Set<number>([SLOT.shoeHi, SLOT.shoeLo]);
+const RUNS: AnimName[] = ['runLeft', 'runRight', 'runToward', 'runAway'];
+/** The bare head is an 8 × 8 px grid: head-grid rows 0–7 are the head, the rows below it the neck. */
+const HEAD_SIZE = 8;
+/** WCAG 2.x minimum contrast for graphical objects (SC 1.4.11): the eyes must read on every skin. */
+const EYE_CONTRAST = 3;
+
+function styleOf(name: string): number {
+  const i = HAIR_STYLES.indexOf(name);
+  if (i < 0) throw new Error(`no hair style ${name}`);
+  return i;
+}
+const CROP = styleOf('crop');
+const PONYTAIL = styleOf('ponytail');
+const AFRO = styleOf('afro');
 
 const at = (buf: Uint8Array, x: number, y: number): number =>
   x < 0 || y < 0 || x >= CELL.w || y >= CELL.h ? SLOT.clear : (buf[y * CELL.w + x] ?? SLOT.clear);
@@ -47,6 +68,18 @@ function pixels(buf: Uint8Array, keep: (slot: number) => boolean): { x: number; 
 }
 
 const opaque = (slot: number): boolean => slot !== SLOT.clear && slot !== SLOT.hole;
+
+function bounds(ps: readonly { x: number; y: number }[]): { left: number; right: number; top: number } {
+  const xs = ps.map((p) => p.x);
+  return { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ps.map((p) => p.y)) };
+}
+
+const neighbours = (buf: Uint8Array, { x, y }: { x: number; y: number }): number[] => [
+  at(buf, x - 1, y),
+  at(buf, x + 1, y),
+  at(buf, x, y - 1),
+  at(buf, x, y + 1),
+];
 
 function everyFrame(fn: (anim: AnimName, view: View, i: number) => void): void {
   for (const anim of ANIM_NAMES) for (const view of VIEWS) for (let i = 0; i < FRAMES[anim]; i++) fn(anim, view, i);
@@ -191,24 +224,22 @@ describe('pose tables', () => {
 
 describe('composeFrame', () => {
   it('outlines every silhouette edge pixel and keeps a clear 1 px border, for every frame and head', () => {
+    // Problems are gathered and asserted once: 800 frames of per-pixel expects would crawl.
+    const problems: string[] = [];
+    const list = (ps: readonly { x: number; y: number }[]) => ps.map(({ x, y }) => `(${x}, ${y})`).join(' ');
     for (let style = 0; style < HAIR_STYLES.length; style++) {
       for (const band of [false, true]) {
         everyFrame((anim, view, i) => {
           const buf = composeFrame(anim, view, i, style, band);
           const where = `${anim} ${view} ${i} style ${style} band ${band}`;
-          for (let x = 0; x < CELL.w; x++) {
-            expect(opaque(at(buf, x, 0)) || opaque(at(buf, x, CELL.h - 1)), `${where} top/bottom border x=${x}`).toBe(false);
-          }
-          for (let y = 0; y < CELL.h; y++) {
-            expect(opaque(at(buf, 0, y)) || opaque(at(buf, CELL.w - 1, y)), `${where} side border y=${y}`).toBe(false);
-          }
-          const bare = pixels(buf, (s) => opaque(s) && s !== SLOT.outline).filter(({ x, y }) =>
-            [at(buf, x - 1, y), at(buf, x + 1, y), at(buf, x, y - 1), at(buf, x, y + 1)].includes(SLOT.clear),
-          );
-          expect(bare, `${where} unoutlined edge pixels`).toEqual([]);
+          const border = pixels(buf, opaque).filter(({ x, y }) => x === 0 || y === 0 || x === CELL.w - 1 || y === CELL.h - 1);
+          if (border.length) problems.push(`${where}: opaque border pixels ${list(border)}`);
+          const bare = pixels(buf, (s) => opaque(s) && s !== SLOT.outline).filter((p) => neighbours(buf, p).includes(SLOT.clear));
+          if (bare.length) problems.push(`${where}: unoutlined edge pixels ${list(bare)}`);
         });
       }
     }
+    expect(problems).toEqual([]);
   });
 
   it('draws a standing player 40–45 px tall, hair included, whose shoes rest on the anchor row', () => {
@@ -236,15 +267,19 @@ describe('composeFrame', () => {
     }
   });
 
-  it('shows two 1 px eyes in the far (front) view and none from behind', () => {
-    const eyes = (view: View) => {
-      const buf = composeFrame('idle', view, 0, 0, false);
-      return pixels(buf, (s) => s === SLOT.outline).filter(
-        ({ x, y }) => SKIN.has(at(buf, x - 1, y)) && SKIN.has(at(buf, x + 1, y)),
-      );
-    };
-    expect(eyes('far')).toHaveLength(2);
-    expect(eyes('near')).toHaveLength(0);
+  it('draws each far-view eye as a 1 px pupil beside a sclera pixel, and no eyes from behind', () => {
+    for (let style = 0; style < HAIR_STYLES.length; style++) {
+      for (const band of [false, true]) {
+        const where = `${HAIR_STYLES[style]} band ${band}`;
+        const far = composeFrame('idle', 'far', 0, style, band);
+        const pupils = pixels(far, (s) => s === SLOT.pupil);
+        expect(pupils, where).toHaveLength(2);
+        for (const p of pupils) expect(neighbours(far, p).filter((s) => s === SLOT.sclera), where).toHaveLength(1);
+        expect(pixels(far, (s) => s === SLOT.sclera), where).toHaveLength(2);
+        const near = composeFrame('idle', 'near', 0, style, band);
+        expect(pixels(near, (s) => s === SLOT.pupil || s === SLOT.sclera), where).toEqual([]);
+      }
+    }
   });
 
   it('draws the headband only when the look has one, for every hair style and view', () => {
@@ -260,6 +295,60 @@ describe('composeFrame', () => {
     for (const view of VIEWS) {
       const heads = HAIR_STYLES.map((_, style) => composeFrame('idle', view, 0, style, false).join(','));
       expect(new Set(heads).size, view).toBe(HAIR_STYLES.length);
+    }
+  });
+
+  it('joins every shoe seen end-on to its leg with a sock, kicked-up soles included', () => {
+    everyFrame((anim, view, i) => {
+      const pose = posesFor(anim, view)[i];
+      if (!pose) throw new Error(`no pose ${anim} ${view} ${i}`);
+      const buf = composeFrame(anim, view, i, CROP, false);
+      for (const [kind, foot] of [[pose.shoeL, pose.footL], [pose.shoeR, pose.footR]] as const) {
+        // A side-on shoe takes the shin at its instep, beside the ankle point, so it has no sock above.
+        if (kind === 'sideL' || kind === 'sideR') continue;
+        const shoe = SHOES[kind];
+        const ankle = { x: Math.round(foot.x - shoe.ax) + shoe.ankle.x, y: Math.round(foot.y - shoe.ay) + shoe.ankle.y };
+        const sock = [-1, 0, 1].some((dx) => SOCK.has(at(buf, ankle.x + dx, ankle.y - 1)));
+        expect(sock, `${anim} ${view} ${i}: ${kind} shoe at (${foot.x}, ${foot.y})`).toBe(true);
+      }
+    });
+  });
+
+  it('shows a lower leg above a kicked-up sole: the knee is at least 3 px above the shoe', () => {
+    let soles = 0;
+    everyFrame((anim, view, i) => {
+      const pose = posesFor(anim, view)[i];
+      if (!pose) throw new Error(`no pose ${anim} ${view} ${i}`);
+      for (const [kind, knee, foot] of [[pose.shoeL, pose.kneeL, pose.footL], [pose.shoeR, pose.kneeR, pose.footR]] as const) {
+        if (kind !== 'sole') continue;
+        soles++;
+        const ankleY = Math.round(foot.y - SHOES.sole.ay) + SHOES.sole.ankle.y;
+        expect(ankleY - knee.y, `${anim} ${view} ${i}`).toBeGreaterThanOrEqual(3);
+      }
+    });
+    expect(soles).toBeGreaterThan(0);
+  });
+
+  it('gives the afro volume past the head outline on both sides and on top, in both views', () => {
+    for (const view of VIEWS) {
+      const crop = bounds(pixels(composeFrame('idle', view, 0, CROP, false), (s) => HAIR.has(s)));
+      const afro = bounds(pixels(composeFrame('idle', view, 0, AFRO, false), (s) => HAIR.has(s)));
+      expect(crop.left - afro.left, view).toBeGreaterThanOrEqual(2);
+      expect(afro.right - crop.right, view).toBeGreaterThanOrEqual(2);
+      expect(crop.top - afro.top, view).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('keeps the headband tight to an afro: the hair bulges past it and no tail flares out', () => {
+    for (const view of VIEWS) {
+      const plain = composeFrame('idle', view, 0, AFRO, false);
+      const banded = composeFrame('idle', view, 0, AFRO, true);
+      expect(pixels(banded, opaque).filter(({ x, y }) => !opaque(at(plain, x, y))), `${view} flare`).toEqual([]);
+      const band = bounds(pixels(banded, (s) => BAND.has(s)));
+      const hair = bounds(pixels(banded, (s) => HAIR.has(s)));
+      expect(hair.left, view).toBeLessThan(band.left);
+      expect(hair.right, view).toBeGreaterThan(band.right);
+      expect(hair.top, view).toBeLessThan(band.top);
     }
   });
 
@@ -292,6 +381,58 @@ describe('composeFrame', () => {
   });
 });
 
+describe('ponytail', () => {
+  /** Ponytail hair lying over shirt pixels that a crop head leaves showing in the same frame. */
+  function tailOnShirt(anim: AnimName, i: number): { x: number; y: number }[] {
+    const pony = composeFrame(anim, 'near', i, PONYTAIL, false);
+    const crop = composeFrame(anim, 'near', i, CROP, false);
+    return pixels(pony, (s) => HAIR.has(s)).filter(({ x, y }) => SHIRT.has(at(crop, x, y)));
+  }
+
+  /** The tail's left edge on the back, measured from the left edge of the head's hair. */
+  function tailOffset(anim: AnimName, i: number): number {
+    const head = bounds(pixels(composeFrame(anim, 'near', i, CROP, false), (s) => HAIR.has(s)));
+    return bounds(tailOnShirt(anim, i)).left - head.left;
+  }
+
+  it('hangs from behind past the head, 2–3 px wide and 5–7 px long, at every sway', () => {
+    expect([...HAIR_SWAYS].sort((a, b) => a - b)).toEqual([-1, 0, 1]);
+    for (const sway of HAIR_SWAYS) {
+      for (const band of [false, true]) {
+        const where = `sway ${sway} band ${band}`;
+        const { rows, oy } = headRows('near', PONYTAIL, band, sway);
+        const widths = rows.slice(HEAD_SIZE - oy).map((r) => [...r].filter((ch) => 'Hhn'.includes(ch)).length);
+        const length = widths.findIndex((w) => w === 0);
+        expect(length, where).toBeGreaterThanOrEqual(5);
+        expect(length, where).toBeLessThanOrEqual(7);
+        for (const w of widths.slice(0, length)) {
+          expect(w, where).toBeGreaterThanOrEqual(2);
+          expect(w, where).toBeLessThanOrEqual(3);
+        }
+        expect(widths.slice(length).every((w) => w === 0), where).toBe(true);
+      }
+    }
+  });
+
+  it('lies on the upper back of the shirt', () => {
+    const tail = tailOnShirt('idle', 0);
+    expect(tail.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(tail.map((p) => p.y)).size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('sways a pixel at a time in run frames and holds still when standing', () => {
+    expect(tailOffset('idle', 1)).toBe(tailOffset('idle', 0));
+    for (const anim of RUNS) {
+      const offsets = Array.from({ length: FRAMES[anim] }, (_, i) => tailOffset(anim, i));
+      expect(new Set(offsets).size, `${anim} ${offsets.join(',')}`).toBeGreaterThan(1);
+      offsets.forEach((x, i) => {
+        const next = offsets[(i + 1) % offsets.length] ?? x;
+        expect(Math.abs(next - x), `${anim} ${offsets.join(',')}`).toBeLessThanOrEqual(1);
+      });
+    }
+  });
+});
+
 describe('linePoints', () => {
   it('rounds half-pixel endpoints to whole pixels before stepping', () => {
     expect(linePoints({ x: 0.5, y: 0 }, { x: 3.5, y: 2 })).toEqual(linePoints({ x: 1, y: 0 }, { x: 4, y: 2 }));
@@ -300,6 +441,15 @@ describe('linePoints', () => {
   it('ends when only one endpoint is half-way, as from a centre-line socket to a joint', () => {
     expect(linePoints({ x: 23.5, y: 20 }, { x: 20, y: 26 })).toEqual(linePoints({ x: 24, y: 20 }, { x: 20, y: 26 }));
     expect(linePoints({ x: 20, y: 26 }, { x: 23.5, y: 20.5 })).toEqual(linePoints({ x: 20, y: 26 }, { x: 24, y: 21 }));
+  });
+
+  it('throws on a non-finite endpoint instead of stepping forever', () => {
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      expect(() => linePoints({ x: bad, y: 0 }, { x: 3, y: 2 }), `a.x ${bad}`).toThrow(/non-finite/);
+      expect(() => linePoints({ x: 0, y: bad }, { x: 3, y: 2 }), `a.y ${bad}`).toThrow(/non-finite/);
+      expect(() => linePoints({ x: 0, y: 0 }, { x: bad, y: 2 }), `b.x ${bad}`).toThrow(/non-finite/);
+      expect(() => linePoints({ x: 0, y: 0 }, { x: 3, y: bad }), `b.y ${bad}`).toThrow(/non-finite/);
+    }
   });
 });
 
@@ -327,11 +477,13 @@ describe('sheet layout', () => {
     const frames = sheetFrames(1, true);
     expect(frames).toHaveLength(80);
     expect(new Set(frames.map((f) => `${f.anim} ${f.view} ${f.i}`)).size).toBe(80);
-    for (const f of frames) {
-      const where = `${f.anim} ${f.view} ${f.i}`;
-      expect({ sx: f.sx, sy: f.sy }, where).toEqual(cellOrigin(f.anim, f.view, f.i));
-      expect(f.buf, where).toEqual(composeFrame(f.anim, f.view, f.i, 1, true));
-    }
+    for (const f of frames) expect({ sx: f.sx, sy: f.sy }, `${f.anim} ${f.view} ${f.i}`).toEqual(cellOrigin(f.anim, f.view, f.i));
+    // Compared element-wise and asserted once: 80 deep equals of 2304-slot buffers crawl.
+    const misplaced = frames.filter((f) => {
+      const own = composeFrame(f.anim, f.view, f.i, 1, true);
+      return own.length !== f.buf.length || own.some((slot, p) => slot !== f.buf[p]);
+    });
+    expect(misplaced.map((f) => `${f.anim} ${f.view} ${f.i}`)).toEqual([]);
   });
 });
 
@@ -395,6 +547,18 @@ describe('slotColors', () => {
       if (slot === SLOT.clear || slot === SLOT.hole) continue;
       expect(c[slot], name).toMatch(/^#[0-9A-Fa-f]{6}$/);
     }
+  });
+
+  it('gives every eye a pixel that contrasts at least 3:1 with every shade of every skin', () => {
+    RAMPS.skin.forEach((ramp, skin) => {
+      const c = slotColors({ ...look, skin });
+      const eye = [c[SLOT.pupil], c[SLOT.sclera]];
+      expect(eye.every((e) => typeof e === 'string'), `skin ${skin} eye colours`).toBe(true);
+      for (const shade of ramp) {
+        const best = Math.max(...eye.map((e) => (e ? contrastRatio(e, shade) : 1)));
+        expect(best, `skin ${skin} shade ${shade}`).toBeGreaterThanOrEqual(EYE_CONTRAST);
+      }
+    });
   });
 
   it('throws on a shade beyond its ramp instead of leaving the slot transparent', () => {

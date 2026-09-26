@@ -3,6 +3,7 @@ import type { View } from './animations';
 /**
  * Semantic colour slots of the character art (spec §4.1), resolved per look at sheet build time.
  * `hole` is a see-through stringbed gap: transparent when painted, but inside the silhouette.
+ * `pupil` and `sclera` make up a far-view eye, so it reads on every skin ramp.
  */
 export const SLOT = {
   clear: 0,
@@ -27,6 +28,8 @@ export const SLOT = {
   racketLo: 19,
   strings: 20,
   hole: 21,
+  pupil: 22,
+  sclera: 23,
 } as const;
 
 /** One colour slot (a `SLOT` value). */
@@ -34,7 +37,8 @@ export type SlotId = (typeof SLOT)[keyof typeof SLOT];
 
 /**
  * Grid legend: one character per slot. Upper case is a ramp's highlight, lower case its mid tone,
- * and the neighbouring letter its shadow (s/z skin, h/n hair, t/y shirt, p/q shorts).
+ * and the neighbouring letter its shadow (s/z skin, h/n hair, t/y shirt, p/q shorts); an eye is a
+ * light sclera `E` beside a dark pupil `e`.
  */
 export const LEGEND: Readonly<Record<string, SlotId>> = {
   '.': SLOT.clear,
@@ -59,6 +63,8 @@ export const LEGEND: Readonly<Record<string, SlotId>> = {
   r: SLOT.racketLo,
   x: SLOT.strings,
   ':': SLOT.hole,
+  e: SLOT.pupil,
+  E: SLOT.sclera,
 };
 
 /** Where a ramp group takes its colours: a `Look` ramp or the fixed neutral ramp (shoes, strings). */
@@ -82,7 +88,10 @@ export interface RampGroup {
   shades: number[];
 }
 
-/** Every colour slot's ramp and shade; slot lists run light → dark (checked by `lintRamps`). */
+/**
+ * Every ramp-coloured slot's ramp and shade; slot lists run light → dark (checked by `lintRamps`).
+ * The outline and the pupil take the fixed outline ink instead.
+ */
 export const RAMP_GROUPS: readonly RampGroup[] = [
   { source: 'skin', slots: [SLOT.skinHi, SLOT.skinMid, SLOT.skinLo], shades: [0, 1, 2] },
   { source: 'hair', slots: [SLOT.hairHi, SLOT.hairMid, SLOT.hairLo], shades: [0, 1, 2] },
@@ -92,6 +101,7 @@ export const RAMP_GROUPS: readonly RampGroup[] = [
   { source: 'racket', slots: [SLOT.racketHi, SLOT.racketLo], shades: [0, 2] },
   { source: 'neutral', slots: [SLOT.shoeHi, SLOT.shoeLo], shades: [0, 2] },
   { source: 'neutral', slots: [SLOT.strings], shades: [1] },
+  { source: 'neutral', slots: [SLOT.sclera], shades: [0] },
 ];
 
 /** Pixel point in cell or grid coordinates (x may be half-way for points on a centre line). */
@@ -141,7 +151,8 @@ const mirrorRows = (rows: readonly string[]): string[] => rows.map((r) => [...r]
 
 /**
  * Head grids: an 8 × 8 px head, a 2 px neck and a last outline row that overlaps the torso's top
- * edge (the far view shows the face). Anchored at the bottom centre.
+ * edge. The far view shows the face: each eye is a 1 px pupil with a sclera pixel on its outer side.
+ * Anchored at the bottom centre.
  */
 export const HEADS: Record<View, Part> = {
   near: {
@@ -167,7 +178,7 @@ export const HEADS: Record<View, Part> = {
       '.#SSss#.',
       '#SSsssz#',
       '#Sssssz#',
-      '#s#ss#z#',
+      '#EesseE#',
       '#Sssssz#',
       '#sssszz#',
       '.#sszz#.',
@@ -183,8 +194,21 @@ export const HEADS: Record<View, Part> = {
 /** Hair style names, indexed by `Look.hairStyle`. */
 export const HAIR_STYLES: string[] = ['crop', 'topknot', 'ponytail', 'bob', 'afro'];
 
-/** Hair overlays per style (same order as `HAIR_STYLES`) and view. */
-const HAIR: readonly Record<View, Overlay>[] = [
+/**
+ * One hair style: an overlay on the head per view, plus hair that hangs free below it (a
+ * ponytail), shifted sideways by the frame's hair sway, and its own headband tails where the
+ * default knot tails would not fit (null hides them).
+ */
+interface HairStyle extends Record<View, Overlay> {
+  hang?: Partial<Record<View, Overlay>>;
+  tails?: Record<View, Overlay | null>;
+}
+
+/** Sideways shifts (px) a frame may give hanging hair; `lintParts` checks every one of them. */
+export const HAIR_SWAYS: readonly number[] = [-1, 0, 1];
+
+/** Hair per style (same order as `HAIR_STYLES`) and view. */
+const HAIR: readonly HairStyle[] = [
   // crop
   {
     near: {
@@ -242,7 +266,7 @@ const HAIR: readonly Record<View, Overlay>[] = [
       dy: -3,
     },
   },
-  // ponytail
+  // ponytail: gathered into a tie at the back, the tail hanging over the neck onto the upper back
   {
     near: {
       rows: [
@@ -250,17 +274,28 @@ const HAIR: readonly Record<View, Overlay>[] = [
         '.#HHhh#.',
         '#HHhhhn#',
         '#Hhhhhn#',
-        '#hhHhnn#',
-        '#hhhnnn#',
-        '#nnhnnn#',
-        '.##hn##.',
-        '..#hn#..',
-        '..#hn#..',
-        '..#nn#..',
-        '...##...',
+        '#hhhhnn#',
+        '#hn##nn#',
+        '#nnHhnn#',
+        '.##Hh##.',
+        '..#Hh#..',
+        '..#Hhn#.',
       ],
       dx: 0,
       dy: 0,
+    },
+    hang: {
+      near: {
+        rows: [
+          '#Hhn#',
+          '#Hhn#',
+          '.#hn#',
+          '.#hn#',
+          '..##.',
+        ],
+        dx: 2,
+        dy: 10,
+      },
     },
     far: {
       rows: [
@@ -312,37 +347,54 @@ const HAIR: readonly Record<View, Overlay>[] = [
       dy: 0,
     },
   },
-  // afro
+  // afro: a round mass 2 px past the head on each side and 3 px above it
   {
     near: {
       rows: [
-        '..######..',
-        '.#HHHhhh#.',
-        '#HHHhhhhn#',
-        '#HHhhhhhn#',
-        '#HhHhhhnn#',
-        '#hhhhhhnn#',
-        '#hhhhhnnn#',
-        '#hhhhnnnn#',
-        '.#nnnnnn#.',
-        '..######..',
+        '...######...',
+        '.##HHHhhh##.',
+        '#HHHHhhhhhn#',
+        '#HHHhHhhhhn#',
+        '#HHhhhhhhnn#',
+        '#Hhhhhhhhnn#',
+        '#hhhhhhhhnn#',
+        '#hhhHhhhhnn#',
+        '#hhhhhhhnnn#',
+        '.#hhhhhnnn#.',
+        '..##nnnn##..',
       ],
-      dx: -1,
-      dy: -1,
+      dx: -2,
+      dy: -3,
     },
     far: {
       rows: [
-        '..######..',
-        '.#HHHhhh#.',
-        '#HHHhhhhn#',
-        '#HHhhhhhn#',
-        '#Hh....hn#',
-        '#h......n#',
-        '#h......n#',
-        '.#......#.',
+        '...######...',
+        '.##HHHhhh##.',
+        '#HHHHhhhhhn#',
+        '#HHHhHhhhhn#',
+        '#HHhhhhhhhn#',
+        '#Hhhhhhhhhn#',
+        '#Hhh....hhn#',
+        '#hh......nn#',
+        '#hh......nn#',
+        '.#h......n#.',
+        '..#......#..',
       ],
-      dx: -1,
-      dy: -1,
+      dx: -2,
+      dy: -3,
+    },
+    // The knot tails hang straight down the back of the hair; from the front the hair hides them.
+    tails: {
+      near: {
+        rows: [
+          '#Bb#',
+          '#Bb#',
+          '.##.',
+        ],
+        dx: 4,
+        dy: 4,
+      },
+      far: null,
     },
   },
 ];
@@ -350,7 +402,7 @@ const HAIR: readonly Record<View, Overlay>[] = [
 /** Head-grid rows the headband covers (upper row band mid, lower row band shadow). */
 const BAND_ROWS: readonly [number, number] = [2, 3];
 
-/** The headband's knot tails, trailing on the player's right (in head-grid pixels, like hair). */
+/** The default headband knot tails, trailing on the player's right (in head-grid pixels, like hair). */
 const BAND_TAILS: Record<View, Overlay> = {
   near: {
     rows: [
@@ -487,8 +539,8 @@ export const SHOES: Record<ShoeKind, ShoePart> = {
   sole: {
     rows: [
       '.###.',
+      '#WWW#',
       '#www#',
-      '#wWw#',
       '#www#',
       '.###.',
     ],
@@ -644,34 +696,54 @@ function stackRows(base: readonly string[], top: readonly string[], dx: number, 
   return out.map((r) => r.join(''));
 }
 
-/** Recolours `BAND_ROWS` of a composed head whose head-grid row 0 is composite row `row0`. */
-function paintBand(head: readonly string[], row0: number): string[] {
-  return head.map((row, y) => {
-    const k = BAND_ROWS.indexOf(y - row0);
+/** A composed grid and the head-grid position of its top-left pixel. */
+interface Composite {
+  rows: string[];
+  ox: number;
+  oy: number;
+}
+
+/** Stamps an overlay (placed in head-grid pixels) onto a composite, growing it as needed. */
+function stack(c: Composite, o: Overlay): Composite {
+  const dx = o.dx - c.ox;
+  const dy = o.dy - c.oy;
+  return { rows: stackRows(c.rows, o.rows, dx, dy), ox: c.ox + Math.min(0, dx), oy: c.oy + Math.min(0, dy) };
+}
+
+/**
+ * Recolours the composite's `BAND_ROWS` where the bare head has skin, so the band hugs the head
+ * across the forehead (or the back of the head) and hair wider than the head bulges past it.
+ */
+function paintBand(c: Composite, head: readonly string[]): string[] {
+  return c.rows.map((row, y) => {
+    const k = BAND_ROWS.indexOf(y + c.oy);
     if (k < 0) return row;
-    return row.replace(/[^.#:]/g, k === 0 ? 'B' : 'b');
+    const bare = head[y + c.oy] ?? '';
+    return [...row]
+      .map((ch, x) => {
+        const under = bare[x + c.ox];
+        const onSkin = under !== undefined && under !== '.' && under !== '#';
+        return onSkin && ch !== '.' && ch !== '#' && ch !== ':' ? (k === 0 ? 'B' : 'b') : ch;
+      })
+      .join('');
   });
 }
 
 /**
- * The composed head grid (head + hair + optional headband with its trailing tails) and the
- * composite's origin in head-grid pixels.
+ * The composed head grid (head + hair, its hanging hair shifted `sway` px sideways, and an
+ * optional headband with its tails) and the composite's origin in head-grid pixels.
  */
-export function headRows(view: View, style: number, headband: boolean): { rows: string[]; ox: number; oy: number } {
-  const hair = HAIR[style]?.[view];
+export function headRows(view: View, style: number, headband: boolean, sway = 0): Composite {
+  const hair = HAIR[style];
   if (!hair) throw new Error(`no hair style ${style}`);
-  const rows = stackRows(HEADS[view].rows, hair.rows, hair.dx, hair.dy);
-  const ox = Math.min(0, hair.dx);
-  const oy = Math.min(0, hair.dy);
-  if (!headband) return { rows, ox, oy };
-  const tails = BAND_TAILS[view];
-  const dx = tails.dx - ox;
-  const dy = tails.dy - oy;
-  return {
-    rows: stackRows(paintBand(rows, -oy), tails.rows, dx, dy),
-    ox: ox + Math.min(0, dx),
-    oy: oy + Math.min(0, dy),
-  };
+  if (!HAIR_SWAYS.includes(sway)) throw new RangeError(`hair sway ${sway} is not one of ${HAIR_SWAYS.join(', ')}`);
+  let head = stack({ rows: [...HEADS[view].rows], ox: 0, oy: 0 }, hair[view]);
+  const hang = hair.hang?.[view];
+  if (hang) head = stack(head, { ...hang, dx: hang.dx + sway });
+  if (!headband) return head;
+  head = { ...head, rows: paintBand(head, HEADS[view].rows) };
+  const tails = hair.tails ? hair.tails[view] : BAND_TAILS[view];
+  return tails ? stack(head, tails) : head;
 }
 
 /** Runs every art lint over the authored parts, head composites and ramp groups ([] = clean). */
@@ -680,8 +752,12 @@ export function lintParts(): string[] {
   for (const view of ['near', 'far'] as const) {
     problems.push(...lintGrid(`head ${view}`, HEADS[view].rows));
     HAIR_STYLES.forEach((style, i) => {
+      const sways = HAIR[i]?.hang?.[view] ? HAIR_SWAYS : [0];
       for (const band of [false, true]) {
-        problems.push(...lintGrid(`head ${view} ${style}${band ? ' band' : ''}`, headRows(view, i, band).rows));
+        for (const sway of sways) {
+          const name = `head ${view} ${style}${band ? ' band' : ''}${sway ? ` sway ${sway}` : ''}`;
+          problems.push(...lintGrid(name, headRows(view, i, band, sway).rows));
+        }
       }
     });
     for (const twist of ['N', 'L', 'R'] as const) problems.push(...lintGrid(`torso ${view} ${twist}`, TORSOS[view][twist].rows));

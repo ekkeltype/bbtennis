@@ -48,9 +48,13 @@ const origin = (p: Part, at: Pt): Pt => ({ x: Math.round(at.x - p.ax), y: Math.r
 
 /**
  * Integer points of the segment a → b (Bresenham), both ends included. Endpoints are rounded to
- * whole pixels first: stepping from a half-way point would never land exactly on the end.
+ * whole pixels first: stepping from a half-way point would never land exactly on the end. Throws
+ * on a non-finite endpoint, which it could never reach either.
  */
 export function linePoints(a: Pt, b: Pt): Pt[] {
+  if (![a.x, a.y, b.x, b.y].every(Number.isFinite)) {
+    throw new Error(`linePoints: non-finite endpoint (${a.x}, ${a.y}) → (${b.x}, ${b.y})`);
+  }
   const end = { x: Math.round(b.x), y: Math.round(b.y) };
   const pts: Pt[] = [];
   let x = Math.round(a.x);
@@ -231,7 +235,7 @@ export function composeFrame(anim: AnimName, view: View, i: number, hairStyle: n
   const head = HEADS[view];
   const neck = socket(torso.neck);
   const h = origin(head, { x: neck.x + pose.head.x, y: neck.y + pose.head.y });
-  const composed = headRows(view, hairStyle, headband);
+  const composed = headRows(view, hairStyle, headband, pose.hairSway);
   c.stamp(composed.rows, h.x + composed.ox, h.y + composed.oy, OWNER.head);
   drawLayer('over');
   outlinePass(c);

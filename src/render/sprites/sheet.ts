@@ -47,11 +47,13 @@ function rampOf(look: Look, source: RampSource): readonly string[] | null {
 
 /**
  * Colour of every slot for a look (index = slot id); null for clear and see-through pixels.
- * Throws a `RangeError` for a shade beyond its ramp rather than leaving that slot transparent.
+ * The outline and the eyes' pupils are the outline ink. Throws a `RangeError` for a shade beyond
+ * its ramp rather than leaving that slot transparent.
  */
 export function slotColors(look: Look, groups: readonly RampGroup[] = RAMP_GROUPS): (string | null)[] {
   const colors: (string | null)[] = Array(Math.max(...Object.values(SLOT)) + 1).fill(null);
   colors[SLOT.outline] = OUTLINE;
+  colors[SLOT.pupil] = OUTLINE;
   for (const g of groups) {
     const ramp = rampOf(look, g.source);
     if (!ramp) continue;
