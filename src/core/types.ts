@@ -17,8 +17,8 @@ export type PaceId = 'relaxed' | 'normal' | 'fast' | 'lightning';
 export type FormatId = 'tiebreak' | 'short' | 'full' | 'bo3';
 /** Deuce handling: advantage points, or one deciding golden point (spec §3.6). */
 export type DeuceRule = 'advantage' | 'golden';
-/** Word pack: Tennis & Dojo, Everyday English or Mixed (spec §3.10). */
-export type WordPackId = 'tennis' | 'everyday' | 'mixed';
+/** Word pack: Everyday (default), Sports, Dojo or Mixed, the union of the three (spec §3.10). */
+export type WordPackId = 'everyday' | 'sports' | 'dojo' | 'mixed';
 
 /** Point or vector on the ground plane, in metres (spec §3.0 axes). */
 export interface Vec2 { x: number; y: number }

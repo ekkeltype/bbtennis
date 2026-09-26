@@ -4,63 +4,7 @@ import type { Tier, WordPackId } from '../types';
 const words = (block: string): readonly string[] => block.trim().split(/\s+/);
 
 /** Curated word packs (spec §3.10); tier = word length: easy 3–5, medium 6–9, hard 10–14. */
-export const PACKS: Record<'tennis' | 'everyday', Record<Tier, readonly string[]>> = {
-  tennis: {
-    easy: words(`
-      ace ball net lob set love game spin serve let fault deuce court line clay grass slice smash drop
-      shot rally match point score grip swing chip drive flat kick hit toss win tie break hold out fast
-      pace arc alley deep wide body cross angle touch flick block split step lunge reach chase dash run
-      jump leap dive slide spot aim cup medal prize title champ crowd fans cheer clap judge call chair
-      towel shoe socks band cap visor kit bag gut frame head tape pro star seed draw round final tour
-      open slam lead bagel cut dip cord post bye mixed pair team duo coach drill rest sun wind lawn turf
-      chalk rival foe duel bout side half zone gap pass push chop carve loop whip punch feed skid clip
-      edge power speed tempo focus nerve grit poise calm upset rank elite lefty glory debut
-      dojo kata bow belt obi kiai dan kyu mat judo budo zen ninja palm elbow knee heel foot hand throw
-      roll fall flip sweep spar form honor black white brown green blue sumo kendo wushu ronin gong drum
-      lotus crane tiger snake eagle horse chi yin yang sash guard dodge weave jab hook twist pivot pin
-      lock flow mind path way art skill kneel parry feint jog gym agile swift quick sharp tough bold
-      brave grace flair style gold pupil boxer glove combo
-    `),
-    medium: words(`
-      backhand forehand baseline volley topspin tiebreak racquet dropshot umpire overhead sweetspot
-      racket bounce receiver server service return advantage backspin underspin sidespin footwork
-      linesman moonball overrule referee replay doubles singles stroke strings overgrip headband
-      wristband sneakers tracksuit backcourt forecourt footfault ranking seeding qualifier finalist
-      semifinal tourney champion trophy stadium clubhouse practice training warmup cooldown stretch
-      stamina fitness agility balance rhythm timing tactics strategy momentum comeback rivalry opponent
-      partner spectator audience applause baseliner grandslam hardcourt walkover wildcard challenge
-      hindrance underhand overhand backswing backboard linejudge gamepoint setpoint kickserve approach
-      sideline southpaw marathon victory victor defeat winner bracket scoreline stringbed dampener
-      grommet ballkid scorer announcer ovation podium legend veteran rookie prodigy rematch showdown
-      amateur unseeded contender underdog tweener indoor outdoor silver bronze
-      sensei blackbelt karate aikido taekwondo jujitsu kumite randori samurai bushido tatami hakama
-      master student respect courage patience strength breathing stance uppercut sidekick strike
-      counter defense sparring grapple takedown ceremony dragon mantis monkey leopard phoenix scroll
-      lantern bamboo kimono judoka kickboxer breakfall backflip handstand cartwheel footsweep cranekick
-      jumprope reflex quickness warrior promotion etiquette willpower gratitude humility harmony
-      serenity stillness wisdom loyalty integrity spirit energy mentor lesson grading stripe yellow
-      orange purple technique movement posture position distance precision accuracy control velocity
-      reaction instinct endurance flexible salute temple pagoda headgear shinguard uniform wrestler
-      hapkido capoeira boxing wrestling
-    `),
-    hard: words(`
-      counterpuncher championship breakpoint doublefault passingshot groundstroke tournament
-      serveandvolley crosscourt halfvolley matchpoint changeover grandstand scoreboard quarterfinal
-      semifinalist tiebreaker dropvolley breadstick doublebagel scorekeeper timekeeper groundskeeper
-      chairumpire topspinlob approachshot unforcederror forcederror followthrough deucecourt
-      overheadsmash mixeddoubles tennisball tenniscourt tenniselbow tennisracket serviceline servicebox
-      centerline centermark doublesalley codeviolation timeviolation luckyloser qualifying secondserve
-      firstserve servicegame servicebreak chipandcharge commentator sportsmanship competition
-      competitor athleticism concentration determination anticipation coordination consistency
-      flexibility persistence perseverance confidence exhibition invitational professional titleholder
-      challenger frontrunner powerhouse shotmaking percentageplay matchtiebreak
-      grandmaster discipline meditation roundhouse kickboxing somersault stretching shadowboxing
-      martialartist breathwork mindfulness tranquility respectful politeness dedication commitment
-      resilience enlightenment apprentice instructor demonstration karatechop flyingkick crescentkick
-      palmstrike counterattack groundwork shoulderthrow horsestance boardbreaking conditioning
-      reactiontime combination mouthguard masterclass agilityladder medicineball punchingbag
-    `),
-  },
+export const PACKS: Record<'everyday' | 'sports' | 'dojo', Record<Tier, readonly string[]>> = {
   everyday: {
     easy: words(`
       cat dog sun moon tree book cake milk bread apple house water chair table happy smile cloud rain
@@ -72,10 +16,10 @@ export const PACKS: Record<'tennis' | 'everyday', Record<Tier, readonly string[]
       swan kite doll toy drum bell song music piano flute harp radio phone clock watch hour day week
       month year red blue green pink gold gray brown white black one two three four five six seven
       eight nine ten kind brave calm quiet loud soft warm cold hot cool fresh clean sweet sour salty
-      dark light early late quick slow big small tiny huge tall short long wide round flat new old
+      dark light early late quick slow big small tiny huge tall round new old
       young walk run jump swim read write draw sing dance play cook bake laugh dream think learn teach
       help build paint sleep wake drink give take make find keep open close start stop van vase voice
-      igloo otter koala panda quilt juice yard zoo
+      igloo otter koala panda quilt juice yard zoo puppy bunny pizza melon
     `),
     medium: words(`
       garden window kitchen bedroom pillow blanket basket bottle button candle carrot cheese cherry
@@ -89,7 +33,7 @@ export const PACKS: Record<'tennis' | 'everyday', Record<Tier, readonly string[]
       potato garlic cabbage lettuce spinach pumpkin banana avocado apricot coconut walnut peanut almond
       chicken turkey rabbit turtle donkey monkey giraffe elephant penguin dolphin octopus lobster spider
       beetle parrot pigeon sparrow falcon kitten hamster squirrel hedgehog raccoon bicycle scooter
-      tractor airport station harbor highway street corner village country capital office factory
+      tractor airport station harbor highway street village country capital office factory
       hospital dentist grocery wallet pocket jacket sweater mitten slipper sandal pajamas computer
       keyboard monitor printer message laptop tablet charger battery remote magnet mirror curtain
       cushion carpet ladder hammer shovel bucket sponge shampoo gentle clever honest polite friendly
@@ -100,7 +44,7 @@ export const PACKS: Record<'tennis' | 'everyday', Record<Tier, readonly string[]
       believe whisper giggle wonder travel listen answer question promise welcome goodbye yesterday
       tomorrow minute second moment quarter number twelve twenty thirty hundred thousand million zipper
       zigzag jigsaw juggle kangaroo velvet volcano xylophone unicorn umbrella insect invent oyster
-      orchard
+      orchard pebble
     `),
     hard: words(`
       strawberry watermelon grasshopper caterpillar helicopter motorcycle skateboard wheelbarrow
@@ -118,19 +62,142 @@ export const PACKS: Record<'tennis' | 'everyday', Record<Tier, readonly string[]
       responsible complicated appreciate accomplish communicate concentrate congratulate investigate
       participate opportunity possibility responsibility relationship achievement atmosphere
       experience expression impression decoration illustration construction transportation
-      entertainment announcement basketball volleyball trampoline rollercoaster wheelchair supermarket
+      entertainment announcement basketball trampoline rollercoaster wheelchair supermarket
       marketplace department dishwasher pillowcase greenhouse babysitter grandparents granddaughter
       hummingbird kingfisher chimpanzee rhinoceros hippopotamus salamander questionnaire kindergarten
-      nightingale vegetarian wonderland watercolor
+      nightingale vegetarian wonderland watercolor applesauce
+    `),
+  },
+  sports: {
+    easy: words(`
+      goal medal team race relay lap jump swim dive ski skate surf row sail golf polo judo sumo rugby
+      yoga chess luge sled rodeo vault derby hike climb jog run dash kayak canoe raft bike cycle wheel
+      gear ball bat puck glove cleat mitt pad board oar stick cone hoop rim mat rope baton reins tee
+      iron club bib vest kit cap boots shoe visor coach ref fan squad crew pro star champ hero rival
+      judge boxer diver rower skier racer rider arena field pitch track pool lane rink slope gym court
+      stand bench range trail ring base plate mound oval venue green hole leap hop skip kick throw catch
+      dunk tag aim score win lead chase steer pedal glide twirl flip twist tuck pike split pose lift
+      squat press curl plank lunge train drill trot dodge flex point game match set tie draw title
+      prize cup gold heat final round mile bout rank seed bye tally entry event award cheer crowd roar
+      clap fame glory fast quick swift agile fit tough brave bold speed power pace grit sweat torch
+      flag card timer sport yard meter ice snow wave buoy boat yacht chalk beam bar
+    `),
+    medium: words(`
+      athlete stadium trophy referee umpire marathon sprinter sprint hurdle javelin discus hammer
+      polevault decathlon triathlon biathlon skiing skating surfing rowing sailing cycling swimming
+      diving running jogging climbing hiking archery fencing bowling curling hockey soccer football
+      baseball softball handball lacrosse cricket badminton squash pingpong boxing wrestling karate
+      gymnast cyclist swimmer skater surfer runner golfer player captain goalie keeper pitcher batter
+      catcher jockey trainer teammate champion finalist contender underdog rookie veteran legend
+      opponent spectator audience applause mascot whistle stopwatch helmet jersey uniform sneakers
+      kneepad goalpost racket paddle saddle snowboard surfboard dumbbell barbell treadmill jumprope
+      gymnasium racetrack velodrome ballpark clubhouse locker bleachers dugout fairway bunker podium
+      medalist victory rematch season league fixture playoff tourney semifinal ranking standings
+      scorer penalty hattrick birdie teamwork stamina fitness agility training practice exercise
+      warmup stretch endurance sponsor anthem parade ribbon pennant banner fanfare headband wristband
+      sweatband tracksuit swimsuit goggles wetsuit shinpad slalom bobsled toboggan snowshoe regatta
+      kayaking rafting snorkel lifeguard waterpolo windsurf sailboat hurdler starter dressage gallop
+      canter stirrup racehorse boulder harness carabiner summit trekking compass archer target
+      bullseye checkmate skydiving parachute tumbling platform icehockey skatepark cricketer
+      scrimmage matchday extratime wildcard fairplay athletics racecar dodgeball kickball billiards
+      snooker croquet official announcer scorecard supporter manager
+    `),
+    hard: words(`
+      championship gymnastics snowboarding skateboarding basketball pickleball racquetball tabletennis
+      kettlebell trampoline pentathlon heptathlon decathlete triathlete triplejump equestrian
+      mountaineer orienteering weightlifting powerlifting scoreboard timekeeper scorekeeper
+      commentator broadcaster sportscaster groundskeeper cheerleader lifejacket mouthguard tournament
+      quarterfinal semifinalist competition competitor athleticism sportsmanship goalkeeper
+      wicketkeeper baserunner grandstand motorsport speedskating figureskating fieldhockey rollerskate
+      waterskiing windsurfing kitesurfing snorkeling scubadiving paragliding rockclimbing bouldering
+      whitewater marathoner racewalking photofinish worldrecord personalbest silvermedal bronzemedal
+      titleholder stretching racecourse swimmingpool playingfield footballer golfcourse hockeystick
+      baseballbat soccerball tiebreaker handspring somersault balancebeam parallelbars pommelhorse
+      unevenbars springboard divingboard bobsledding tobogganing iceskating snowshoeing skijumping
+      mountainbike skateboarder snowboarder rowingmachine exercisebike jumpingjack benchpress
+      sportswear sweatshirt waterbottle teamspirit trackandfield ultramarathon steeplechase
+      showjumping horseriding boxingring boxingglove sumowrestler
+    `),
+  },
+  dojo: {
+    easy: words(`
+      dojo kata bow belt obi kiai dan kyu mat judo budo zen ninja ronin sumo kendo wushu silat
+      sifu kwoon dobok kihap dogi keiko shiai kamae maai ukemi kime waza uke tori nage dachi zuki geri
+      tsuki ippon matte yame kohai seiza kihon hyung dohyo shiko godan nidan chi yin yang
+      palm elbow knee heel foot hand wrist ankle hip chin spine core toes shin neck chest arm leg head
+      heart thumb black white brown green blue red gold gray
+      calm focus poise grace honor trust peace hope zeal valor mercy duty loyal kind fair noble wise
+      true brave bold tough firm alert aware ready keen grit will mind self vow oath code rule order
+      habit still quiet power speed force might vigor flow tempo agile lithe swift quick
+      drill form spar bout test exam grade rank level title class study learn teach guide coach pupil
+      elder hero rival duel guard grip hold pin lock throw sweep trip hook jab punch kick block parry
+      dodge evade feint weave duck roll fall flip twist pivot kneel stand sit reach lunge squat hop
+      leap jump dash step slide glide stamp stomp clap shout bell robe sash gong drum ink brush tea
+      monk bag pad board brick rope bench gate hall path way art skill style combo
+      tiger crane snake eagle horse bear lotus
+    `),
+    medium: words(`
+      sensei senpai karate aikido taekwondo jujitsu jiujitsu kumite randori samurai bushido tatami
+      hakama dojang kimono judoka karateka aikidoka kendoka hapkido capoeira savate boxing wrestling
+      grappling muaythai kungfu qigong taichi sanshou kyorugi poomsae tangsoodo rikishi yokozuna
+      mawashi tachiai kuzushi zanshin mushin shodan sandan shihan hajime mokuso dojokun
+      master student teacher mentor lesson grading promotion ceremony etiquette tradition diploma
+      emblem stripe blackbelt whitebelt greenbelt brownbelt bluebelt redbelt headband uniform headgear
+      shinguard sandbag lantern bamboo scroll pagoda temple garden bonsai warrior guardian champion
+      opponent partner dragon phoenix leopard mantis monkey serpent panther
+      respect courage patience strength breathing balance focused mindful breath inhale exhale
+      posture honesty kindness modesty sincere virtue resolve tenacity bravery valiant steadfast
+      devotion diligent practice training stamina agility control timing rhythm footwork reflex
+      awareness alertness readiness calmness stillness humility gratitude loyalty honorable fairness
+      integrity wisdom insight clarity harmony serenity tranquil composure rectitude sincerity
+      energy spirit stance strike counter defense sparring grapple clinch wrestle tumble evasion
+      deflect meditate breathe bowing kneeling handstand cartwheel footsweep cranekick jumpkick
+      hipthrow armlock wristlock headlock legsweep breakfall tigerclaw catstance sidekick kickboxer
+    `),
+    hard: words(`
+      grandmaster discipline meditation roundhouse kickboxing somersault stretching shadowboxing
+      martialarts martialartist breathwork mindfulness tranquility respectful politeness dedication
+      commitment resilience apprentice instructor demonstration flyingkick crescentkick palmstrike
+      kneestrike elbowstrike counterattack groundwork shoulderthrow shoulderroll horsestance
+      cranestance boardbreaking conditioning reactiontime combination mouthguard masterclass
+      punchingbag yellowbelt orangebelt purplebelt calligraphy certificate perseverance determination
+      concentration selfcontrol selfdefense selfdiscipline selfrespect selfbelief selfmastery
+      confidence persistence courageous peacefulness gentleness kindhearted trustworthy dependable
+      reliability steadiness equilibrium coordination flexibility nimbleness motivation inspiration
+      achievement improvement progression repetition fundamentals innerpeace innerstrength equanimity
+      harmonious traditional philosophy benevolence compassion sumowrestler tornadokick butterflykick
+      sweepingkick handspring wrestlingmat gratefulness thankfulness kungfumaster taichichuan
+      beltpromotion stancework breathcontrol humbleness attentiveness watchfulness fearlessness
     `),
   },
 };
 
-const union = (tier: Tier): readonly string[] => [...new Set([...PACKS.tennis[tier], ...PACKS.everyday[tier]])];
+/**
+ * Words naming a shot, stroke, spin, shot outcome or direction, plus their obvious forms (spec §3.10). A typed
+ * word must never contradict where the ball goes, so no pack may contain one; tests enforce this by exact
+ * match, so longer innocent words that merely contain a short entry (lobster, network) stay allowed.
+ */
+export const MISLEADING_WORDS: ReadonlySet<string> = new Set(words(`
+  forehand forehands backhand backhands lob lobs lobbed lobbing volley volleys volleyed volleying halfvolley
+  dropvolley smash smashes smashed smashing overhead overheads slice slices sliced slicing dropshot dropshots
+  drop drops dropped passingshot passingshots pass passes passing groundstroke groundstrokes approach
+  approaches approachshot return returns returned serve serves served shot shots stroke strokes drive drives
+  chip chips tweener moonball
+  topspin backspin underspin sidespin spin spins flat
+  ace aces aced winner winners fault faults doublefault footfault out net netted let error errors
+  unforcederror forcederror miss missed
+  left right wide wider short shorter deep deeper long longer high higher low lower middle center centre
+  corner corners line lines baseline baselines sideline sidelines down across straight inside outside cross
+  crosscourt diagonal angle angles angled forward backward sideways back front body half
+`));
+
+const union = (tier: Tier): readonly string[] => [
+  ...new Set([...PACKS.everyday[tier], ...PACKS.sports[tier], ...PACKS.dojo[tier]]),
+];
 
 const MIXED: Record<Tier, readonly string[]> = { easy: union('easy'), medium: union('medium'), hard: union('hard') };
 
-/** The word list for a pack and tier; 'mixed' is the union of both packs with duplicates removed. */
+/** The word list for a pack and tier; 'mixed' is the union of the three packs with duplicates removed. */
 export function packWords(pack: WordPackId, tier: Tier): readonly string[] {
   return pack === 'mixed' ? MIXED[tier] : PACKS[pack][tier];
 }

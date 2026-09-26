@@ -2,12 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { seedRng } from '../../src/core/rng';
 import { TUNING } from '../../src/core/tuning';
 import { TIERS, type PickerState, type RngState, type Tier, type WordOption, type WordPackId } from '../../src/core/types';
-import { PACKS, packWords, tierOfLength } from '../../src/core/words/lists';
+import { MISLEADING_WORDS, PACKS, packWords, tierOfLength } from '../../src/core/words/lists';
 import { QWERTY_ADJ, createPicker, initialsOk, pickFixed, pickTriple, toOption } from '../../src/core/words/picker';
 
 const MIN_WORDS: Record<Tier, number> = { easy: 120, medium: 120, hard: 80 };
 const LENGTHS: Record<Tier, [number, number]> = { easy: [3, 5], medium: [6, 9], hard: [10, 14] };
 const HISTORY = TUNING.words.historySize;
+
+/** Every WordPackId, as a record so the typecheck fails if the union gains or loses a pack. */
+const PACK_FLAGS: Record<WordPackId, true> = { everyday: true, sports: true, dojo: true, mixed: true };
+const PACK_IDS = Object.keys(PACK_FLAGS) as WordPackId[];
+
+/** Blocklist entries the spec and brief require (spec §3.10); the exported set may hold more forms. */
+const REQUIRED_MISLEADING = `
+  forehand backhand lob lobs volley volleys smash slice topspin backspin underspin dropshot drop crosscourt
+  overhead ace aces winner fault out net left right wide short deep long high low middle center centre corner
+  line baseline sideline down across straight inside outside return serve passingshot groundstroke approach
+  half volleying lobbed smashed sliced
+`.trim().split(/\s+/);
+
+/** Stems no pack word may contain anywhere; short stems such as 'lob' are exact-match only (so 'lobster' is fine). */
+const MISLEADING_STEMS = ['forehand', 'backhand', 'volley', 'topspin', 'backspin', 'crosscourt', 'dropshot', 'overhead'];
 
 const duplicatesOf = (words: readonly string[]): string[] => words.filter((w, i) => words.indexOf(w) !== i);
 const sortedLetters = (s: string | undefined): string => [...(s ?? '')].sort().join('');
@@ -20,10 +35,10 @@ function initialsClash(words: readonly string[]): boolean {
 }
 
 describe('word packs', () => {
-  for (const pack of ['tennis', 'everyday'] as const) {
+  for (const pack of PACK_IDS) {
     for (const tier of TIERS) {
       describe(`${pack} ${tier}`, () => {
-        const words = PACKS[pack][tier];
+        const words = packWords(pack, tier);
         const [min, max] = LENGTHS[tier];
 
         it(`has at least ${MIN_WORDS[tier]} words`, () => {
@@ -50,6 +65,28 @@ describe('word packs', () => {
   }
 });
 
+describe('misleading words', () => {
+  it('blocks every shot, stroke, spin, outcome and direction word the spec names', () => {
+    expect(REQUIRED_MISLEADING.filter((w) => !MISLEADING_WORDS.has(w))).toEqual([]);
+  });
+
+  it('holds only lowercase a–z words, so exact matches against pack words work', () => {
+    expect([...MISLEADING_WORDS].filter((w) => !/^[a-z]+$/.test(w))).toEqual([]);
+  });
+
+  for (const pack of PACK_IDS) {
+    const words = TIERS.flatMap((tier) => packWords(pack, tier));
+
+    it(`${pack}: no word is on the blocklist`, () => {
+      expect(words.filter((w) => MISLEADING_WORDS.has(w))).toEqual([]);
+    });
+
+    it(`${pack}: no word contains a stroke, spin or direction stem`, () => {
+      expect(words.filter((w) => MISLEADING_STEMS.some((stem) => w.includes(stem)))).toEqual([]);
+    });
+  }
+});
+
 describe('tierOfLength', () => {
   it('maps lengths to tiers by the spec bounds (easy 3–5, medium 6–9, hard 10–14)', () => {
     const lengths = [0, 2, 3, 5, 6, 9, 10, 14, 15];
@@ -58,18 +95,21 @@ describe('tierOfLength', () => {
 });
 
 describe('packWords', () => {
-  it('returns the tennis and everyday lists as defined', () => {
-    for (const tier of TIERS) {
-      expect(packWords('tennis', tier)).toEqual(PACKS.tennis[tier]);
-      expect(packWords('everyday', tier)).toEqual(PACKS.everyday[tier]);
+  it('defines the everyday, sports and dojo packs only (no tennis pack; mixed is derived)', () => {
+    expect(Object.keys(PACKS).sort()).toEqual(['dojo', 'everyday', 'sports']);
+  });
+
+  it('returns the everyday, sports and dojo lists as defined', () => {
+    for (const pack of ['everyday', 'sports', 'dojo'] as const) {
+      for (const tier of TIERS) expect(packWords(pack, tier)).toEqual(PACKS[pack][tier]);
     }
   });
 
-  it('mixed is the deduplicated union of both packs', () => {
+  it('mixed is the deduplicated union of the three packs', () => {
     for (const tier of TIERS) {
       const mixed = packWords('mixed', tier);
       expect(duplicatesOf(mixed)).toEqual([]);
-      expect(new Set(mixed)).toEqual(new Set([...PACKS.tennis[tier], ...PACKS.everyday[tier]]));
+      expect(new Set(mixed)).toEqual(new Set([...PACKS.everyday[tier], ...PACKS.sports[tier], ...PACKS.dojo[tier]]));
     }
   });
 });
@@ -121,7 +161,7 @@ describe('createPicker', () => {
 });
 
 describe('pickTriple', () => {
-  for (const pack of ['tennis', 'everyday', 'mixed'] as const) {
+  for (const pack of PACK_IDS) {
     it(`${pack}: 2,000 picks obey tiers, initials and the ${HISTORY}-word history`, () => {
       const rng = seedRng(20260926);
       const picker = createPicker();
@@ -147,7 +187,7 @@ describe('pickTriple', () => {
 
   it('records the three offered words in history, newest last', () => {
     const picker = createPicker();
-    const words = wordsOf(pickTriple(seedRng(3), picker, 'tennis'));
+    const words = wordsOf(pickTriple(seedRng(3), picker, 'sports'));
     expect(picker.history).toEqual(words);
   });
 
@@ -163,14 +203,14 @@ describe('pickTriple', () => {
   });
 
   it('relaxes only the history rule when every allowed word was offered recently', () => {
-    const allowedEasy = PACKS.tennis.easy.slice(0, 2);
-    const avoid = PACKS.tennis.easy.slice(2);
+    const allowedEasy = PACKS.dojo.easy.slice(0, 2);
+    const avoid = PACKS.dojo.easy.slice(2);
     const rng = seedRng(99);
     const picker = createPicker();
     let repeats = 0;
     for (let i = 0; i < 50; i++) {
       const recent = [...picker.history];
-      const words = wordsOf(pickTriple(rng, picker, 'tennis', avoid));
+      const words = wordsOf(pickTriple(rng, picker, 'dojo', avoid));
       expect(allowedEasy, `pick ${i}`).toContain(words[0]);
       expect(initialsClash(words), `pick ${i}: ${words.join(' ')}`).toBe(false);
       if (words.some((w) => recent.includes(w))) repeats++;
@@ -180,7 +220,7 @@ describe('pickTriple', () => {
   });
 
   it('throws when no triple can satisfy the avoid and initials rules', () => {
-    expect(() => pickTriple(seedRng(1), createPicker(), 'tennis', PACKS.tennis.easy)).toThrow(/pickTriple/);
+    expect(() => pickTriple(seedRng(1), createPicker(), 'sports', PACKS.sports.easy)).toThrow(/pickTriple/);
   });
 });
 
@@ -195,14 +235,14 @@ describe('pickTriple determinism', () => {
   it('resumes identically from a JSON round-trip of rng and picker', () => {
     const rng = seedRng(42);
     const picker = createPicker();
-    run(rng, picker, 'tennis', 50);
+    run(rng, picker, 'dojo', 50);
     const rngCopy = JSON.parse(JSON.stringify(rng)) as RngState;
     const pickerCopy = JSON.parse(JSON.stringify(picker)) as PickerState;
-    expect(run(rngCopy, pickerCopy, 'tennis', 100)).toEqual(run(rng, picker, 'tennis', 100));
+    expect(run(rngCopy, pickerCopy, 'dojo', 100)).toEqual(run(rng, picker, 'dojo', 100));
   });
 
   it('gives different sequences for different seeds', () => {
-    expect(run(seedRng(1), createPicker(), 'tennis', 20)).not.toEqual(run(seedRng(2), createPicker(), 'tennis', 20));
+    expect(run(seedRng(1), createPicker(), 'everyday', 20)).not.toEqual(run(seedRng(2), createPicker(), 'everyday', 20));
   });
 });
 
