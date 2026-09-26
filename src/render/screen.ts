@@ -117,7 +117,7 @@ export class Screen {
   private requested: 'pixel' | 'fit' = 'pixel';
   private upscale: Layer | null = null;
   private dprQuery: MediaQueryList | null = null;
-  private readonly onDprChange = (): void => this.resize();
+  private readonly rescale = (): void => this.resize();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -129,7 +129,7 @@ export class Screen {
     this.buf.imageSmoothingEnabled = false;
     this.info = this.measure();
     this.apply();
-    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('resize', this.rescale);
   }
 
   /** Requested display mode (Options → Display); `info.mode` is the effective one. Setting it re-scales. */
@@ -174,6 +174,13 @@ export class Screen {
     this.listeners.push(cb);
   }
 
+  /** Removes the window `resize` and dppx listeners, so the screen stops following the window. */
+  dispose(): void {
+    window.removeEventListener('resize', this.rescale);
+    this.dprQuery?.removeEventListener('change', this.rescale);
+    this.dprQuery = null;
+  }
+
   private measure(): ScaleInfo {
     return computeScale(window.innerWidth, window.innerHeight, window.devicePixelRatio, this.requested);
   }
@@ -198,8 +205,8 @@ export class Screen {
     if (typeof window.matchMedia !== 'function') return;
     const media = `(resolution: ${dpr}dppx)`;
     if (this.dprQuery?.media === media) return;
-    this.dprQuery?.removeEventListener('change', this.onDprChange);
+    this.dprQuery?.removeEventListener('change', this.rescale);
     this.dprQuery = window.matchMedia(media);
-    this.dprQuery.addEventListener('change', this.onDprChange);
+    this.dprQuery.addEventListener('change', this.rescale);
   }
 }

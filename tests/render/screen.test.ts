@@ -204,6 +204,14 @@ interface FakeQuery {
 describe('Screen', () => {
   const ctxs = new Map<HTMLCanvasElement, FakeCtx>();
   let queries: FakeQuery[] = [];
+  const screens: Screen[] = [];
+
+  /** A Screen that afterEach disposes, so no test leaves window listeners behind for the next. */
+  function newScreen(canvas = document.createElement('canvas')): Screen {
+    const screen = new Screen(canvas);
+    screens.push(screen);
+    return screen;
+  }
 
   function setWindow(w: number, h: number, dpr: number): void {
     for (const [key, value] of [['innerWidth', w], ['innerHeight', h], ['devicePixelRatio', dpr]] as const) {
@@ -253,18 +261,19 @@ describe('Screen', () => {
   });
 
   afterEach(() => {
+    for (const screen of screens.splice(0)) screen.dispose();
     vi.restoreAllMocks();
   });
 
   it('owns a 480×270 back buffer with smoothing off', () => {
-    const screen = new Screen(document.createElement('canvas'));
+    const screen = newScreen();
     expect([screen.buf.canvas.width, screen.buf.canvas.height]).toEqual([480, 270]);
     expect(screen.buf.imageSmoothingEnabled).toBe(false);
   });
 
   it('sizes and places the canvas in whole device pixels', () => {
     const canvas = document.createElement('canvas');
-    const screen = new Screen(canvas);
+    const screen = newScreen(canvas);
     expect(screen.info).toEqual(computeScale(1536, 760, 1.25, 'pixel'));
     expect([canvas.width, canvas.height]).toEqual([1440, 810]);
     expect(canvas.style.width).toBe('1152px');
@@ -275,7 +284,7 @@ describe('Screen', () => {
 
   it('re-scales on window resize and reports each change once', () => {
     const canvas = document.createElement('canvas');
-    const screen = new Screen(canvas);
+    const screen = newScreen(canvas);
     const seen: ScaleInfo[] = [];
     screen.onChange((i) => seen.push(i));
     setWindow(1920, 1080, 1);
@@ -289,7 +298,7 @@ describe('Screen', () => {
 
   it('follows a devicePixelRatio change (zoom or another monitor) and re-arms the dppx query', () => {
     const canvas = document.createElement('canvas');
-    const screen = new Screen(canvas);
+    const screen = newScreen(canvas);
     const seen: ScaleInfo[] = [];
     screen.onChange((i) => seen.push(i));
     expect(liveQueries().map((q) => q.media)).toEqual(['(resolution: 1.25dppx)']);
@@ -300,10 +309,29 @@ describe('Screen', () => {
     expect(liveQueries().map((q) => q.media)).toEqual(['(resolution: 2dppx)']);
   });
 
+  it('dispose() removes its resize and dppx listeners, leaving none behind', () => {
+    const added = vi.spyOn(window, 'addEventListener');
+    const removed = vi.spyOn(window, 'removeEventListener');
+    const resizeCallbacks = (calls: unknown[][]): unknown[] => calls.filter(([type]) => type === 'resize').map(([, cb]) => cb);
+    const canvas = document.createElement('canvas');
+    const screen = newScreen(canvas);
+    const seen: ScaleInfo[] = [];
+    screen.onChange((i) => seen.push(i));
+    expect(resizeCallbacks(added.mock.calls)).toHaveLength(1);
+    expect(liveQueries()).toHaveLength(1);
+    screen.dispose();
+    expect(resizeCallbacks(removed.mock.calls)).toEqual(resizeCallbacks(added.mock.calls));
+    expect(liveQueries()).toEqual([]);
+    setWindow(1920, 1080, 1);
+    window.dispatchEvent(new Event('resize'));
+    expect(seen).toEqual([]);
+    expect([canvas.width, canvas.height]).toEqual([1440, 810]);
+  });
+
   it('falls back to fit mode in a small window and when fit is requested', () => {
     setWindow(900, 500, 1);
     const canvas = document.createElement('canvas');
-    const screen = new Screen(canvas);
+    const screen = newScreen(canvas);
     expect(screen.info.mode).toBe('fit');
     expect([canvas.width, canvas.height]).toEqual([888, 500]);
     setWindow(1920, 1080, 1);
@@ -316,7 +344,7 @@ describe('Screen', () => {
 
   it('presents pixel mode as one nearest-neighbour blit of the whole buffer', () => {
     const canvas = document.createElement('canvas');
-    const screen = new Screen(canvas);
+    const screen = newScreen(canvas);
     screen.present();
     const draws = ctxs.get(canvas)!.draws;
     expect(draws).toHaveLength(1);
@@ -326,7 +354,7 @@ describe('Screen', () => {
   it('presents fit mode as a nearest-neighbour upscale to ceil(scale) then a smooth downscale', () => {
     setWindow(900, 500, 1);
     const canvas = document.createElement('canvas');
-    const screen = new Screen(canvas);
+    const screen = newScreen(canvas);
     screen.present();
     const final = ctxs.get(canvas)!.draws;
     expect(final).toHaveLength(1);
