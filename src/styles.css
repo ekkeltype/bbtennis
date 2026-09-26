@@ -566,6 +566,19 @@ body {
   color: var(--silver);
 }
 
+/* The first-launch Training offer, beside the menu over the attract demo. */
+#ui .training-offer {
+  position: absolute;
+  top: calc(16 * var(--u));
+  right: calc(16 * var(--u));
+  width: calc(200 * var(--u));
+}
+
+#ui .training-offer .offer-text {
+  line-height: calc(12 * var(--u));
+  text-align: center;
+}
+
 /* ---------- vs CPU setup ---------- */
 
 #ui .setup {
@@ -991,14 +1004,14 @@ body {
   color: var(--mist);
 }
 
-/* ---------- Online placeholder ---------- */
-
-#ui .online {
-  width: calc(260 * var(--u));
+#ui .results .opponent-left {
+  text-align: center;
+  color: var(--yellow);
 }
 
-#ui .online .message {
-  text-align: center;
+#ui .results .btn:disabled {
+  color: var(--slate);
+  cursor: default;
 }
 
 /* ---------- Online lobby: Host lobby and Join ---------- */
@@ -1186,6 +1199,24 @@ body {
   font-size: calc(10 * var(--u));
   line-height: 1;
   color: var(--yellow);
+}
+
+/* ---------- Boot failure: a plain readable message over the whole page ---------- */
+
+#ui .boot-error {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  font-family: var(--body);
+  font-size: 20px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--cream);
+  background: var(--ink);
 }
 
 /* ---------- Match overlay ---------- */

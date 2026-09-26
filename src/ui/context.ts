@@ -5,9 +5,12 @@ import type { Belt, Career, Profile, Settings } from './settings';
 /** What kind of match is running: vs CPU, Training or online. */
 export type MatchKind = 'cpu' | 'training' | 'online';
 
-/** Params of the Results screen: a finished match, or how a Training session ended. */
+/**
+ * Params of the Results screen: a finished match, or how a Training session ended. `opponentLeft`
+ * (online): the opponent has gone, so Rematch is disabled and an "OPPONENT LEFT" note shows.
+ */
 export type ResultsParams =
-  | { kind: 'cpu' | 'online'; result: MatchState; viewer: PlayerId; newBelt: Belt | null; canRematch: boolean }
+  | { kind: 'cpu' | 'online'; result: MatchState; viewer: PlayerId; newBelt: Belt | null; canRematch: boolean; opponentLeft?: boolean }
   | { kind: 'training'; done: boolean };
 
 /** Params of the in-match menu. */
@@ -33,6 +36,10 @@ export interface UiContext {
   openGate(): void;
   startCpuMatch(): void;
   startTraining(): void;
+  /** True while the main menu offers Training to a new player (spec §3.12: first launch, until dismissed or done). */
+  trainingOffered(): boolean;
+  /** The player put the Training offer off (Later): it is not shown again. */
+  dismissTrainingOffer(): void;
   /** Rematch from Results: the same match again with a new seed (vs CPU), or the online rematch request. */
   rematch(): void;
   /** Opens the in-match menu (and pauses a local match). */

@@ -15,8 +15,8 @@ import { DEFAULT_CAREER, DEFAULT_PROFILE, DEFAULT_SETTINGS, type Settings } from
 let root: HTMLElement;
 let router: Router;
 
-/** A UiContext whose actions are spies and whose settings follow `setSettings`. */
-function fakeContext(settings: Partial<Settings> = {}) {
+/** A UiContext whose actions are spies and whose settings follow `setSettings`; `offer` is the first-launch Training offer. */
+function fakeContext(settings: Partial<Settings> = {}, offer = false) {
   const ctx = {
     router,
     settings: { ...structuredClone(DEFAULT_SETTINGS), ...settings },
@@ -38,6 +38,10 @@ function fakeContext(settings: Partial<Settings> = {}) {
     forfeitMatch: vi.fn(),
     toggleFullscreen: vi.fn(),
     focusGame: vi.fn(),
+    trainingOffered: vi.fn(() => offer),
+    dismissTrainingOffer: vi.fn(() => {
+      offer = false;
+    }),
   };
   return ctx satisfies UiContext;
 }
@@ -158,6 +162,41 @@ describe('main menu', () => {
     (document.activeElement as HTMLButtonElement).click();
     expect(router.current).toBe('host');
   });
+
+  it('on a first launch, offers Training in a small prompt with TRAINING focused', () => {
+    const ctx = fakeContext({}, true);
+    router.register('mainMenu', mainMenuScreen(ctx));
+    router.go('mainMenu');
+    const offer = root.querySelector<HTMLElement>('.training-offer')!;
+    expect(offer.textContent).toContain('NEW HERE? LEARN THE BASICS IN TRAINING');
+    expect([...offer.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['TRAINING', 'LATER']);
+    expect(document.activeElement).toBe(offer.querySelector('button'));
+    (document.activeElement as HTMLButtonElement).click();
+    expect(ctx.startTraining).toHaveBeenCalledOnce();
+    expect(ctx.dismissTrainingOffer).not.toHaveBeenCalled();
+  });
+
+  it('LATER dismisses the offer for good and puts the focus on the menu', () => {
+    const ctx = fakeContext({}, true);
+    router.register('mainMenu', mainMenuScreen(ctx));
+    router.go('mainMenu');
+    const later = [...root.querySelectorAll<HTMLButtonElement>('.training-offer button')].find((b) => b.textContent === 'LATER')!;
+    later.click();
+    expect(ctx.dismissTrainingOffer).toHaveBeenCalledOnce();
+    expect(root.querySelector('.training-offer')).toBeNull();
+    expect(focused()).toBe('TRAINING');
+    expect(document.activeElement?.closest('.menu')).not.toBeNull();
+    router.go('mainMenu');
+    expect(root.querySelector('.training-offer')).toBeNull();
+  });
+
+  it('shows no offer otherwise', () => {
+    const ctx = fakeContext();
+    router.register('mainMenu', mainMenuScreen(ctx));
+    router.go('mainMenu');
+    expect(root.querySelector('.training-offer')).toBeNull();
+    expect(root.textContent).not.toContain('NEW HERE?');
+  });
 });
 
 describe('vs CPU setup', () => {
@@ -248,6 +287,25 @@ describe('results', () => {
     expect(b.disabled).toBe(true);
   });
 
+  it('online, the opponent gone: Rematch disabled, an OPPONENT LEFT note, Menu focused', () => {
+    const ctx = fakeContext();
+    router.register('results', resultsScreen(ctx));
+    router.go('results', { kind: 'online', result: finished(), viewer: 0, newBelt: null, canRematch: true, opponentLeft: true });
+    const rematch = [...root.querySelectorAll<HTMLButtonElement>('button.btn')].find((b) => b.textContent === 'REMATCH')!;
+    expect(rematch.disabled).toBe(true);
+    expect(root.querySelector('.opponent-left')?.textContent).toBe('OPPONENT LEFT');
+    expect(focused()).toBe('MENU');
+    rematch.click();
+    expect(ctx.rematch).not.toHaveBeenCalled();
+  });
+
+  it('online with the opponent still there: no note', () => {
+    const ctx = fakeContext();
+    router.register('results', resultsScreen(ctx));
+    router.go('results', { kind: 'online', result: finished(), viewer: 0, newBelt: null, canRematch: true });
+    expect(root.querySelector('.opponent-left')).toBeNull();
+  });
+
   it('no Rematch when the match cannot be replayed, and no belt line without a new belt', () => {
     const ctx = fakeContext();
     router.register('results', resultsScreen(ctx));
@@ -277,17 +335,5 @@ describe('results', () => {
     (document.activeElement as HTMLButtonElement).click();
     expect(ctx.quitMatch).toHaveBeenCalledOnce();
     expect(router.current).toBe('cpuSetup');
-  });
-});
-
-describe('online screens (placeholder until Task 21)', () => {
-  it("registers 'host' and 'join'; join shows an invite code as text", () => {
-    const ctx = fakeContext();
-    registerOnlineScreens(router, { profile: () => ctx.profile, settings: () => ctx.settings, startMatch: vi.fn() });
-    router.go('host');
-    expect(root.textContent).toContain('Online play is being wired up');
-    router.go('join', { code: '<b>K7TQM</b>' });
-    expect(root.textContent).toContain('<b>K7TQM</b>');
-    expect(root.querySelector('b')).toBeNull();
   });
 });

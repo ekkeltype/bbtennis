@@ -38,8 +38,8 @@ function statTable(p: MatchResults): HTMLElement {
   );
 }
 
-/** Rematch: vs CPU starts at once; online asks the opponent and waits (spec §5.3). */
-function rematchButton(ctx: UiContext, p: MatchResults): HTMLButtonElement {
+/** Rematch: vs CPU starts at once; online asks the opponent and waits, and is disabled once the opponent has left (spec §5.3). */
+function rematchButton(ctx: UiContext, p: MatchResults, opponentLeft: boolean): HTMLButtonElement {
   const b = button(
     'REMATCH',
     () => {
@@ -50,12 +50,14 @@ function rematchButton(ctx: UiContext, p: MatchResults): HTMLButtonElement {
     },
     'primary',
   );
+  b.disabled = opponentLeft;
   return b;
 }
 
 function matchResults(ctx: UiContext, p: MatchResults): HTMLElement {
   const won = p.result.winner === p.viewer;
   const belt = p.newBelt;
+  const left = p.kind === 'online' && p.opponentLeft === true;
   return panel(
     headline(p.result, p.viewer),
     `results ${won ? 'win' : 'loss'}`,
@@ -64,11 +66,12 @@ function matchResults(ctx: UiContext, p: MatchResults): HTMLElement {
     belt === null
       ? null
       : h('p', { class: 'belt-earned' }, swatch(RAMPS.cloth[BELT_COLOR[belt]]), `NEW BELT EARNED: ${belt.toUpperCase()}!`),
+    left ? h('p', { class: 'note opponent-left' }, 'OPPONENT LEFT') : null,
     h(
       'div',
       { class: 'actions' },
-      p.canRematch ? rematchButton(ctx, p) : null,
-      button('MENU', () => ctx.quitMatch(), p.canRematch ? '' : 'primary'),
+      p.canRematch ? rematchButton(ctx, p, left) : null,
+      button('MENU', () => ctx.quitMatch(), p.canRematch && !left ? '' : 'primary'),
     ),
   );
 }
@@ -104,8 +107,9 @@ function trainingResults(ctx: UiContext, done: boolean): HTMLElement {
 }
 
 /**
- * Results (spec §4.6): winner banner, score line, stat table, belt earned, Rematch / Menu; or the
- * Training panel. Esc goes to the menu.
+ * Results (spec §4.6): winner banner, score line, stat table, belt earned, Rematch / Menu (online:
+ * Rematch disabled with an "OPPONENT LEFT" note once the opponent has gone); or the Training panel.
+ * Esc goes to the menu.
  */
 export function resultsScreen(ctx: UiContext): ScreenFactory {
   return (params) => {

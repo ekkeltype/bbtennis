@@ -1,7 +1,7 @@
 import { BELT_COLOR, RAMPS } from '../../render/palette';
 import { button, fullscreenButton, swatch } from '../controls';
 import type { UiContext } from '../context';
-import { h } from '../dom';
+import { focusFirst, h } from '../dom';
 import { logoCanvas } from '../logo';
 import type { ScreenFactory } from '../router';
 import { highestBelt } from '../settings';
@@ -24,9 +24,26 @@ function playerTag(ctx: UiContext): HTMLElement {
   );
 }
 
+/** The first-launch Training offer (spec §3.12): TRAINING starts it; LATER puts it off for good, removes it and runs `afterLater`. */
+function trainingOffer(ctx: UiContext, afterLater: () => void): HTMLElement {
+  const later = button('LATER', () => {
+    ctx.dismissTrainingOffer();
+    el.remove();
+    afterLater();
+  });
+  const el = h(
+    'section',
+    { class: 'panel training-offer' },
+    h('p', { class: 'offer-text' }, 'NEW HERE? LEARN THE BASICS IN TRAINING'),
+    h('div', { class: 'actions' }, button('TRAINING', () => ctx.startTraining(), 'primary'), later),
+  );
+  return el;
+}
+
 /**
  * Main menu (spec §4.6): Training first until completed once, Play vs CPU, Play Online (Host / Join),
- * Customize, Options, How to Play, Fullscreen. Runs over the attract demo.
+ * Customize, Options, How to Play, Fullscreen. Runs over the attract demo. On a first launch a small
+ * prompt beside it offers Training (its TRAINING focused) until put off with LATER or Training is done.
  */
 export function mainMenuScreen(ctx: UiContext): ScreenFactory {
   return () => {
@@ -55,11 +72,13 @@ export function mainMenuScreen(ctx: UiContext): ScreenFactory {
       first ? null : training,
       fullscreenButton(ctx),
     );
+    const offer = ctx.trainingOffered() ? trainingOffer(ctx, () => focusFirst(menu)) : null;
     const el = h(
       'div',
       { class: 'screen main-menu' },
       h('div', { class: 'side' }, h('div', { class: 'logo-wrap small' }, logoCanvas()), h('section', { class: 'panel menu-panel' }, menu), playerTag(ctx)),
+      offer,
     );
-    return { el };
+    return { el, onShow: () => offer?.querySelector('button')?.focus({ preventScroll: true }) };
   };
 }

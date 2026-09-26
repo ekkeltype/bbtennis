@@ -45,9 +45,10 @@ function sampleMatch(profile: Profile): MatchState {
   return s;
 }
 
-/** Results params for the dev `?screen=results[&sample=training|retry]` preview. */
+/** Results params for the dev `?screen=results[&sample=training|retry|left]` preview (`left`: online, the opponent gone). */
 export function sampleResults(profile: Profile, sample: string | null): ResultsParams {
   if (sample === 'training') return { kind: 'training', done: true };
   if (sample === 'retry') return { kind: 'training', done: false };
+  if (sample === 'left') return { kind: 'online', result: sampleMatch(profile), viewer: 0, newBelt: null, canRematch: true, opponentLeft: true };
   return { kind: 'cpu', result: sampleMatch(profile), viewer: 0, newBelt: 'green', canRematch: true };
 }

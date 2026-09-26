@@ -168,6 +168,14 @@ export function highestBelt(c: Career): Belt | null {
 }
 
 /**
+ * True when the main menu offers Training to a new player (spec §3.12 "offered on first launch"): on
+ * a first launch (no settings were stored yet), until the offer is dismissed or Training is done.
+ */
+export function offerTraining(o: { firstLaunch: boolean; dismissed: boolean; trainingDone: boolean }): boolean {
+  return o.firstLaunch && !o.dismissed && !o.trainingDone;
+}
+
+/**
  * The name field's text while typing: characters outside the font's name set are dropped, runs of
  * spaces collapse, no leading space, at most NAME_MAX characters. `sanitizeName` finishes it on save.
  */

@@ -9,6 +9,7 @@ import {
   isProfile,
   isSettings,
   liveName,
+  offerTraining,
   recordCareer,
   type Career,
 } from '../../src/ui/settings';
@@ -247,5 +248,17 @@ describe('liveName (name field sanitisation while typing)', () => {
     ['', ''],
   ])('%j → %j', (typed, shown) => {
     expect(liveName(typed)).toBe(shown);
+  });
+});
+
+describe('offerTraining (spec §3.12: Training offered on first launch)', () => {
+  it('offers it on a first launch until it is dismissed or Training is done', () => {
+    expect(offerTraining({ firstLaunch: true, dismissed: false, trainingDone: false })).toBe(true);
+    expect(offerTraining({ firstLaunch: true, dismissed: true, trainingDone: false })).toBe(false);
+    expect(offerTraining({ firstLaunch: true, dismissed: false, trainingDone: true })).toBe(false);
+  });
+
+  it('never on a later launch (settings were stored before)', () => {
+    expect(offerTraining({ firstLaunch: false, dismissed: false, trainingDone: false })).toBe(false);
   });
 });
