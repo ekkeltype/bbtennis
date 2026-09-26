@@ -353,9 +353,10 @@ describe('drawPrompts', () => {
     expect(rects).toEqual([]);
     const leader = { from: { x: 150, y: 150 }, to: { x: ring.x, y: ring.y }, tier: ring.tier, alpha: 1 };
     drawPrompts(ctx, { ...empty(), rings: [ring], leaders: [leader] });
-    const ink = rects.filter((r) => r.style === TIER_COLOR.hard);
-    expect(ink.length).toBeGreaterThan(20);
-    // Every tier-coloured pixel is on the leader, none on the ring around (200, 180).
-    expect(ink.every((r) => Math.abs(r.x - ring.x) > 3 || Math.abs(r.y - ring.y) > 2)).toBe(true);
+    const alone = recordingContext();
+    drawPrompts(alone.ctx, { ...empty(), leaders: [leader] });
+    expect(alone.rects.filter((r) => r.style === TIER_COLOR.hard).length).toBeGreaterThan(20);
+    // Exactly the leader's pixels: nothing of the ring.
+    expect(rects).toEqual(alone.rects);
   });
 });
