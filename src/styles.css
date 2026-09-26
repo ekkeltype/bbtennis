@@ -450,7 +450,7 @@ body {
   color: var(--grey);
 }
 
-/* ---------- Title: the logo on a dark band over the top of the attract demo ---------- */
+/* ---------- Title: the logo on an opaque dark band over the top of the attract demo ---------- */
 
 #ui .title {
   flex-direction: column;
@@ -463,7 +463,7 @@ body {
   justify-content: center;
   width: 100%;
   padding: calc(14 * var(--u)) 0 calc(12 * var(--u));
-  background: rgb(13 11 20 / 0.97);
+  background: var(--ink);
   box-shadow:
     0 var(--u) 0 0 var(--slate),
     0 calc(2 * var(--u)) 0 0 var(--ink);
@@ -516,6 +516,7 @@ body {
   align-items: stretch;
 }
 
+/* The menu column is opaque: the attract demo shows only to the right of it. */
 #ui .main-menu .side {
   display: flex;
   flex-direction: column;
@@ -523,7 +524,7 @@ body {
   gap: calc(6 * var(--u));
   width: calc(164 * var(--u));
   padding: calc(8 * var(--u)) calc(10 * var(--u));
-  background: rgb(13 11 20 / 0.94);
+  background: var(--ink);
   box-shadow:
     var(--u) 0 0 0 var(--slate),
     calc(2 * var(--u)) 0 0 0 var(--ink);
@@ -548,7 +549,7 @@ body {
   align-items: center;
   gap: calc(5 * var(--u));
   padding: calc(4 * var(--u)) calc(6 * var(--u));
-  background: rgb(13 11 20 / 0.85);
+  background: var(--ink);
   box-shadow:
     0 0 0 var(--u) var(--ink),
     inset 0 0 0 var(--u) var(--slate);
