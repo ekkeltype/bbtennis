@@ -25,7 +25,7 @@ export function computeScale(innerW: number, innerH: number, dpr: number, mode: 
   const devW = positive(innerW, 0) * ratio;
   const devH = positive(innerH, 0) * ratio;
   const fitted = Math.min(devW / W, devH / H);
-  const whole = Math.floor(fitted);
+  const whole = Math.floor(fitted + 1e-9); // 1350·1.4/270 = 6.999…9 still earns k 7
   const pixel = mode === 'pixel' && whole >= 2;
   const w = pixel ? W * whole : Math.max(1, Math.floor(W * fitted + EPS));
   const h = pixel ? H * whole : Math.max(1, Math.floor(H * fitted + EPS));

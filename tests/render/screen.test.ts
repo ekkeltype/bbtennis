@@ -41,6 +41,16 @@ describe('computeScale (spec §4.1)', () => {
     expect(p.y).toBeCloseTo(70, 9);
   });
 
+  it('keeps the whole scale when the float product lands just under it: 1350 px tall @1.4 → k 7', () => {
+    expect(1350 * 1.4).toBeLessThan(1890);
+    const i = computeScale(3000, 1350, 1.4, 'pixel');
+    expect(i.k).toBe(7);
+    expect(i.mode).toBe('pixel');
+    const p = devicePlacement(i);
+    expect(p.h).toBeCloseTo(1890, 9);
+    expect(p.y).toBe(0);
+  });
+
   it('switches to fit mode when k < 2: 900×500 @1 → k 1, filling the height without overflow', () => {
     const i = computeScale(900, 500, 1, 'pixel');
     expect(i.k).toBe(1);
