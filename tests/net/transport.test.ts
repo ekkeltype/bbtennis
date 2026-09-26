@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { VirtualScheduler } from '../../src/game/clock';
-import type { NetMsg } from '../../src/net/protocol';
+import { MAX_SEND_BYTES, type NetMsg } from '../../src/net/protocol';
 import { loopbackPair, type Transport } from '../../src/net/transport';
+
+const utf8 = new TextEncoder();
+
+/** A hello whose JSON is exactly `bytes` UTF-8 bytes, its name padded with `pad` (a 1- or 2-byte character). */
+function helloOfBytes(bytes: number, pad = 'x'): Extract<NetMsg, { type: 'hello' }> {
+  const m: Extract<NetMsg, { type: 'hello' }> = {
+    type: 'hello', proto: 1, app: 'bbtennis', name: '', look: { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 },
+  };
+  const room = bytes - utf8.encode(JSON.stringify(m)).byteLength;
+  const width = utf8.encode(pad).byteLength;
+  m.name = pad.repeat(Math.floor(room / width)) + 'x'.repeat(room % width);
+  expect(utf8.encode(JSON.stringify(m)).byteLength).toBe(bytes);
+  return m;
+}
 
 interface Arrival { id: number; at: number }
 
@@ -119,6 +133,39 @@ describe('loopbackPair delivery', () => {
     const [a] = loopbackPair(s, { latencyMs: 400, jitterMs: 0, seed: 1 });
     for (let i = 0; i < 100; i++) a.send({ type: 'ping', id: i });
     expect(a.bufferedAmount).toBe(0);
+  });
+
+  it(`delivers a message of exactly MAX_SEND_BYTES (${MAX_SEND_BYTES}) UTF-8 bytes`, () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const got: NetMsg[] = [];
+    b.onMessage((m) => got.push(m));
+    a.send(helloOfBytes(MAX_SEND_BYTES));
+    s.advance(10);
+    expect(got).toHaveLength(1);
+  });
+
+  it.each([['x'], ['é']])('throws RangeError for a message over MAX_SEND_BYTES (padded with %j) and sends nothing', (pad) => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const got: NetMsg[] = [];
+    const closes: string[] = [];
+    b.onMessage((m) => got.push(m));
+    b.onClose((r) => closes.push(r));
+    a.onClose((r) => closes.push(r));
+    expect(() => a.send(helloOfBytes(MAX_SEND_BYTES + 1, pad))).toThrow(RangeError);
+    a.send({ type: 'ping', id: 1 });
+    s.advance(100);
+    expect(got).toEqual([{ type: 'ping', id: 1 }]);
+    expect(closes).toEqual([]);
+  });
+
+  it('measures UTF-8 bytes, not characters', () => {
+    const s = new VirtualScheduler();
+    const [a] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const m = helloOfBytes(MAX_SEND_BYTES + 2, 'é');
+    expect(JSON.stringify(m).length).toBeLessThan(MAX_SEND_BYTES);
+    expect(() => a.send(m)).toThrow(RangeError);
   });
 
   it.each([

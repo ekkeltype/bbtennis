@@ -1,6 +1,6 @@
 import { RealScheduler, type Scheduler } from '../game/clock';
 import { genCode, normalizeCode } from './codes';
-import { parseMsg, type NetMsg } from './protocol';
+import { MAX_SEND_BYTES, msgBytes, parseMsg, type NetMsg } from './protocol';
 import { REMOTE_CLOSED, type Transport } from './transport';
 
 /** Prefix of every host's PeerJS id; the rest is the game code. */
@@ -234,10 +234,14 @@ async function newPeer(d: Deps, id: string | null): Promise<PeerLike> {
   }
 }
 
+/** PeerJS's DataConnection error for a send over its JSON channel limit; the connection itself is fine. */
+const MESSAGE_TOO_BIG = 'message-too-big';
+
 /**
  * Wraps an open DataConnection. Incoming data goes through parseMsg; a remote close or connection
  * error is reported once via onClose; close() flushes, then force-closes after CLOSE_FLUSH_MS.
- * `onEnd` runs once when the connection is finished either way.
+ * A message over MAX_SEND_BYTES is dropped with a warning, and so is one PeerJS refuses as too big;
+ * neither ends the connection. `onEnd` runs once when the connection is finished either way.
  */
 function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transport {
   let open = true;
@@ -256,10 +260,15 @@ function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transpo
     if (msg) for (const cb of messageCbs) cb(msg);
   });
   conn.on('close', () => lost(REMOTE_CLOSED));
-  conn.on('error', (err) => lost(err.type));
+  conn.on('error', (err) => {
+    if (err.type === MESSAGE_TOO_BIG) console.warn(`[bbt] PeerJS dropped a message: ${err.message}`);
+    else lost(err.type);
+  });
   return {
     send(msg) {
-      if (open) conn.send(msg);
+      const bytes = msgBytes(msg);
+      if (bytes > MAX_SEND_BYTES) console.warn(`[bbt] dropped a ${msg.type} message of ${bytes} bytes (limit ${MAX_SEND_BYTES})`);
+      else if (open) conn.send(msg);
     },
     onMessage(cb) {
       messageCbs.push(cb);

@@ -1,10 +1,14 @@
 import { seedRng, uniform } from '../core/rng';
 import type { Scheduler } from '../game/clock';
-import { parseMsg, type NetMsg } from './protocol';
+import { MAX_SEND_BYTES, msgBytes, parseMsg, type NetMsg } from './protocol';
 
 /** A reliable, ordered message channel to the other player (spec §5.3). */
 export interface Transport {
-  /** Sends a message; a no-op once the transport is closed. */
+  /**
+   * Sends a message; a no-op once the transport is closed. Callers keep every message within
+   * MAX_SEND_BYTES (check with msgBytes): a larger one is never sent and never closes the channel;
+   * the loopback throws RangeError, so tests catch it, and the PeerJS transport drops it with a warning.
+   */
   send(msg: NetMsg): void;
   /** Adds a listener for incoming messages; messages that fail `parseMsg` are dropped. */
   onMessage(cb: (m: NetMsg) => void): void;
@@ -38,6 +42,10 @@ class LoopbackEnd implements Transport {
   constructor(private readonly s: Scheduler, private readonly delay: () => number) {}
 
   send(msg: NetMsg): void {
+    const bytes = msgBytes(msg);
+    if (bytes > MAX_SEND_BYTES) {
+      throw new RangeError(`loopback: a ${msg.type} message of ${bytes} bytes is over MAX_SEND_BYTES (${MAX_SEND_BYTES})`);
+    }
     if (!this.closed) this.peer?.enqueue({ json: JSON.stringify(msg) });
   }
 
@@ -81,7 +89,8 @@ class LoopbackEnd implements Transport {
 /**
  * Two connected in-memory transports driven by `s`, for tests and headless sessions. Messages go
  * through JSON and `parseMsg` like the real wire and arrive in send order; the jitter stream is
- * seeded, so a run is reproducible. Throws RangeError unless latencyMs and jitterMs are finite and ≥ 0.
+ * seeded, so a run is reproducible. `send` throws RangeError for a message over MAX_SEND_BYTES.
+ * Throws RangeError unless latencyMs and jitterMs are finite and ≥ 0.
  */
 export function loopbackPair(s: Scheduler, opts: LoopbackOptions): [Transport, Transport] {
   const { latencyMs, jitterMs } = opts;

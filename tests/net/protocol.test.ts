@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { APP_ID, MAX_MSG_CHARS, PROTO, parseMsg, type NetMsg } from '../../src/net/protocol';
+import { APP_ID, MAX_MSG_CHARS, MAX_SEND_BYTES, PROTO, msgBytes, parseMsg, type NetMsg } from '../../src/net/protocol';
 import { sanitizeName } from '../../src/core/text';
 import type { GameEvent, Look, MatchConfig, PlayerStats, Profile, PublicState } from '../../src/core/types';
 
@@ -97,6 +97,40 @@ describe('constants', () => {
   it('protocol version is 1 and messages are capped at 32 KB of JSON', () => {
     expect(PROTO).toBe(1);
     expect(MAX_MSG_CHARS).toBe(32 * 1024);
+  });
+
+  it('senders keep to 16000 UTF-8 bytes, so every sendable message passes the receive cap', () => {
+    expect(MAX_SEND_BYTES).toBe(16000);
+    expect(MAX_SEND_BYTES).toBeLessThanOrEqual(MAX_MSG_CHARS);
+  });
+});
+
+describe('msgBytes', () => {
+  const hello = (name: string): NetMsg => ({ type: 'hello', proto: PROTO, app: APP_ID, name, look: noBand });
+
+  it('is the length of the JSON for ASCII-only messages', () => {
+    const m: NetMsg = { type: 'ping', id: 12 };
+    expect(msgBytes(m)).toBe('{"type":"ping","id":12}'.length);
+  });
+
+  it('counts the τ key as its two UTF-8 bytes', () => {
+    expect(msgBytes({ type: 'clock', turn: 1, τ: 5 })).toBe('{"type":"clock","turn":1,"":5}'.length + 2);
+  });
+
+  it.each([
+    ['a', 1],
+    ['é', 2],
+    ['€', 3],
+    ['🎾', 4],
+    ['\uD83C', 6],
+    ['"', 2],
+  ])('a name %j adds %i bytes (UTF-8 of its JSON, as PeerJS measures)', (name, bytes) => {
+    expect(msgBytes(hello(name)) - msgBytes(hello(''))).toBe(bytes);
+  });
+
+  it('matches the TextEncoder measure for every sample', () => {
+    const utf8 = new TextEncoder();
+    for (const m of samples) expect(msgBytes(m)).toBe(utf8.encode(JSON.stringify(m)).byteLength);
   });
 });
 

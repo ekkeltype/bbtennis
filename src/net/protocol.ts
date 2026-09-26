@@ -9,8 +9,22 @@ export const PROTO = 1;
 /** Application id sent in `hello` and `reject`. */
 export const APP_ID = 'bbtennis';
 
-/** Messages whose JSON is longer than this many characters are dropped (spec §5.3). */
+/** Messages whose JSON is longer than this many characters are dropped on receipt (spec §5.3). */
 export const MAX_MSG_CHARS = 32 * 1024;
+
+/**
+ * Largest message a transport sends, in UTF-8 bytes of its JSON (see msgBytes). PeerJS's JSON
+ * channel refuses 16300 bytes or more, so every sender (above all frames carrying `s`) must stay
+ * within this; transports never send a larger message.
+ */
+export const MAX_SEND_BYTES = 16000;
+
+const utf8 = new TextEncoder();
+
+/** Size of `msg` on the wire: the UTF-8 byte length of its JSON, measured as PeerJS measures it. */
+export function msgBytes(msg: NetMsg): number {
+  return utf8.encode(JSON.stringify(msg)).byteLength;
+}
 
 /** Every message exchanged between host and guest (spec §5.3). `τ` is a turn-clock time in ms. */
 export type NetMsg =

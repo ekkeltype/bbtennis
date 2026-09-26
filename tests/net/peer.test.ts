@@ -1,3 +1,4 @@
+import { DataConnectionErrorType, util } from 'peerjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { seedRng, uniform } from '../../src/core/rng';
 import { VirtualScheduler } from '../../src/game/clock';
@@ -7,9 +8,12 @@ import {
   STILL_CONNECTING, errorKind, errorText, hostGame, joinGame, peerOptions,
   type BrokerOptions, type ConnLike, type NetErrorKind, type PeerFactory, type PeerLike,
 } from '../../src/net/peer';
-import type { NetMsg } from '../../src/net/protocol';
+import { MAX_SEND_BYTES, type NetMsg } from '../../src/net/protocol';
+import type { Transport } from '../../src/net/transport';
 
 type Listener = (...args: any[]) => void;
+
+const utf8 = new TextEncoder();
 
 class Emitter {
   private readonly listeners = new Map<string, Listener[]>();
@@ -33,7 +37,12 @@ class FakeConn extends Emitter implements ConnLike {
     super();
   }
 
+  /** Like PeerJS 1.5's JSON channel: a message of util.chunkedMTU UTF-8 bytes or more raises a synchronous error instead. */
   send(data: unknown): void {
+    if (utf8.encode(JSON.stringify(data)).byteLength >= util.chunkedMTU) {
+      this.emit('error', { type: DataConnectionErrorType.MessageToBig, message: 'Message too big for JSON channel' });
+      return;
+    }
     this.sent.push(data);
   }
 
@@ -93,6 +102,32 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
 const peerError = (type: string) => ({ type, message: `fake ${type}` });
 
 const HELLO: NetMsg = { type: 'hello', proto: 1, app: 'bbtennis', name: 'Sam', look: { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 } };
+
+/** A hello whose JSON is exactly `bytes` UTF-8 bytes. */
+function helloOfBytes(bytes: number): NetMsg {
+  const m = { ...HELLO, name: '' };
+  m.name = 'x'.repeat(bytes - utf8.encode(JSON.stringify(m)).byteLength);
+  expect(utf8.encode(JSON.stringify(m)).byteLength).toBe(bytes);
+  return m;
+}
+
+/** The host with one open guest connection and its transport. */
+async function openGuest() {
+  const net = fakeNet();
+  const pending = hostGame(net.opts);
+  await tick();
+  const peer = net.peers[0]!;
+  peer.emit('open', peer.id);
+  const handle = await pending;
+  let transport: Transport | null = null;
+  handle.onGuest((t) => (transport = t));
+  const conn = new FakeConn('guest-peer-id');
+  peer.emit('connection', conn);
+  conn.emit('open');
+  const reasons: string[] = [];
+  transport!.onClose((r) => reasons.push(r));
+  return { ...net, conn, transport: transport!, reasons };
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -419,6 +454,52 @@ describe('hostGame', () => {
     const { peer, handle } = await openHost();
     handle.close();
     expect(peer.destroyed).toBe(true);
+  });
+});
+
+describe('PeerJS transport message size', () => {
+  it(`MAX_SEND_BYTES fits PeerJS's JSON channel (${util.chunkedMTU} bytes or more is refused)`, () => {
+    expect(MAX_SEND_BYTES).toBeLessThan(util.chunkedMTU);
+  });
+
+  it('sends a message of exactly MAX_SEND_BYTES', async () => {
+    const { conn, transport, reasons } = await openGuest();
+    const big = helloOfBytes(MAX_SEND_BYTES);
+    transport.send(big);
+    expect(conn.sent).toEqual([big]);
+    expect(reasons).toEqual([]);
+  });
+
+  it.each([MAX_SEND_BYTES + 1, util.chunkedMTU, 32 * 1024])(
+    'drops a %i-byte message with a [bbt] warning and keeps the connection',
+    async (bytes) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { conn, transport, reasons } = await openGuest();
+      transport.send(helloOfBytes(bytes));
+      expect(conn.sent).toEqual([]);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(String(warn.mock.calls[0]![0])).toMatch(/^\[bbt\] .*hello.*\d+ bytes/);
+      transport.send({ type: 'ping', id: 1 });
+      expect(conn.sent).toEqual([{ type: 'ping', id: 1 }]);
+      expect(conn.closes).toEqual([]);
+      expect(reasons).toEqual([]);
+    },
+  );
+
+  it('a message-too-big error from PeerJS is not a disconnect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { conn, transport, reasons } = await openGuest();
+    const got: NetMsg[] = [];
+    transport.onMessage((m) => got.push(m));
+    conn.emit('error', { type: DataConnectionErrorType.MessageToBig, message: 'Message too big for JSON channel' });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]![0])).toMatch(/^\[bbt\] /);
+    expect(conn.closes).toEqual([]);
+    expect(reasons).toEqual([]);
+    conn.emit('data', { type: 'leave' });
+    transport.send({ type: 'ping', id: 2 });
+    expect(got).toEqual([{ type: 'leave' }]);
+    expect(conn.sent).toEqual([{ type: 'ping', id: 2 }]);
   });
 });
 
