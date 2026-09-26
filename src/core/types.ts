@@ -3,16 +3,26 @@ export type PlayerId = 0 | 1;
 /** The other player. */
 export const other = (p: PlayerId): PlayerId => (p === 0 ? 1 : 0);
 
+/** Word difficulty tier by length: easy 3–5, medium 6–9, hard 10–14 letters (spec §3.10). */
 export type Tier = 'easy' | 'medium' | 'hard';
+/** All tiers, easiest first (the order of serve and choice options). */
 export const TIERS: readonly Tier[] = ['easy', 'medium', 'hard'];
+/** Service side: deuce when the game (or tiebreak) point count is even, ad when odd (spec §3.2). */
 export type Side = 'deuce' | 'ad';
+/** Court surface; cosmetic only, never affects outcomes (spec §3.0). */
 export type Surface = 'hard' | 'clay' | 'grass' | 'dojo';
+/** Pace preset: relaxed ×1.5, normal ×1.0, fast ×0.75, lightning ×0.6 (spec §3.9). */
 export type PaceId = 'relaxed' | 'normal' | 'fast' | 'lightning';
+/** Match format: a single tiebreak, a short set, a full set or best of three short sets (spec §3.6). */
 export type FormatId = 'tiebreak' | 'short' | 'full' | 'bo3';
+/** Deuce handling: advantage points, or one deciding golden point (spec §3.6). */
 export type DeuceRule = 'advantage' | 'golden';
+/** Word pack: Tennis & Dojo, Everyday English or Mixed (spec §3.10). */
 export type WordPackId = 'tennis' | 'everyday' | 'mixed';
 
+/** Point or vector on the ground plane, in metres (spec §3.0 axes). */
 export interface Vec2 { x: number; y: number }
+/** Point in world space, in metres; z is up (spec §3.0). */
 export interface Vec3 { x: number; y: number; z: number }
 
 /** Engine flags used only by Training (spec §3.12). */
@@ -23,6 +33,7 @@ export interface TrainingFlags {
   fixedWords: { serve: string[][]; choice: string[][] } | null;
 }
 
+/** Options a match is played with, fixed when it starts. */
 export interface MatchConfig {
   format: FormatId;
   pace: PaceId;
@@ -43,6 +54,7 @@ export interface Look {
   racket: number;     // 0..5
 }
 
+/** A player in a match: name, look, and who controls them (local human, CPU or remote peer). */
 export interface PlayerInfo {
   name: string;
   look: Look;
@@ -59,6 +71,7 @@ export interface WordOption {
   hidden?: true;
 }
 
+/** Prompt type: serve (3 words), chase (the striker's single word) or choice (3 words) (spec §2). */
 export type PromptKind = 'serve' | 'chase' | 'choice';
 
 /** Typing state of one prompt (spec §2, §4.2). Mutated in place by core/typing. */
@@ -82,8 +95,10 @@ export interface PromptState {
 /** Nine uniforms in [0,1) pre-drawn for one shot: rNet, then 4 for zx, then 4 for zy. */
 export type ShotRandoms = [number, number, number, number, number, number, number, number, number];
 
+/** How a shot resolves: in, out (outside the court or service box) or net (spec §3.5). */
 export type ShotOutcome = 'in' | 'out' | 'net';
 
+/** A shot resolved at the strike instant: outcome, landing point, and the σ and pNet used (spec §3.5). */
 export interface ShotResult {
   outcome: ShotOutcome;
   landing: Vec2;   // where it lands (for net: where it would have landed)
@@ -108,12 +123,14 @@ export interface BallFlight {
   destEnd: PlayerId;    // end of the receiving player
 }
 
+/** One toss's three pre-picked serve words with their service-box targets (spec §3.2). */
 export interface ServeWordSet {
   options: WordOption[];   // [easy, medium, hard]
   targets: Vec2[];         // world coords, same order
   variant: 'T' | 'wide';
 }
 
+/** Banner period that opens a serve turn: coin-toss intro, fault call, point call or none (spec §3.1). */
 export interface LeadIn {
   kind: 'intro' | 'fault' | 'point' | 'none';
   ms: number;
@@ -121,6 +138,7 @@ export interface LeadIn {
   text: string[];
 }
 
+/** Start data of a serve turn, owned by the server (spec §5.1 TurnRunner). */
 export interface ServeTurnData {
   kind: 'serve';
   turnId: number;
@@ -139,6 +157,7 @@ export interface ServeTurnData {
   freezeFirst: boolean;     // training: freeze until first key
 }
 
+/** Start data of a return turn, owned by the receiver: incoming ball, chase word and choice prompt (spec §3.3). */
 export interface ReturnTurnData {
   kind: 'return';
   turnId: number;
@@ -155,8 +174,10 @@ export interface ReturnTurnData {
   freezeFirst: boolean;
 }
 
+/** Start data of either kind of turn. */
 export type TurnData = ServeTurnData | ReturnTurnData;
 
+/** Phase of a turn: serve states of spec §3.1 and receiver sub-states of spec §3.3. */
 export type TurnPhase = 'leadIn' | 'preServe' | 'toss' | 'catch' | 'chase' | 'choice' | 'queued' | 'ended';
 
 /** Everything about a completed strike; `flight` is the outgoing ball. */
@@ -178,6 +199,7 @@ export interface StrikeInfo {
   flight: BallFlight;
 }
 
+/** How a turn ended: a strike, a serve fault, a miss (ace or winner) or an OUT/NET call. */
 export type TurnOutcome =
   | { kind: 'strike'; endτ: number; strike: StrikeInfo }
   | { kind: 'fault'; endτ: number; reason: 'ballDropped' | 'timeViolation' }
@@ -195,6 +217,7 @@ export type TurnLogEntry =
   | { τ: number; k: 'done'; prompt: number }
   | { τ: number; k: 'freeze'; on: boolean };
 
+/** Live state of one turn on its turn clock τ, including its playback log. */
 export interface TurnState {
   data: TurnData;
   started: boolean;
@@ -213,6 +236,7 @@ export interface TurnState {
   ended: boolean;
 }
 
+/** Match score: completed sets, current set and game (or tiebreak), servers and winner (spec §3.6). */
 export interface ScoreState {
   format: FormatId;
   deuceRule: DeuceRule;
@@ -226,6 +250,7 @@ export interface ScoreState {
   winner: PlayerId | null;
 }
 
+/** One player's statistics for the current match (spec §3.11). */
 export interface PlayerStats {
   pointsWon: number;
   aces: number;
@@ -241,16 +266,20 @@ export interface PlayerStats {
   fastestServeKmh: number;
 }
 
+/** Why a point ended. */
 export type PointReason = 'ace' | 'winner' | 'out' | 'net' | 'doubleFault' | 'forfeit';
 
+/** Serializable state of the seeded match RNG (four uint32 words). */
 export interface RngState { a: number; b: number; c: number; d: number }
 
+/** Word-picker memory: recently offered words and training cursors (spec §3.10). */
 export interface PickerState {
   history: string[];      // last offered words, newest last
   fixedServe: number;     // training cursors
   fixedChoice: number;
 }
 
+/** Complete authoritative match state; plain JSON-safe data. */
 export interface MatchState {
   v: 1;
   config: MatchConfig;
@@ -274,6 +303,7 @@ export interface MatchState {
 /** MatchState as seen by a viewer (secrets removed by core/redact). */
 export type PublicState = MatchState;
 
+/** Umpire call or banner shown when a serve, shot or point is decided. */
 export type CallKind = 'fault' | 'out' | 'net' | 'ace' | 'winner' | 'doubleFault' | 'timeViolation' | 'ballDropped';
 
 /** Events emitted by the engine, stamped with the turn and τ they happened at. */
