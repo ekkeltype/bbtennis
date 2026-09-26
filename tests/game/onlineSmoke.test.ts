@@ -683,6 +683,97 @@ describe('online sessions: frames', () => {
   });
 });
 
+describe('online sessions: confirmation-only frames (spec §5.3)', () => {
+  /** A state as the frame rule compares it: the turn clocks left out. */
+  const clockless = (s: PublicState): string =>
+    JSON.stringify({ ...s, turn: s.turn && { ...s.turn, τ: 0 }, lastTurn: s.lastTurn && { ...s.lastTurn, τ: 0 } });
+
+  it('the host sends s only when the state changed since the last s it sent (always with events); every other frame is a bare {type, turn, τ} confirmation', () => {
+    const o = online({ seed: seedWhere(0) });
+    play(o.s, sides(o), 20000);
+    const frames = o.hostNet.sent.filter((m): m is FrameMsg => m.type === 'frame');
+    let last: string | null = null;
+    let confirmations = 0;
+    let unchanged = 0;
+    for (const f of frames) {
+      if (f.ev !== undefined) expect(f.s).toBeDefined();
+      if (f.s === undefined) {
+        confirmations++;
+        expect(Object.keys(f).sort()).toEqual(['turn', 'type', 'τ']);
+        continue;
+      }
+      const now = clockless(f.s);
+      if (f.ev === undefined && now === last) unchanged++;
+      last = now;
+    }
+    expect(unchanged).toBe(0);
+    // Most frames only confirm the clock: typing and deadlines change the state a few times a second.
+    expect(confirmations).toBeGreaterThan(frames.length / 2);
+    expect(frames.length - confirmations).toBeGreaterThan(50);
+  }, 60000);
+
+  it('while over 16 KB wait to be sent, a confirmation still goes out every 50 ms tick of the host\'s turn', () => {
+    // The host serves first; its first turn's intro runs with no events for a while.
+    const o = online({ seed: seedWhere(0), latencyMs: 20, jitterMs: 0 });
+    let backlog = 0;
+    Object.defineProperty(o.hostNet, 'bufferedAmount', { get: () => backlog });
+    run(o, 500);
+    backlog = 17 * 1024;
+    const from = o.hostNet.sent.length;
+    run(o, 1000);
+    const frames = o.hostNet.sent.slice(from).filter((m): m is FrameMsg => m.type === 'frame');
+    expect(frames.length).toBeGreaterThanOrEqual(19);
+    expect(frames.every((f) => f.s === undefined && f.turn === 1)).toBe(true);
+    expect(frames.map((f) => f.τ)).toEqual([...frames.map((f) => f.τ)].sort((x, y) => x - y));
+  });
+
+  it('while over 16 KB wait to be sent, a changed state without events waits (with no confirmation of it) until the backlog clears', () => {
+    const s = new VirtualScheduler(1000);
+    const [a, b] = loopbackPair(s, { latencyMs: 20, jitterMs: 0, seed: 1 });
+    const hostNet = tap(a, s);
+    let backlog = 17 * 1024;
+    Object.defineProperty(hostNet, 'bufferedAmount', { get: () => backlog });
+    b.onMessage(() => {});
+    // The guest serves first, so nothing happens on the host until the guest's turn starts.
+    const host = new HostSession({ transport: hostNet, config: TIEBREAK, host: HOST, guest: GUEST, seed: seedWhere(1), scheduler: s, ticker: (ms, fn) => s.every(ms, fn) });
+    const frames = (): FrameMsg[] => hostNet.sent.filter((m): m is FrameMsg => m.type === 'frame');
+    for (let t = 0; t < 1000; t += FRAME) {
+      s.advance(FRAME);
+      host.frame(FRAME);
+    }
+    expect(hostNet.sent.map((m) => m.type)).toEqual(['start']);
+    backlog = 0;
+    s.advance(50);
+    expect(frames()).toHaveLength(1);
+    expect(frames()[0]!.s?.turn?.data.turnId).toBe(1);
+  });
+
+  it('the guest takes a frame without s as a clock confirmation only: its playback follows it, and events in it are not taken', () => {
+    const s = new VirtualScheduler(1000);
+    const [a, b] = loopbackPair(s, { latencyMs: 20, jitterMs: 0, seed: 1 });
+    const guest = new GuestSession({ transport: b, scheduler: s, me: { ...GUEST, kind: 'human' }, ticker: (ms, fn) => s.every(ms, fn) });
+    a.onMessage(() => {});
+    const engine = new Engine({ config: TIEBREAK, players: [HOST, GUEST], seed: seedWhere(0) });
+    const ev = engine.start(0);
+    a.send({ type: 'frame', turn: 1, τ: 0, ev, s: redact(engine.state, 1) });
+    for (let τ = 50; τ <= 1000; τ += 50) {
+      s.advance(50);
+      guest.frame(50);
+      a.send({ type: 'frame', turn: 1, τ });
+    }
+    s.advance(50);
+    let vm = guest.frame(50);
+    expect(vm.pub.turn?.data.turnId).toBe(1);
+    expect(vm.turnτ).toBeGreaterThan(500);
+    expect(vm.turnτ).toBeLessThanOrEqual(1000);
+    a.send({ type: 'frame', turn: 1, τ: 1000, ev: [{ turn: 1, τ: 100, type: 'situation', text: 'MATCH POINT' }] });
+    s.advance(50);
+    vm = guest.frame(50);
+    expect(vm.events).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
 describe('Scoreboards: the scoreboard each displayed turn carries', () => {
   it('shows the front entry\'s scoreboard as it was when noted, as the view\'s own copy; with no front the view keeps its own', () => {
     const state = new Engine({ config: TIEBREAK, players: [HOST, GUEST], seed: 1 }).state;
@@ -692,11 +783,16 @@ describe('Scoreboards: the scoreboard each displayed turn carries', () => {
     state.score.points = [3, 1];
     state.stats[0].pointsWon = 3;
     state.status = 'over';
+    state.pointNo = 4;
+    state.rallyStrikes = 5;
     const pub = redact(state, 0);
     boards.show(pub, entry);
     expect(pub.score.points).toEqual([0, 0]);
     expect(pub.stats[0].pointsWon).toBe(0);
     expect(pub.status).toBe('playing');
+    // The point number (clay marks clear with it) and the rally counter wait for the display too.
+    expect(pub.pointNo).toBe(0);
+    expect(pub.rallyStrikes).toBe(0);
     pub.score.points[0] = 9;
     const again = redact(state, 0);
     boards.show(again, entry);
@@ -709,17 +805,20 @@ describe('Scoreboards: the scoreboard each displayed turn carries', () => {
 });
 
 describe('online sessions: the scoreboard follows the display', () => {
-  it('each side\'s score changes only as the display reaches the next point call, and its stats and status only between turns (spec §3.1)', () => {
+  it('each side\'s score and point number change only as the display reaches the next point call, and its stats, status and rally count only between turns (spec §3.1)', () => {
     const o = online({ seed: seedWhere(1) });
-    const last = new Map<string, { turn: number | null; score: string; rest: string }>();
+    const last = new Map<string, { turn: number | null; score: string; rest: string; rally: number }>();
     let scoreChanges = 0;
+    let rallyChanges = 0;
     play(o.s, sides(o), 90000, (x, vm) => {
       const t = vm.pub.turn;
       const turn = t?.data.turnId ?? null;
-      const score = JSON.stringify(vm.pub.score);
-      const rest = JSON.stringify([vm.pub.stats, vm.pub.status]);
+      const rally = vm.pub.rallyStrikes;
+      const score = JSON.stringify([vm.pub.score, vm.pub.pointNo]);
+      const rest = JSON.stringify([vm.pub.stats, vm.pub.status, rally]);
       // From the first displayed turn on (the guest shows a waiting placeholder before it).
       const prev = last.get(x.name);
+      if (prev !== undefined && prev.turn !== null && prev.rally !== rally) rallyChanges++;
       if (prev !== undefined && prev.turn !== null && prev.score !== score) {
         scoreChanges++;
         expect(turn).not.toBe(prev.turn);
@@ -727,9 +826,10 @@ describe('online sessions: the scoreboard follows the display', () => {
         expect(t === null || (t.data.kind === 'serve' && t.data.leadIn.kind === 'point')).toBe(true);
       }
       if (prev !== undefined && prev.turn !== null && prev.rest !== rest) expect(turn).not.toBe(prev.turn);
-      if (turn !== null || prev !== undefined) last.set(x.name, { turn, score, rest });
+      if (turn !== null || prev !== undefined) last.set(x.name, { turn, score, rest, rally });
     });
     expect(scoreChanges).toBeGreaterThanOrEqual(4);
+    expect(rallyChanges).toBeGreaterThanOrEqual(4);
   }, 120000);
 });
 

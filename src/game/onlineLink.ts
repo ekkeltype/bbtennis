@@ -318,31 +318,30 @@ export class OnlineLifecycle {
   }
 }
 
-/** What the scoreboard shows: the match's score, stats and status. */
-type Scoreboard = Pick<MatchState, 'score' | 'stats' | 'status'>;
+/** What the scoreboard shows: the match's score, stats and status, the point's number and the rally's strikes so far. */
+type Scoreboard = Pick<MatchState, 'score' | 'stats' | 'status' | 'pointNo' | 'rallyStrikes'>;
 
 /**
- * The scoreboard each display entry carries: the match's score, stats and status when its turn was
- * created. A view shows the displayed turn's scoreboard, so a viewer sees a point's new score as the
- * display reaches the next serve, whose lead-in is the point call (spec §3.1), and not earlier, when
- * the owner's machine decided the point. With no turn displayed the view keeps the latest state's.
+ * The scoreboard each display entry carries: the match's score, stats, status, point number and rally
+ * count when its turn was created. A view shows the displayed turn's scoreboard, so a viewer sees a
+ * point's new score (and the court's ball marks clear with the new point number) as the display
+ * reaches the next serve, whose lead-in is the point call (spec §3.1), and the rally count grow as it
+ * reaches each return; not earlier, when the owner's machine decided them. With no turn displayed the
+ * view keeps the latest state's.
  */
 export class Scoreboards {
   private readonly of = new WeakMap<DisplayEntry, Scoreboard>();
 
   /** `entry`'s turn was created in `state`: its scoreboard is a copy of the state's as it is now. */
   note(entry: DisplayEntry, state: MatchState): void {
-    this.of.set(entry, structuredClone({ score: state.score, stats: state.stats, status: state.status }));
+    const { score, stats, status, pointNo, rallyStrikes } = state;
+    this.of.set(entry, structuredClone({ score, stats, status, pointNo, rallyStrikes }));
   }
 
   /** Puts the scoreboard of the displayed entry `front` into `pub` (a copy); without a front `pub` keeps its own. */
   show(pub: PublicState, front: DisplayEntry | null): void {
     const board = front === null ? undefined : this.of.get(front);
-    if (board === undefined) return;
-    const { score, stats, status } = structuredClone(board);
-    pub.score = score;
-    pub.stats = stats;
-    pub.status = status;
+    if (board !== undefined) Object.assign(pub, structuredClone(board));
   }
 }
 

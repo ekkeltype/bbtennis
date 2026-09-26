@@ -2,7 +2,7 @@ import { Engine } from '../core/engine';
 import { redact, redactEvents, redactTurn } from '../core/redact';
 import { forkSeed } from '../core/rng';
 import type { KeyClass } from '../core/typing';
-import type { GameEvent, MatchConfig, MatchState, PlayerId, PlayerInfo, ViewModel } from '../core/types';
+import type { GameEvent, MatchConfig, MatchState, PlayerId, PlayerInfo, PublicState, TurnState, ViewModel } from '../core/types';
 import { MAX_SEND_BYTES, msgBytes, type NetMsg } from '../net/protocol';
 import type { Transport } from '../net/transport';
 import type { Scheduler } from './clock';
@@ -23,7 +23,7 @@ import type { Session } from './session';
 
 /** Frames during a turn the host does not clock: host-side updates only (brief: every 250 ms). */
 const IDLE_FRAME_MS = 250;
-/** Frames without events are skipped while this many bytes wait to be sent (spec §5.3). */
+/** Frames that carry the state without events are skipped while this many bytes wait to be sent; confirmations never are (spec §5.3). */
 const FRAME_BACKLOG_BYTES = 16 * 1024;
 /** A frame over the size cap keeps only this many of lastTurn's log entries. */
 const KEEP_LOG = 200;
@@ -69,13 +69,13 @@ export interface HostSessionOptions {
 /**
  * The host's side of an online match (spec §5.3): it runs the only Engine. Each turn is clocked on its
  * owner's machine: a host-owned turn starts when the host's display reaches it (the previous turn has
- * finished playing here) and runs on the local clock, streaming `frame`s every 50 ms and on every
- * event; a guest-owned turn is never clocked here: the engine starts it on the guest's first `clock`
- * or `input` and applies them in arrival order, and the host watches it in passive playback. The
- * display queue decides what the host sees; `pub` is the host's redacted state with the displayed
- * turn, the one before it and the displayed turn's scoreboard. Each match opens with `start`;
- * `rematch`, `forfeit` and `leave` end or renew it (their rules are the shared OnlineLifecycle's).
- * Online play never pauses.
+ * finished playing here) and runs on the local clock, streaming a `frame` every 50 ms (a bare clock
+ * confirmation unless the state changed) and one with every event; a guest-owned turn is never clocked
+ * here: the engine starts it on the guest's first `clock` or `input` and applies them in arrival
+ * order, and the host watches it in passive playback. The display queue decides what the host sees;
+ * `pub` is the host's redacted state with the displayed turn, the one before it and the displayed
+ * turn's scoreboard. Each match opens with `start`; `rematch`, `forfeit` and `leave` end or renew it
+ * (their rules are the shared OnlineLifecycle's). Online play never pauses.
  */
 export class HostSession implements Session {
   private readonly config: MatchConfig;
@@ -93,6 +93,8 @@ export class HostSession implements Session {
   /** Highest turn id pushed to the display queue. */
   private lastPushed = 0;
   private lastFrameAt = Number.NEGATIVE_INFINITY;
+  /** The guest's state as the last frame that carried it had it (turn clocks left out); null before the match's first. */
+  private sentState: string | null = null;
   private readonly fitter = new FrameFit();
   private final: MatchState | null = null;
   private wants: [boolean, boolean] = [false, false];
@@ -207,6 +209,7 @@ export class HostSession implements Session {
     this.queue = new DisplayQueue(this.scheduler.now());
     this.rate = new KeyRate();
     this.lastPushed = 0;
+    this.sentState = null;
     this.life.reset();
     this.final = null;
     this.wants = [false, false];
@@ -320,15 +323,25 @@ export class HostSession implements Session {
   }
 
   /**
-   * Sends `frame{turn, τ, ev?, s}`: s = the state redacted for the guest, ev = these events, and
-   * (turn, τ) the host's latest confirmed turn clock (the started current turn, else the last one).
-   * A frame without events is skipped while the send backlog is over 16 KB.
+   * Sends `frame{turn, τ, ev?, s?}` (spec §5.3): (turn, τ) is the host's latest confirmed turn clock
+   * (the started current turn, else the last one); ev = these events; s = the state redacted for the
+   * guest, carried with events and whenever it changed (turn clocks aside) since the last frame that
+   * carried it. Any other frame is a bare confirmation of (turn, τ). A frame that carries s without
+   * events is skipped while the send backlog is over 16 KB, so its state goes with a later frame; a
+   * confirmation never is.
    */
   private sendFrame(events: GameEvent[]): void {
-    if (events.length === 0 && this.link.bufferedAmount > FRAME_BACKLOG_BYTES) return;
     const state = this.engine.state;
+    const s = redact(state, GUEST);
+    const key = clockless(s);
+    const carries = events.length > 0 || key !== this.sentState;
+    if (carries && events.length === 0 && this.link.bufferedAmount > FRAME_BACKLOG_BYTES) return;
     const t = state.turn?.started === true ? state.turn : state.lastTurn ?? state.turn;
-    const frame: FrameMsg = { type: 'frame', turn: t?.data.turnId ?? 0, τ: t?.τ ?? 0, s: redact(state, GUEST) };
+    const frame: FrameMsg = { type: 'frame', turn: t?.data.turnId ?? 0, τ: t?.τ ?? 0 };
+    if (carries) {
+      frame.s = s;
+      this.sentState = key;
+    }
     if (events.length > 0) frame.ev = redactEvents(events, state, GUEST);
     this.fitter.fit(frame);
     this.link.send(frame);
@@ -354,4 +367,10 @@ export class HostSession implements Session {
     this.lastView = vm;
     return vm;
   }
+}
+
+/** A state as the frame rule compares it: the turn clocks, which move with every tick, left out. */
+function clockless(s: PublicState): string {
+  const still = (t: TurnState | null): TurnState | null => (t === null ? null : { ...t, τ: 0 });
+  return JSON.stringify({ ...s, turn: still(s.turn), lastTurn: still(s.lastTurn) });
 }

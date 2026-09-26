@@ -323,25 +323,28 @@ export class GuestSession implements Session {
   }
 
   /**
-   * A frame from the host: its state becomes the latest one; each new turn in it is queued for display
-   * and known ones refreshed; its (turn, τ) confirms the playback of a host-owned turn; its events are
-   * held for the display, except those the guest's own runner already showed. A frame whose turn or
-   * last turn is malformed is dropped (with one warning per session).
+   * A frame from the host. Without a state it is a clock confirmation only (spec §5.3): its (turn, τ)
+   * confirms the playback of a host-owned turn. With one, that state becomes the latest; each new turn
+   * in it is queued for display and known ones refreshed; its (turn, τ) confirms; its events are held
+   * for the display, except those the guest's own runner already showed. A frame whose turn or last
+   * turn is malformed is dropped (with one warning per session).
    */
   private onFrame(m: FrameMsg): void {
     if (!this.life.showing) return;
     const s = m.s;
-    if (s !== undefined && !(isTurnShaped(s.turn) && isTurnShaped(s.lastTurn))) {
+    if (s === undefined) {
+      this.queue.confirm(m.turn, m.τ);
+      return;
+    }
+    if (!(isTurnShaped(s.turn) && isTurnShaped(s.lastTurn))) {
       if (!this.malformedWarned) console.warn('[bbt] dropped a frame with a malformed turn from the host', m.turn);
       this.malformedWarned = true;
       return;
     }
-    if (s !== undefined) {
-      this.latest = s;
-      if (s.lastTurn !== null) this.offer(s.lastTurn);
-      if (s.turn !== null) this.offer(s.turn);
-      if (s.status === 'over') this.life.settle(s.forfeitBy);
-    }
+    this.latest = s;
+    if (s.lastTurn !== null) this.offer(s.lastTurn);
+    if (s.turn !== null) this.offer(s.turn);
+    if (s.status === 'over') this.life.settle(s.forfeitBy);
     this.queue.confirm(m.turn, m.τ);
     if (m.ev !== undefined) this.queue.hold(m.ev.filter((e) => !this.shownLocally(e)));
   }
