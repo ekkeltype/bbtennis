@@ -1,0 +1,26 @@
+Game idea: Black Belt Tennis
+*Keyboard typing skill game in a tennis wrapping
+*Plays in web browser
+*Tennis court and players as beautifully generated high-fidelity pixel art (console/retro feel)
+*Skill game vs friend or CPU, hosted on GitHub pages or itch.io (tell me about the tradeoffs)
+*Core of the game is a tennis match decided by keyboard typing ability
+*For multiplayer, one player hosts, other joins via game code. 
+*Menus, options and customizations are up to you.
+
+Core gameplay loop:
+Serve: Serving player gets the choice between three words
+
+Easy: (e.g "ball")
+Medium: (e.g "backhand")
+Hard: (e.g. "counterpuncher")
+
+Overlayed over the serving player and only visible to him after he tosses the ball up. He must type out one of the words ideally before the ball starts descending, but serve will be validf as long as he completes it before the ball is too low to strike. If he initiated typing but failed, the serve will be a fault. If no typing attempt was made, he can do another toss-up, but there is a total timer (say, 30 sec) before the serve will be considered a fault. New toss-up re-seeds the three words.
+
+Upon successfully typing one of the words, the player will strike the ball. Placement depends on the difficulty of the word, serve speed depends on the typing speed.
+
+Return:
+As soon as serving player strikes the ball, the returning player gets the same word overlayed, and upon completing the word, the player will move into position to return it, and gets three words overlayed at the opponent's side at different positions (These will be visible to both players, and the typing progress is visible to both). For example, the easy word will send an easy shot to the middle, while the hard word will be in the far corner. The speed and accuracy of typing affects the speed and accuracy of the ball. Mistyping the hard word has a high chance of sending the ball out of bounds.
+
+Back to player 1:
+The cycle continues. Player 1 now has to complete the same word to move into position to strike the ball, and gets three words/placements to choose between
+
