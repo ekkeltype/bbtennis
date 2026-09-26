@@ -108,3 +108,37 @@ describe('PlayerStore: stored data', () => {
     expect(store.profile.look.headband).toBe(9);
   });
 });
+
+describe('PlayerStore: a save that fails later (spec §5.4: say once that progress cannot be saved)', () => {
+  const full = (): void => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+  };
+
+  it('tells onSaveFailed on the first save that fails, once, and plays on with the change', () => {
+    const failed = vi.fn();
+    const store = new PlayerStore(failed);
+    store.setSettings({ pace: 'fast' });
+    expect(failed).not.toHaveBeenCalled();
+    full();
+    store.setSettings({ pace: 'normal' });
+    expect(failed).toHaveBeenCalledOnce();
+    store.recordCpuMatch(WHITE, finished(0));
+    store.setProfile({ ...DEFAULT_PROFILE, name: 'Zoe' }, true);
+    store.dismissTrainingOffer();
+    expect(failed).toHaveBeenCalledOnce();
+    expect(store.settings.pace).toBe('normal');
+    expect(store.settings.matchesPlayed).toBe(1);
+    expect(store.profile.name).toBe('Zoe');
+  });
+
+  it('loading never counts as a failed save', () => {
+    const failed = vi.fn();
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    new PlayerStore(failed);
+    expect(failed).not.toHaveBeenCalled();
+  });
+});

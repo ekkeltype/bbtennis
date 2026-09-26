@@ -21,7 +21,9 @@ const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
 /**
  * The player's stored data (spec §5.4): settings, profile and career, plus two flags: the headband is
  * the player's own choice (no more earned-belt default), and the first-launch Training offer was put
- * off. Loaded once (invalid or unreadable values fall back to the defaults), stored on every change.
+ * off. Loaded once (invalid or unreadable values fall back to the defaults), stored on every change;
+ * the first change that can't be stored (blocked storage, a full quota) calls `onSaveFailed`, once,
+ * and play goes on with the change kept for this visit.
  */
 export class PlayerStore {
   settings: Settings;
@@ -31,8 +33,9 @@ export class PlayerStore {
   readonly firstLaunch: boolean;
   private headbandChosen: boolean;
   private offerDismissed: boolean;
+  private saveFailed = false;
 
-  constructor() {
+  constructor(private readonly onSaveFailed: () => void = () => {}) {
     const settings = load<Settings | null>('settings', null, isSettings);
     this.firstLaunch = settings === null;
     this.settings = settings ?? clone(DEFAULT_SETTINGS);
@@ -45,16 +48,16 @@ export class PlayerStore {
   /** Applies and stores a settings change. */
   setSettings(patch: Partial<Settings>): void {
     this.settings = { ...this.settings, ...clone(patch) };
-    save('settings', this.settings);
+    this.save('settings', this.settings);
   }
 
   /** Stores the profile; `headbandChosen` marks its headband as the player's own choice, for good. */
   setProfile(profile: Profile, headbandChosen: boolean): void {
     this.profile = clone(profile);
-    save('profile', this.profile);
+    this.save('profile', this.profile);
     if (headbandChosen && !this.headbandChosen) {
       this.headbandChosen = true;
-      save('headbandChosen', true);
+      this.save('headbandChosen', true);
     }
   }
 
@@ -64,7 +67,7 @@ export class PlayerStore {
     const progress = { career: this.career, matchesPlayed: this.settings.matchesPlayed, headband: look.headband, headbandChosen: this.headbandChosen };
     const r = recordCpuMatch(progress, level, result);
     this.career = r.career;
-    save('career', this.career);
+    this.save('career', this.career);
     this.setSettings({ matchesPlayed: r.matchesPlayed });
     if (r.headband !== look.headband) this.setProfile({ ...this.profile, look: { ...look, headband: r.headband } }, false);
     return r.newBelt;
@@ -78,6 +81,12 @@ export class PlayerStore {
   /** The player put the Training offer off (Later): it is not shown again. */
   dismissTrainingOffer(): void {
     this.offerDismissed = true;
-    save('trainingOfferDismissed', true);
+    this.save('trainingOfferDismissed', true);
+  }
+
+  private save(key: string, v: unknown): void {
+    if (save(key, v) || this.saveFailed) return;
+    this.saveFailed = true;
+    this.onSaveFailed();
   }
 }
