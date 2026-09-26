@@ -14,7 +14,8 @@ import type {
   TurnState,
   ViewModel,
 } from '../../src/core/types';
-import { BELT_COLOR, RAMPS } from '../../src/render/palette';
+import { contrastRatio, relativeLuminance } from '../../src/render/color';
+import { BELT_COLOR, PAL, RAMPS } from '../../src/render/palette';
 import {
   Hud,
   PAUSE_ICON_RECT,
@@ -110,6 +111,35 @@ describe('scoreboard', () => {
     expect(rows.map((r) => r.games)).toEqual([1, 3]);
     expect(rows.map((r) => r.points)).toEqual(['', 'AD']);
     expect(rows.map((r) => r.serving)).toEqual([false, true]);
+  });
+
+  it("shows a set won in a tiebreak with the loser's points as a superscript beside their games", () => {
+    const score: ScoreState = {
+      ...createScore('bo3', 'advantage', 0),
+      setGames: [[4, 5], [5, 4]],
+      setTiebreaks: [[3, 7], [7, 5]],
+      games: [1, 0],
+      setsWon: [1, 1],
+    };
+    const rows = scoreRows(matchState(null, null, { score }));
+    expect(rows.map((r) => r.sets)).toEqual([[4, 5], [5, 4]]);
+    expect(rows.map((r) => r.setCells)).toEqual([
+      [{ value: 4, sup: 3 }, { value: 5, sup: null }],
+      [{ value: 5, sup: null }, { value: 4, sup: 5 }],
+    ]);
+  });
+
+  it('shows a finished Tiebreak-format match by its final tiebreak points instead of a 1-0 set column', () => {
+    const score: ScoreState = {
+      ...createScore('tiebreak', 'advantage', 0),
+      setGames: [[1, 0]],
+      setTiebreaks: [[7, 5]],
+      inTiebreak: false,
+      setsWon: [1, 0],
+      winner: 0,
+    };
+    const rows = scoreRows(matchState(null, null, { score, status: 'over', winner: 0 }));
+    expect(rows.map((r) => r.setCells)).toEqual([[{ value: 7, sup: null }], [{ value: 5, sup: null }]]);
   });
 
   it('shows no serve dot once the match is over', () => {
@@ -278,13 +308,21 @@ describe('banners', () => {
   });
 });
 
-/** A 2D context stand-in that records every filled rectangle with its fill style, and the name of every drawing call. */
+/** A box on the frame: top-left corner and size. */
+interface Box { x: number; y: number; w: number; h: number }
+
+/**
+ * A 2D context stand-in that records every filled rectangle with its fill style, where every image
+ * (a glyph from the font atlas) lands, and the name of every drawing call.
+ */
 function recordingContext(): {
   ctx: CanvasRenderingContext2D;
-  rects: { x: number; y: number; w: number; h: number; style: string }[];
+  rects: (Box & { style: string })[];
+  images: Box[];
   calls: string[];
 } {
-  const rects: { x: number; y: number; w: number; h: number; style: string }[] = [];
+  const rects: (Box & { style: string })[] = [];
+  const images: Box[] = [];
   const calls: string[] = [];
   const state: Record<string, unknown> = {
     fillStyle: '#000000',
@@ -292,6 +330,10 @@ function recordingContext(): {
     fillRect(x: number, y: number, w: number, h: number) {
       calls.push('fillRect');
       rects.push({ x, y, w, h, style: String(state.fillStyle) });
+    },
+    drawImage(...args: number[]) {
+      calls.push('drawImage');
+      if (args.length === 9) images.push({ x: args[5]!, y: args[6]!, w: args[7]!, h: args[8]! });
     },
   };
   const ctx = new Proxy(state, {
@@ -301,7 +343,7 @@ function recordingContext(): {
       return true;
     },
   }) as unknown as CanvasRenderingContext2D;
-  return { ctx, rects, calls };
+  return { ctx, rects, images, calls };
 }
 
 /** An offscreen canvas for the font atlas whose context accepts and ignores every call. */
@@ -328,6 +370,108 @@ describe('Hud.draw', () => {
     const { ctx, rects } = recordingContext();
     new Hud().draw(ctx, worldFrame(view(matchState(t), 100)), PREFS);
     expect(scoreboardPainted(rects)).toBe(true);
+  });
+
+  /** The HUD of a frame with no turn running, over `over` (score, players, status), as player 0 sees it. */
+  function drawBoard(over: Partial<MatchState>): ReturnType<typeof recordingContext> {
+    const rec = recordingContext();
+    new Hud().draw(rec.ctx, worldFrame(view(matchState(null, null, over), 0)), PREFS);
+    return rec;
+  }
+
+  /** Top row of scoreboard row `i`: its name, set, games and points glyphs start there. */
+  const rowTop = (i: 0 | 1): number => 2 + 9 * i;
+
+  /** Every pixel the rectangles cover, as "x,y" keys. */
+  const pixelsOf = (boxes: Box[]): Set<string> => {
+    const out = new Set<string>();
+    for (const r of boxes) for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) out.add(`${x},${y}`);
+    return out;
+  };
+
+  it("draws the tiebreak loser's points as a small 3×5 superscript digit beside their games, top-aligned with them", () => {
+    const score: ScoreState = {
+      ...createScore('full', 'advantage', 0),
+      setGames: [[7, 6]],
+      setTiebreaks: [[7, 5]],
+      setsWon: [1, 0],
+      winner: 0,
+    };
+    const { rects, images } = drawBoard({ score, status: 'over', winner: 0 });
+    const pixels = pixelsOf(rects.filter((r) => r.style === PAL.silver));
+    const x0 = Math.min(...[...pixels].map((p) => Number(p.split(',')[0])));
+    const want = new Set<string>();
+    ['###', '#..', '###', '..#', '###'].forEach((row, dy) =>
+      [...row].forEach((c, dx) => {
+        if (c === '#') want.add(`${x0 + dx},${rowTop(1) + 1 + dy}`);
+      }),
+    );
+    expect(pixels).toEqual(want);
+    // One px right of the loser's 6, left of the games column (x 125).
+    const six = images.filter((b) => b.y === rowTop(1) && b.x + b.w + 1 === x0);
+    expect(six).toHaveLength(1);
+    expect(x0 + 3).toBeLessThan(125);
+  });
+
+  it('keeps the glyphs of a row apart, cutting a long name short before wide set columns', () => {
+    const score: ScoreState = {
+      ...createScore('bo3', 'advantage', 0),
+      setGames: [[5, 4], [4, 5], [5, 4]],
+      setTiebreaks: [[12, 10], [10, 12], [13, 11]],
+      setsWon: [2, 1],
+      winner: 0,
+    };
+    const players = matchState(null).players;
+    const long = { ...players[0], name: 'Alexandra Li' };
+    const { rects, images } = drawBoard({ score, status: 'over', winner: 0, players: [long, players[1]] });
+    for (const i of [0, 1] as const) {
+      const inRow = (b: Box): boolean => b.y >= rowTop(i) && b.y < rowTop(i) + 9;
+      const glyphs = images.filter(inRow);
+      const sup = pixelsOf(rects.filter((r) => r.style === PAL.silver && inRow(r)));
+      // The name's glyphs, then 3 sets, games and points: 'KAI' in full, 'ALEXANDRA LI' cut to 'ALEXANDRA'.
+      expect(glyphs.length - 5).toBe(i === 0 ? 'ALEXANDRA'.length : 'KAI'.length);
+      expect(sup.size).toBeGreaterThan(0);
+      const sorted = [...glyphs].sort((a, b) => a.x - b.x);
+      for (let k = 1; k < sorted.length; k++) {
+        const [a, b] = [sorted[k - 1]!, sorted[k]!];
+        expect(b.x, `row ${i}: glyph at ${b.x} after ${a.x}+${a.w}`).toBeGreaterThan(a.x + a.w);
+      }
+      // No superscript pixel lies on a glyph cell or right next to one.
+      for (const key of sup) {
+        const [x, y] = key.split(',').map(Number) as [number, number];
+        for (const g of glyphs) expect(x < g.x - 1 || x > g.x + g.w || y < g.y || y >= g.y + g.h, `row ${i}: ${key}`).toBe(true);
+      }
+      expect(Math.max(...glyphs.map((b) => b.x + b.w))).toBeLessThanOrEqual(150);
+    }
+  });
+
+  it("gives a dark belt swatch (black, navy, brown) a light 1 px inner outline in its highlight shade, so it never reads as an empty slot", () => {
+    /** The swatch of row `i` as painted, in order: the 5×7 frame, then what is painted inside it. */
+    const swatch = (players: MatchState['players'], i: 0 | 1): (Box & { style: string })[] =>
+      drawBoard({ players }).rects.filter((r) => r.x >= 8 && r.x + r.w <= 13 && r.y >= rowTop(i) + 1 && r.y + r.h <= rowTop(i) + 8);
+    const human = (shirt: number): MatchState['players'][0] => ({ name: 'Al', look: { ...LOOK, shirt }, kind: 'human', cpuLevel: null });
+    const cpu = (cpuLevel: number): MatchState['players'][1] => ({ name: 'Kai', look: LOOK, kind: 'cpu', cpuLevel });
+    const frame = (i: 0 | 1): Box & { style: string } => ({ x: 8, y: rowTop(i) + 1, w: 5, h: 7, style: PAL.grey });
+    const plain = (i: 0 | 1, ramp: readonly string[]): (Box & { style: string })[] => [frame(i), { x: 9, y: rowTop(i) + 2, w: 3, h: 5, style: ramp[1]! }];
+    const rimmed = (i: 0 | 1, ramp: readonly string[]): (Box & { style: string })[] => [
+      frame(i),
+      { x: 9, y: rowTop(i) + 2, w: 3, h: 5, style: ramp[0]! },
+      { x: 10, y: rowTop(i) + 3, w: 1, h: 3, style: ramp[1]! },
+    ];
+    const cloth = (i: number): readonly string[] => RAMPS.cloth[i]!;
+    expect([CPU_LEVELS[12]!.belt, CPU_LEVELS[0]!.belt]).toEqual(['black', 'white']);
+    expect(swatch([human(7), cpu(12)], 1)).toEqual(rimmed(1, cloth(BELT_COLOR.black)));
+    expect(swatch([human(7), cpu(12)], 0)).toEqual(rimmed(0, cloth(7)));
+    expect(swatch([human(6), cpu(0)], 1)).toEqual(plain(1, cloth(BELT_COLOR.white)));
+    // Every cloth colour: under 3:1 against the panel it gets the inner outline (brown, black, navy).
+    const dark: number[] = [];
+    RAMPS.cloth.forEach((ramp, shirt) => {
+      const isDark = contrastRatio(ramp[1], PAL.night) < 3;
+      if (isDark) dark.push(shirt);
+      expect(swatch([human(shirt), cpu(0)], 0), `cloth ${shirt}`).toEqual(isDark ? rimmed(0, ramp) : plain(0, ramp));
+      if (isDark) expect(relativeLuminance(ramp[0])).toBeGreaterThan(relativeLuminance(ramp[1]));
+    });
+    expect(dark).toEqual([BELT_COLOR.brown, BELT_COLOR.black, 7]);
   });
 
   it('replaces the scoreboard with the coach text in the HUD band (spec §3.12)', () => {

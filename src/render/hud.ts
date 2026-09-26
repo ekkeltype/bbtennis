@@ -1,11 +1,12 @@
 import { CPU_LEVELS } from '../core/cpu';
-import { currentServer, pointsDisplay, situation } from '../core/scoring';
+import { currentServer, pointsDisplay, setLine, situation, type SetCell } from '../core/scoring';
 import { TUNING } from '../core/tuning';
 import type { DisplayPrefs, LeadIn, PlayerInfo, PublicState } from '../core/types';
 import { clamp, easeOutQuad } from '../core/util';
+import { contrastRatio } from './color';
 import { checker } from './court';
 import { drawText, FONT, textWidth } from './font';
-import { BELT_COLOR, OUTLINE, PAL, RAMPS } from './palette';
+import { BELT_COLOR, OUTLINE, PAL, RAMPS, type Ramp } from './palette';
 import { H, W } from './projection';
 import { createLayer, type Layer } from './screen';
 import type { WorldFrame } from './world';
@@ -13,8 +14,22 @@ import type { WorldFrame } from './world';
 /** The on-screen pause button (spec §4.3), top-right in the HUD band, in 480×270 buffer pixels. */
 export const PAUSE_ICON_RECT: Readonly<{ x: number; y: number; w: number; h: number }> = { x: 462, y: 3, w: 15, h: 15 };
 
-/** One scoreboard row: upper-case name, belt colour, games of completed sets, current games and points, serve dot. */
-export interface ScoreRow { name: string; belt: string; sets: number[]; games: number; points: string; serving: boolean }
+/**
+ * One scoreboard row: upper-case name, belt colour and, for a belt too dark to read on the panel, the
+ * light 1 px inner outline of its swatch (null otherwise), games of completed sets, the set columns as
+ * drawn (`setLine`: tiebreak superscripts, the Tiebreak format's points), current games and points,
+ * serve dot.
+ */
+export interface ScoreRow {
+  name: string;
+  belt: string;
+  beltRim: string | null;
+  sets: number[];
+  setCells: SetCell[];
+  games: number;
+  points: string;
+  serving: boolean;
+}
 
 /** A banner line and the time since it appeared (a line can join a banner that is already up). */
 export interface BannerLine { text: string; ageMs: number }
@@ -39,25 +54,41 @@ const BANNER_LINE_H = 18;
 /** The serve clock turns yellow (never red) for its last seconds. */
 const CLOCK_WARN_S = 5;
 
+/** Belt colours under this contrast against the scoreboard panel (black, navy, brown) get a swatch rim. */
+const SWATCH_MIN_CONTRAST = 3;
+
+/** The cloth ramp of a player's belt colour (see `beltColor`), if there is one. */
+function beltRamp(p: PlayerInfo): Ramp | undefined {
+  const level = p.kind === 'cpu' && p.cpuLevel !== null ? CPU_LEVELS[p.cpuLevel] : undefined;
+  return level ? RAMPS.cloth[BELT_COLOR[level.belt]] : RAMPS.cloth[p.look.headband ?? p.look.shirt];
+}
+
 /**
  * A player's belt colour for the scoreboard swatch and remote name chips: a CPU's belt (spec §3.8),
  * a human's headband colour if they wear one, else their shirt colour.
  */
 export function beltColor(p: PlayerInfo): string {
-  const level = p.kind === 'cpu' && p.cpuLevel !== null ? CPU_LEVELS[p.cpuLevel] : undefined;
-  const ramp = level ? RAMPS.cloth[BELT_COLOR[level.belt]] : RAMPS.cloth[p.look.headband ?? p.look.shirt];
-  return ramp?.[1] ?? PAL.grey;
+  return beltRamp(p)?.[1] ?? PAL.grey;
+}
+
+/** The highlight shade of a belt too dark to read on the scoreboard panel, for its swatch's inner outline. */
+function beltRim(p: PlayerInfo): string | null {
+  const ramp = beltRamp(p);
+  return ramp && contrastRatio(ramp[1], PAL.night) < SWATCH_MIN_CONTRAST ? ramp[0] : null;
 }
 
 /** Both scoreboard rows (spec §4.3); the serve dot marks the current server while the match is on. */
 export function scoreRows(pub: PublicState): [ScoreRow, ScoreRow] {
   const s = pub.score;
   const points = pointsDisplay(s);
+  const cells = setLine(s);
   const server = pub.status === 'playing' && s.winner === null ? currentServer(s) : null;
   const row = (p: 0 | 1): ScoreRow => ({
     name: pub.players[p].name.toUpperCase(),
     belt: beltColor(pub.players[p]),
+    beltRim: beltRim(pub.players[p]),
     sets: s.setGames.map((g) => g[p]),
+    setCells: cells[p],
     games: s.games[p],
     points: points[p],
     serving: server === p,
@@ -161,13 +192,67 @@ function shadowText(ctx: CanvasRenderingContext2D, s: string, x: number, y: numb
 const BOARD = { x: 2, y: 1, w: 149, h: 20, row: 9 };
 const POINTS_W = 16;
 const GAMES_W = 9;
-const SET_W = 8;
+const NAME_X = BOARD.x + 13;
+/** A set column: 1 px before its numbers and 2 px after them (8 px for one digit). */
+const SET_PAD = { left: 1, right: 2 };
+
+/** Superscript digits (3×5), drawn 1 px right of the number they belong to, level with its top. */
+const SUP_DIGITS: readonly (readonly string[])[] = [
+  ['###', '#.#', '#.#', '#.#', '###'],
+  ['.#.', '##.', '.#.', '.#.', '###'],
+  ['###', '..#', '###', '#..', '###'],
+  ['###', '..#', '.##', '..#', '###'],
+  ['#.#', '#.#', '###', '..#', '..#'],
+  ['###', '#..', '###', '..#', '###'],
+  ['###', '#..', '###', '#.#', '###'],
+  ['###', '..#', '..#', '.#.', '.#.'],
+  ['###', '#.#', '###', '#.#', '###'],
+  ['###', '#.#', '###', '..#', '###'],
+];
+const SUP_GAP = 1;
+
+const supWidth = (n: number): number => String(n).length * 4 - 1;
+
+function drawSup(ctx: CanvasRenderingContext2D, n: number, x: number, y: number, color: string): void {
+  ctx.fillStyle = color;
+  [...String(n)].forEach((d, i) => {
+    SUP_DIGITS[Number(d)]?.forEach((row, dy) => {
+      for (let dx = 0; dx < row.length; dx++) if (row[dx] === '#') ctx.fillRect(x + 4 * i + dx, y + dy, 1, 1);
+    });
+  });
+}
+
+/** A set column: its left edge and the x its numbers end at (right-aligned; a superscript follows). */
+interface SetColumn { x: number; numbersEnd: number }
+
+/** The set columns of both rows, laid right to left so the last one ends at `right`. */
+function setColumns(rows: [ScoreRow, ScoreRow], right: number): SetColumn[] {
+  const cols: SetColumn[] = [];
+  let x = right;
+  for (let k = rows[0].setCells.length - 1; k >= 0; k--) {
+    const cells = rows.flatMap((r) => r.setCells[k] ?? []);
+    const numbers = Math.max(...cells.map((c) => textWidth(String(c.value))));
+    const sups = Math.max(0, ...cells.map((c) => (c.sup === null ? 0 : SUP_GAP + supWidth(c.sup))));
+    x -= SET_PAD.left + numbers + sups + SET_PAD.right;
+    cols.unshift({ x, numbersEnd: x + SET_PAD.left + numbers });
+  }
+  return cols;
+}
+
+/** `name` cut short (trailing spaces dropped) to at most `maxW` px. */
+function fitName(name: string, maxW: number): string {
+  let out = name;
+  while (out.length > 0 && textWidth(out) > maxW) out = out.slice(0, -1).trimEnd();
+  return out;
+}
 
 function drawScoreboard(ctx: CanvasRenderingContext2D, pub: PublicState): void {
   const rows = scoreRows(pub);
   const right = BOARD.x + BOARD.w - 1;
   const pointsX = right - POINTS_W;
   const gamesX = pointsX - GAMES_W;
+  const cols = setColumns(rows, gamesX);
+  const nameW = (cols[0]?.x ?? gamesX) - 1 - NAME_X;
   panel(ctx, BOARD.x, BOARD.y, BOARD.w, BOARD.h);
   rect(ctx, pointsX, BOARD.y + 1, POINTS_W, BOARD.h - 2, PAL.gold);
   rect(ctx, BOARD.x + 1, BOARD.y + BOARD.row + 1, BOARD.w - 2, 1, PAL.shadow);
@@ -180,9 +265,16 @@ function drawScoreboard(ctx: CanvasRenderingContext2D, pub: PublicState): void {
       rect(ctx, BOARD.x + 2, top + 5, 3, 1, PAL.ballShade);
     }
     rect(ctx, BOARD.x + 6, top + 1, 5, 7, PAL.grey);
-    rect(ctx, BOARD.x + 7, top + 2, 3, 5, r.belt);
-    drawText(ctx, r.name, BOARD.x + 13, top, PAL.cream);
-    r.sets.forEach((g, k) => centred(String(g), gamesX - SET_W * (r.sets.length - k), SET_W, top, PAL.silver));
+    rect(ctx, BOARD.x + 7, top + 2, 3, 5, r.beltRim ?? r.belt);
+    if (r.beltRim !== null) rect(ctx, BOARD.x + 8, top + 3, 1, 3, r.belt);
+    drawText(ctx, fitName(r.name, nameW), NAME_X, top, PAL.cream);
+    r.setCells.forEach((c, k) => {
+      const col = cols[k]!;
+      const text = String(c.value);
+      drawText(ctx, text, col.numbersEnd - textWidth(text), top, PAL.silver);
+      // Level with the top of the digits (glyph row 1).
+      if (c.sup !== null) drawSup(ctx, c.sup, col.numbersEnd + SUP_GAP, top + 1, PAL.silver);
+    });
     centred(String(r.games), gamesX, GAMES_W, top, PAL.white);
     centred(r.points, pointsX, POINTS_W, top, OUTLINE);
   });
