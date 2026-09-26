@@ -1,6 +1,7 @@
 import { CPU_LEVELS } from '../core/cpu';
 import { currentServer, pointsDisplay, situation } from '../core/scoring';
-import type { DisplayPrefs, PlayerInfo, PublicState } from '../core/types';
+import { TUNING } from '../core/tuning';
+import type { DisplayPrefs, LeadIn, PlayerInfo, PublicState } from '../core/types';
 import { clamp, easeOutQuad } from '../core/util';
 import { checker } from './court';
 import { drawText, FONT, textWidth } from './font';
@@ -15,17 +16,26 @@ export const PAUSE_ICON_RECT: Readonly<{ x: number; y: number; w: number; h: num
 /** One scoreboard row: upper-case name, belt colour, games of completed sets, current games and points, serve dot. */
 export interface ScoreRow { name: string; belt: string; sets: number[]; games: number; points: string; serving: boolean }
 
+/** A banner line and the time since it appeared (a line can join a banner that is already up). */
+export interface BannerLine { text: string; ageMs: number }
+
 /** A banner: its lines, time since it appeared, time left (null = stays) and whether it is the small kind. */
-export interface Banner { lines: string[]; ageMs: number; leftMs: number | null; small: boolean }
+export interface Banner { lines: BannerLine[]; ageMs: number; leftMs: number | null; small: boolean }
+
+/** One banner of a lead-in (lead-in τ): its lines with the time each joins, its span, and whether it is the point call. */
+export interface LeadInBanner { lines: { text: string; atMs: number }[]; fromMs: number; toMs: number; point: boolean }
 
 /** How long the speed readout stays after a strike, then fades. */
 const SPEED_SHOW_MS = 2000;
 const SPEED_FADE_MS = 500;
 /** The situation banner (MATCH POINT, DEUCE…) at the start of PRE_SERVE. */
 const SITUATION_MS = 1500;
-/** Banner slide-in and fade-out. */
+/** Banner slide-in (the banner and each line joining it) and fade-out. */
 const BANNER_IN_MS = 180;
 const BANNER_OUT_MS = 250;
+/** Top row of the call banners: a one-line banner is centred on y 96; longer ones grow downward from here. */
+const BANNER_TOP = 83;
+const BANNER_LINE_H = 18;
 /** The serve clock turns yellow (never red) for its last seconds. */
 const CLOCK_WARN_S = 5;
 
@@ -73,24 +83,61 @@ export function speedReadout(f: WorldFrame): { kmh: number; alpha: number } | nu
 }
 
 /**
- * The banner to show (spec §4.3): the lead-in's text lines during a serve turn's lead-in, the
- * situation (MATCH POINT, BREAK POINT, DEUCE…) as PRE_SERVE begins, and the champion at match end.
+ * The banners a lead-in plays in order (spec §3.1, R30). A double fault's lead-in starts with the
+ * fault call (FAULT + reason) for faultMs, then the point call takes over. In a point call the call
+ * line shows first; the GAME and SET lines join the same banner as their parts begin (after pointMs,
+ * then after gameExtraMs). An intro or a first-serve fault is one banner for the whole lead-in. If
+ * `leadIn.ms` differs from the tuned total, every part is scaled to fill it.
+ */
+export function leadInBanners(leadIn: LeadIn): LeadInBanner[] {
+  const { text, ms, kind } = leadIn;
+  if (text.length === 0) return [];
+  if (kind !== 'point') return [{ lines: text.map((t) => ({ text: t, atMs: 0 })), fromMs: 0, toMs: ms, point: false }];
+  const lead = TUNING.leadIn;
+  const fault = text[0] === 'FAULT' && text.length > 2 ? text.slice(0, 2) : [];
+  const call = text.slice(fault.length);
+  // The part each call line opens: the point call itself, then the GAME and SET extras.
+  const parts: number[] = call.map((_, i) => [lead.pointMs, lead.gameExtraMs, lead.setExtraMs][i] ?? 0);
+  const tuned = (fault.length > 0 ? lead.faultMs : 0) + parts.reduce((sum, part) => sum + part, 0);
+  const k = tuned > 0 ? ms / tuned : 1;
+  const callFrom = fault.length > 0 ? lead.faultMs * k : 0;
+  const banners: LeadInBanner[] = [];
+  if (fault.length > 0) banners.push({ lines: fault.map((t) => ({ text: t, atMs: 0 })), fromMs: 0, toMs: callFrom, point: false });
+  let at = callFrom;
+  const lines = call.map((t, i) => {
+    const line = { text: t, atMs: at };
+    at += parts[i]! * k;
+    return line;
+  });
+  banners.push({ lines, fromMs: callFrom, toMs: ms, point: true });
+  return banners;
+}
+
+/**
+ * The banner to show (spec §4.3): during a serve turn's lead-in, its current banner with the lines
+ * that have joined so far (`leadInBanners`); the situation (MATCH POINT, BREAK POINT, DEUCE…) as
+ * PRE_SERVE begins; and the champion at match end.
  */
 export function bannerFor(f: WorldFrame): Banner | null {
   if (!f.turn || !f.view) {
     const w = f.pub.winner;
     if (f.pub.status !== 'over' || w === null) return null;
-    return { lines: ['GAME, SET AND MATCH', f.pub.players[w].name.toUpperCase()], ageMs: f.overMs, leftMs: null, small: false };
+    const lines = ['GAME, SET AND MATCH', f.pub.players[w].name.toUpperCase()].map((text) => ({ text, ageMs: f.overMs }));
+    return { lines, ageMs: f.overMs, leftMs: null, small: false };
   }
   const d = f.turn.data;
   const v = f.view;
   if (d.kind !== 'serve') return null;
   if (v.phase === 'leadIn') {
-    return d.leadIn.text.length > 0 ? { lines: d.leadIn.text, ageMs: f.τ, leftMs: d.leadIn.ms - f.τ, small: false } : null;
+    const τ = f.τ;
+    const b = leadInBanners(d.leadIn).find((x) => τ >= x.fromMs && τ < x.toMs);
+    if (!b) return null;
+    const lines = b.lines.filter((l) => l.atMs <= τ).map((l) => ({ text: l.text, ageMs: τ - l.atMs }));
+    return { lines, ageMs: τ - b.fromMs, leftMs: b.toMs - τ, small: false };
   }
   const age = f.τ - d.leadIn.ms;
   const text = v.phase === 'preServe' && v.prompts.length === 0 && age < SITUATION_MS ? situation(f.pub.score) : null;
-  return text ? { lines: [text], ageMs: age, leftMs: SITUATION_MS - age, small: true } : null;
+  return text ? { lines: [{ text, ageMs: age }], ageMs: age, leftMs: SITUATION_MS - age, small: true } : null;
 }
 
 function rect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string): void {
@@ -189,25 +236,25 @@ function readout(ctx: CanvasRenderingContext2D, text: string, right: number, y: 
   ctx.restore();
 }
 
+/** Share of the screen width that something `ageMs` into its slide-in still lies to the left. */
+const slideLeft = (ageMs: number): number => 1 - easeOutQuad(clamp(ageMs / BANNER_IN_MS, 0, 1));
+
 function drawBanner(ctx: CanvasRenderingContext2D, b: Banner): void {
-  const slide = 1 - easeOutQuad(clamp(b.ageMs / BANNER_IN_MS, 0, 1));
   const alpha = b.leftMs === null ? 1 : clamp(b.leftMs / BANNER_OUT_MS, 0, 1);
   if (alpha <= 0) return;
-  const lineH = 18;
-  const h = b.lines.length * lineH + 8;
-  const top = Math.round(96 - h / 2);
-  const widest = Math.max(...b.lines.map((l) => textWidth(l, 2)));
+  const h = b.lines.length * BANNER_LINE_H + 8;
+  const widest = Math.max(...b.lines.map((l) => textWidth(l.text, 2)));
   const w = b.small ? widest + 24 : W;
-  const x = Math.round((W - w) / 2 - slide * W);
+  const x = Math.round((W - w) / 2 - slideLeft(b.ageMs) * W);
   ctx.save();
   ctx.globalAlpha = alpha;
-  rect(ctx, x, top, w, h, OUTLINE);
-  rect(ctx, x, top + 1, w, 1, PAL.gold);
-  rect(ctx, x, top + 2, w, h - 4, PAL.night);
-  rect(ctx, x, top + h - 2, w, 1, PAL.gold);
+  rect(ctx, x, BANNER_TOP, w, h, OUTLINE);
+  rect(ctx, x, BANNER_TOP + 1, w, 1, PAL.gold);
+  rect(ctx, x, BANNER_TOP + 2, w, h - 4, PAL.night);
+  rect(ctx, x, BANNER_TOP + h - 2, w, 1, PAL.gold);
   b.lines.forEach((line, i) => {
-    const tx = x + Math.round((w - textWidth(line, 2)) / 2);
-    shadowText(ctx, line, tx, top + 3 + i * lineH, i === 0 ? PAL.white : PAL.gold, 2);
+    const tx = Math.round((W - textWidth(line.text, 2)) / 2 - slideLeft(line.ageMs) * W);
+    shadowText(ctx, line.text, tx, BANNER_TOP + 3 + i * BANNER_LINE_H, i === 0 ? PAL.white : PAL.gold, 2);
   });
   ctx.restore();
 }

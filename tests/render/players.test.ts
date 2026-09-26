@@ -3,6 +3,7 @@ import { receiverSpot, restSpot, serverSpot } from '../../src/core/court';
 import { createScore } from '../../src/core/scoring';
 import { stanceFor } from '../../src/core/trajectory';
 import { createTurn, startTurn, turnClock, turnInput } from '../../src/core/turn';
+import { TUNING } from '../../src/core/tuning';
 import {
   other,
   type BallFlight,
@@ -17,6 +18,7 @@ import {
 } from '../../src/core/types';
 import { dist2 } from '../../src/core/util';
 import { PlayerAnimator, type PlayerPose } from '../../src/render/players';
+import { ANIMS } from '../../src/render/sprites/animations';
 import { flight, opt, returnData, serveData, serveSet } from '../core/turnFixtures';
 
 const LOOK: Look = { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 };
@@ -244,6 +246,30 @@ describe('PlayerAnimator', () => {
       expect(poses[winner].anim).toBe('celebrate');
       expect(poses[other(winner)].anim).toBe('dejected');
     }
+  });
+
+  it('starts celebrating a double fault only when its point call follows the FAULT call (R30)', () => {
+    // The second serve runs out of time: player 1 wins the point on a double fault.
+    const fault = createTurn(serveData({ serveNo: 2 }));
+    startTurn(fault);
+    turnClock(fault, 2500 + 30000 + 16);
+    expect(fault.outcome).toMatchObject({ kind: 'fault', reason: 'timeViolation' });
+    const { faultMs, pointMs } = TUNING.leadIn;
+    const next = createTurn(
+      serveData({ turnId: 9, leadIn: { kind: 'point', ms: faultMs + pointMs, text: ['FAULT', 'TIME VIOLATION', 'DOUBLE FAULT'] } }),
+    );
+    startTurn(next);
+    const a = new PlayerAnimator();
+    const at = (τ: number): [PlayerPose, PlayerPose] => a.update(view(matchState(next, fault), τ), 16);
+    for (let τ = 0; τ < faultMs; τ += 16) {
+      const poses = at(τ);
+      expect(poses.map((p) => p.anim)).not.toContain('celebrate');
+      expect(poses.map((p) => p.anim)).not.toContain('dejected');
+    }
+    const start = at(faultMs + 10);
+    expect(start[1]).toMatchObject({ anim: 'celebrate', frame: 0 });
+    expect(start[0]).toMatchObject({ anim: 'dejected', frame: 0 });
+    expect(at(faultMs + ANIMS.celebrate.msPerFrame + 10)[1]).toMatchObject({ anim: 'celebrate', frame: 1 });
   });
 
   it('celebrates the match winner once the match is over', () => {

@@ -4,6 +4,7 @@ import { TUNING } from '../core/tuning';
 import { turnViewAt, type TurnView } from '../core/turnView';
 import type { PlayerId, ReturnTurnData, ServeTurnData, StrikeInfo, TurnState, Vec2, ViewModel } from '../core/types';
 import { dist2 } from '../core/util';
+import { leadInBanners } from './hud';
 import { ANIMS, type AnimName, type View } from './sprites/animations';
 import { worldFrame, type WorldFrame } from './world';
 
@@ -181,12 +182,16 @@ export class PlayerAnimator {
   private planServe(f: WorldFrame, t: TurnState, d: ServeTurnData, v: TurnView, p: PlayerId): Plan {
     const spot = spotsOf(d)[p];
     if (v.phase === 'leadIn') {
-      if (d.leadIn.kind === 'fault') return { action: null, target: spot, speed: JOG_SPEED, snap: false };
-      if (d.leadIn.kind === 'point') {
+      // A point call (after a double fault's FAULT call, R30) is when winner and loser react.
+      const callAt = d.leadIn.kind === 'point' ? (leadInBanners(d.leadIn).find((b) => b.point)?.fromMs ?? 0) : null;
+      if (d.leadIn.kind === 'fault' || (callAt !== null && f.τ < callAt)) {
+        return { action: null, target: spot, speed: JOG_SPEED, snap: false };
+      }
+      if (callAt !== null) {
         const winner = pointWinner(f);
         if (winner === null) return STAY;
         const anim = winner === p ? 'celebrate' : 'dejected';
-        return { ...STAY, action: act(anim, loopFrame(anim, f.τ)) };
+        return { ...STAY, action: act(anim, loopFrame(anim, f.τ - callAt)) };
       }
     }
     const plan: Plan = { action: null, target: spot, speed: 0, snap: true };

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CPU_LEVELS } from '../../src/core/cpu';
 import { createScore } from '../../src/core/scoring';
 import { createTurn, startTurn, turnClock, turnInput } from '../../src/core/turn';
+import { TUNING } from '../../src/core/tuning';
 import type {
   DisplayPrefs,
   GameEvent,
@@ -19,9 +20,11 @@ import {
   PAUSE_ICON_RECT,
   bannerFor,
   beltColor,
+  leadInBanners,
   scoreRows,
   serveClockSeconds,
   speedReadout,
+  type Banner,
 } from '../../src/render/hud';
 import { worldFrame } from '../../src/render/world';
 import { RALLY_IN, flight, opt, returnData, serveData } from '../core/turnFixtures';
@@ -181,14 +184,76 @@ describe('speed readout', () => {
   });
 });
 
+describe('leadInBanners (R30)', () => {
+  const { faultMs, pointMs, gameExtraMs, setExtraMs } = TUNING.leadIn;
+  const line = (text: string, atMs: number): { text: string; atMs: number } => ({ text, atMs });
+
+  it('plays a double fault as the FAULT call for faultMs, then DOUBLE FAULT with its GAME line joining later', () => {
+    const ms = faultMs + pointMs + gameExtraMs;
+    const banners = leadInBanners({ kind: 'point', ms, text: ['FAULT', 'TIME VIOLATION', 'DOUBLE FAULT', 'GAME KAI'] });
+    expect(banners).toEqual([
+      { lines: [line('FAULT', 0), line('TIME VIOLATION', 0)], fromMs: 0, toMs: faultMs, point: false },
+      { lines: [line('DOUBLE FAULT', faultMs), line('GAME KAI', faultMs + pointMs)], fromMs: faultMs, toMs: ms, point: true },
+    ]);
+  });
+
+  it('adds the GAME and SET lines to a point call in order as their parts begin', () => {
+    const ms = pointMs + gameExtraMs + setExtraMs;
+    expect(leadInBanners({ kind: 'point', ms, text: ['OUT', 'GAME KAI', 'SET KAI'] })).toEqual([
+      {
+        lines: [line('OUT', 0), line('GAME KAI', pointMs), line('SET KAI', pointMs + gameExtraMs)],
+        fromMs: 0,
+        toMs: ms,
+        point: true,
+      },
+    ]);
+    expect(leadInBanners({ kind: 'point', ms: pointMs, text: ['ACE!'] })).toEqual([
+      { lines: [line('ACE!', 0)], fromMs: 0, toMs: pointMs, point: true },
+    ]);
+  });
+
+  it('shows an intro or a first-serve fault as one banner for the whole lead-in', () => {
+    expect(leadInBanners({ kind: 'fault', ms: faultMs, text: ['FAULT', 'NET'] })).toEqual([
+      { lines: [line('FAULT', 0), line('NET', 0)], fromMs: 0, toMs: faultMs, point: false },
+    ]);
+    expect(leadInBanners({ kind: 'intro', ms: 2500, text: ['ALEX TO SERVE'] })).toEqual([
+      { lines: [line('ALEX TO SERVE', 0)], fromMs: 0, toMs: 2500, point: false },
+    ]);
+    expect(leadInBanners({ kind: 'none', ms: 0, text: [] })).toEqual([]);
+  });
+
+  it('scales every part to fill a lead-in whose length differs from the tuned one', () => {
+    const tuned = faultMs + pointMs;
+    const [fault, call] = leadInBanners({ kind: 'point', ms: tuned / 2, text: ['FAULT', 'NET', 'DOUBLE FAULT'] });
+    expect(fault).toMatchObject({ fromMs: 0, toMs: faultMs / 2 });
+    expect(call).toMatchObject({ fromMs: faultMs / 2, toMs: tuned / 2, lines: [line('DOUBLE FAULT', faultMs / 2)] });
+  });
+});
+
 describe('banners', () => {
-  it('shows the lead-in text lines during the lead-in, sliding in and fading out', () => {
-    const t = serveTurn({ leadIn: { kind: 'point', ms: 2000, text: ['OUT', 'GAME KAI'] } });
-    const at = (τ: number): ReturnType<typeof bannerFor> => bannerFor(worldFrame(view(matchState(t), τ)));
-    expect(at(0)).toMatchObject({ lines: ['OUT', 'GAME KAI'], ageMs: 0, leftMs: 2000 });
-    expect(at(1500)).toMatchObject({ lines: ['OUT', 'GAME KAI'], ageMs: 1500, leftMs: 500 });
-    turnClock(t, 2100);
-    expect(at(2100)).toBeNull();
+  const { faultMs, pointMs, gameExtraMs } = TUNING.leadIn;
+  const texts = (b: Banner | null): string[] | undefined => b?.lines.map((l) => l.text);
+
+  it('shows a double fault\'s FAULT call first, then DOUBLE FAULT, each sliding in and fading out on its own', () => {
+    const ms = faultMs + pointMs + gameExtraMs;
+    const t = serveTurn({ leadIn: { kind: 'point', ms, text: ['FAULT', 'BALL DROPPED', 'DOUBLE FAULT', 'GAME KAI'] } });
+    const at = (τ: number): Banner | null => bannerFor(worldFrame(view(matchState(t), τ)));
+    expect(at(0)).toMatchObject({ ageMs: 0, leftMs: faultMs, small: false });
+    expect(texts(at(0))).toEqual(['FAULT', 'BALL DROPPED']);
+    expect(texts(at(faultMs - 1))).toEqual(['FAULT', 'BALL DROPPED']);
+    expect(at(faultMs - 1)?.leftMs).toBe(1);
+    expect(at(faultMs)).toMatchObject({ lines: [{ text: 'DOUBLE FAULT', ageMs: 0 }], ageMs: 0, leftMs: pointMs + gameExtraMs });
+    expect(texts(at(faultMs + pointMs - 1))).toEqual(['DOUBLE FAULT']);
+    expect(at(faultMs + pointMs + 100)).toMatchObject({
+      lines: [
+        { text: 'DOUBLE FAULT', ageMs: pointMs + 100 },
+        { text: 'GAME KAI', ageMs: 100 },
+      ],
+      ageMs: pointMs + 100,
+      leftMs: gameExtraMs - 100,
+    });
+    turnClock(t, ms + 100);
+    expect(at(ms + 100)).toBeNull();
   });
 
   it('announces the situation when PRE_SERVE begins', () => {
@@ -196,7 +261,8 @@ describe('banners', () => {
     const t = serveTurn({ side: 'ad' });
     turnClock(t, 2600);
     const pub = matchState(t, null, { score });
-    expect(bannerFor(worldFrame(view(pub, 2600)))).toMatchObject({ lines: ['BREAK POINT'], small: true });
+    const b = bannerFor(worldFrame(view(pub, 2600)));
+    expect(b).toMatchObject({ lines: [{ text: 'BREAK POINT', ageMs: 100 }], small: true });
     turnClock(t, 4500);
     expect(bannerFor(worldFrame(view(pub, 4500)))).toBeNull();
   });
@@ -207,7 +273,7 @@ describe('banners', () => {
     turnClock(last, RALLY_IN.T + RALLY_IN.grace);
     const pub = matchState(null, last, { status: 'over', winner: 1 });
     const b = bannerFor(worldFrame(view(pub, 0), 500));
-    expect(b?.lines).toEqual(['GAME, SET AND MATCH', 'KAI']);
+    expect(texts(b)).toEqual(['GAME, SET AND MATCH', 'KAI']);
     expect(b?.ageMs).toBe(500);
   });
 });
@@ -269,6 +335,25 @@ describe('Hud.draw', () => {
     expect(band.length).toBeGreaterThan(0);
     // Everything in the band stays clear of the speed/WPM readouts and the pause icon on the right.
     expect(Math.max(...band.map((r) => r.x + r.w))).toBeLessThanOrEqual(226);
+  });
+});
+
+describe('Hud.draw banners', () => {
+  beforeEach(() => vi.stubGlobal('OffscreenCanvas', FakeCanvas));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('grows the point call\'s banner downward as the GAME line joins, keeping the call line in place', () => {
+    const { pointMs, gameExtraMs } = TUNING.leadIn;
+    const t = serveTurn({ leadIn: { kind: 'point', ms: pointMs + gameExtraMs, text: ['OUT', 'GAME KAI'] } });
+    const panel = (τ: number): { y: number; h: number } | undefined => {
+      const { ctx, rects } = recordingContext();
+      new Hud().draw(ctx, worldFrame(view(matchState(t), τ)), PREFS);
+      return rects.find((r) => r.x === 0 && r.w === 480 && r.h > 20 && r.y > 21);
+    };
+    const before = panel(pointMs - 300);
+    const after = panel(pointMs + 300);
+    expect(before).toBeDefined();
+    expect(after).toEqual({ ...before, h: before!.h + 18 });
   });
 });
 
