@@ -1,8 +1,9 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Tier, WordOption } from '../../src/core/types';
+import { contrastRatio } from '../../src/render/color';
 import { GLYPHS, textWidth } from '../../src/render/font';
 import type { PlateBox } from '../../src/render/layout';
-import { OUTLINE, PAL, PLATE, TIER_COLOR } from '../../src/render/palette';
+import { BELT_COLOR, OUTLINE, PAL, PLATE, RAMPS, TIER_COLOR, TIER_TYPED } from '../../src/render/palette';
 import { drawLeader, drawPlate, drawTierRing, drawTimingBar, type PlateDraw } from '../../src/render/plates';
 
 /** A minimal software 2D canvas: whole-pixel fillRect and 1:1 drawImage with source-over alpha. */
@@ -207,11 +208,11 @@ describe('drawPlate — local active', () => {
     }
   });
 
-  it('draws typed letters in the tier colour, the next letter as an inverse block, the rest near-white', () => {
+  it("draws typed letters in the tier's typed shade, the next letter as an inverse block, the rest near-white", () => {
     const g = scene();
     const p = plate('rally', { typed: 2, isNextCursor: true });
     drawPlate(as2d(g), p);
-    const tier = TIER_COLOR.easy;
+    const tier = TIER_TYPED.easy;
     [...'rally'].forEach((ch, i) => {
       const { x, y } = cell(p.box, i);
       if (i < 2) expectGlyph(g, x, y, ch, tier, PLATE.fill);
@@ -226,7 +227,7 @@ describe('drawPlate — local active', () => {
     drawPlate(as2d(g), p);
     [...'ace'].forEach((ch, i) => {
       const { x, y } = cell(p.box, i);
-      expectGlyph(g, x, y, ch, TIER_COLOR.easy, PLATE.fill);
+      expectGlyph(g, x, y, ch, TIER_TYPED.easy, PLATE.fill);
     });
   });
 
@@ -326,10 +327,9 @@ describe('drawPlate — fading', () => {
 });
 
 describe('drawPlate — remote', () => {
-  it('has a grey outline, 70 % fill, no halo, no cursor and typed letters in the opponent colour', () => {
+  it("has a grey outline, 70 % fill, no halo, no cursor and typed letters in the tier's typed shade", () => {
     const g = scene();
-    const opp = '#46A946';
-    const p = plate('rally', { style: 'remote', typed: 2, isNextCursor: true, oppColor: opp });
+    const p = plate('rally', { style: 'remote', typed: 2, isNextCursor: true, oppColor: '#46A946' });
     drawPlate(as2d(g), p);
     const { x, y } = p.box;
     expect([at(g, x - 1, y + 8), at(g, x, y + 8), at(g, x + 1, y + 8), at(g, x + 2, y + 2)])
@@ -337,16 +337,25 @@ describe('drawPlate — remote', () => {
     const fill = mix(PLATE.fill, BG, 0.7);
     [...'rally'].forEach((ch, i) => {
       const c = cell(p.box, i);
-      expectGlyph(g, c.x, c.y, ch, i < 2 ? opp : PLATE.text, fill);
+      expectGlyph(g, c.x, c.y, ch, i < 2 ? TIER_TYPED.easy : PLATE.text, fill);
     });
   });
 
-  it('falls back to the tier colour for typed letters without an opponent colour', () => {
-    const g = scene();
-    const p = plate('rally', { style: 'remote', typed: 1 });
-    drawPlate(as2d(g), p);
-    const c = cell(p.box, 0);
-    expectGlyph(g, c.x, c.y, 'r', TIER_COLOR.easy, mix(PLATE.fill, BG, 0.7));
+  it('draws typed letters in the typed shade of every tier, local and remote, whatever the belt colour', () => {
+    for (const word of ['rally', 'backhand', 'counterpuncher']) {
+      for (const style of ['localActive', 'remote'] as const) {
+        for (const oppColor of [null, '#FFFFFF', '#353140']) {
+          const g = scene();
+          const p = plate(word, { style, typed: 2, oppColor });
+          drawPlate(as2d(g), p);
+          const fill = style === 'remote' ? mix(PLATE.fill, BG, 0.7) : PLATE.fill;
+          [...word].forEach((ch, i) => {
+            const c = cell(p.box, i);
+            expectGlyph(g, c.x, c.y, ch, i < 2 ? TIER_TYPED[p.opt.tier] : PLATE.text, fill);
+          });
+        }
+      }
+    }
   });
 
   it('hides the word: one dim dot per letter, typed letters as 3×5 tier blocks, tier outline and pips', () => {
@@ -383,13 +392,21 @@ describe('drawPlate — remote', () => {
 });
 
 describe('drawPlate — name chip', () => {
-  const chipText = (g: PixelContext, x: number, y: number, text: string): void => {
+  /** Asserts `text` in capitals (glyph rows 1–7) at (x, y + 1), `ink` on `paper`, gaps included. */
+  const chipText = (
+    g: PixelContext,
+    x: number,
+    y: number,
+    text: string,
+    ink = PLATE.text,
+    paper = PLATE.fill,
+  ): void => {
     let cx = x;
     for (const ch of text) {
       const glyph = GLYPHS[ch]!;
       for (let row = 1; row < 8; row++) {
-        for (let col = 0; col < glyph.w; col++) {
-          const want = glyph.rows[row]![col] === '#' ? PLATE.text : PLATE.fill;
+        for (let col = 0; col <= glyph.w; col++) {
+          const want = glyph.rows[row]![col] === '#' ? ink : paper;
           expect(at(g, cx + col, y + row), `${ch} (${col},${row})`).toBe(want);
         }
       }
@@ -397,7 +414,7 @@ describe('drawPlate — name chip', () => {
     }
   };
 
-  it('shows the first 3 letters of the name, capitalised, on a tab above the plate', () => {
+  it('shows the first 3 letters of the name, capitalised, on a dark tab above the plate without a belt colour', () => {
     const g = scene();
     const p = plate('rally', { style: 'remote', nameChip: 'alexander' });
     drawPlate(as2d(g), p);
@@ -409,6 +426,36 @@ describe('drawPlate — name chip', () => {
     chipText(g, x + 2, y - 9, 'ALE');
   });
 
+  it('paints the tab in the belt colour with light or dark text, whichever reads at ≥ 4.5:1', () => {
+    for (const [belt, ramp] of Object.entries(BELT_COLOR)) {
+      for (const shade of RAMPS.cloth[ramp]!) {
+        const g = scene();
+        const p = plate('rally', { style: 'remote', nameChip: 'kim', oppColor: shade });
+        drawPlate(as2d(g), p);
+        const { x, y } = p.box;
+        const w = textWidth('KIM') + 4;
+        const inside = colours(g, x + 1, y - 9, w - 2, 9);
+        const text = [...inside].filter((c) => c !== shade);
+        expect(inside.has(shade), `${belt} ${shade}`).toBe(true);
+        expect(text.length, `${belt} ${shade}`).toBe(1);
+        expect([PLATE.text, PLATE.outline], `${belt} ${shade}`).toContain(text[0]);
+        expect(contrastRatio(text[0]!, shade), `${belt} ${shade}`).toBeGreaterThanOrEqual(4.5);
+        chipText(g, x + 2, y - 9, 'KIM', text[0], shade);
+        expect(colours(g, x, y - 10, w, 1), `${belt} ${shade} top stroke`).toEqual(new Set([PLATE.outline]));
+      }
+    }
+  });
+
+  it('picks dark text on a white belt and near-white text on a black belt', () => {
+    for (const [ramp, ink] of [[BELT_COLOR.white, PLATE.outline], [BELT_COLOR.black, PLATE.text]] as const) {
+      const g = scene();
+      const shade = RAMPS.cloth[ramp]![1];
+      const p = plate('rally', { style: 'remote', nameChip: 'kim', oppColor: shade });
+      drawPlate(as2d(g), p);
+      chipText(g, p.box.x + 2, p.box.y - 9, 'KIM', ink, shade);
+    }
+  });
+
   it('hangs the tab below a plate at the top of the far band', () => {
     const g = scene();
     const p = plate('rally', { style: 'remote', nameChip: 'Bo' }, 40, 22);
@@ -417,6 +464,18 @@ describe('drawPlate — name chip', () => {
     expect(colours(g, x, y - 11, 30, 11)).toEqual(new Set([BG]));
     expect(at(g, x, y + h + 9)).toBe(PLATE.outline);
     chipText(g, x + 2, y + h, 'BO');
+  });
+
+  it('keeps the tab out of the HUD band (y 0–21): above a plate from y 32 down, below it higher up', () => {
+    const above = scene();
+    drawPlate(as2d(above), plate('rally', { style: 'remote', nameChip: 'Bo' }, 40, 32));
+    expect(colours(above, 40, 0, 30, 22)).toEqual(new Set([BG]));
+    expect(at(above, 40, 22)).toBe(PLATE.outline);
+
+    const below = scene();
+    drawPlate(as2d(below), plate('rally', { style: 'remote', nameChip: 'Bo' }, 40, 31));
+    expect(colours(below, 40, 0, 30, 31)).toEqual(new Set([BG]));
+    expect(at(below, 40, 31 + 16 + 9)).toBe(PLATE.outline);
   });
 });
 
@@ -437,7 +496,9 @@ describe('drawPlate — 2×', () => {
         want.push(at(one, 10 + Math.floor(x / 2), 10 + Math.floor(y / 2)));
       }
     }
-    expect(new Set(want)).toEqual(new Set([PLATE.halo, PLATE.outline, PLATE.fill, PLATE.text, TIER_COLOR.medium]));
+    expect(new Set(want)).toEqual(
+      new Set([PLATE.halo, PLATE.outline, PLATE.fill, PLATE.text, TIER_COLOR.medium, TIER_TYPED.medium]),
+    );
     expect(got).toEqual(want);
   });
 });
@@ -570,12 +631,41 @@ describe('drawTimingBar', () => {
     expect(colours(empty, 10, 10, 40, 2)).toEqual(new Set([OUTLINE]));
   });
 
-  it('switches the filled part to a 1 px white/dark checker in the grace window', () => {
-    const g = scene(60, 20);
-    drawTimingBar(as2d(g), 10, 10, 40, 0.5, true);
+  it('switches the filled part to a white/dark checker of 2×2 px cells in the grace window, white first', () => {
+    for (const [bx, by] of [[10, 10], [11, 9]] as const) {
+      const g = scene(60, 20);
+      drawTimingBar(as2d(g), bx, by, 40, 0.5, true);
+      for (const y of [by, by + 1]) {
+        for (let x = bx; x < bx + 20; x++) {
+          expect(at(g, x, y), `bar at ${bx},${by}: ${x},${y}`).toBe(((x - bx) >> 1) % 2 === 0 ? PAL.white : OUTLINE);
+        }
+        expect(colours(g, bx + 20, y, 20, 1)).toEqual(new Set([OUTLINE]));
+      }
+    }
+  });
+
+  it('keeps the grace checker in place as the bar shrinks', () => {
+    const wide = scene(60, 20);
+    drawTimingBar(as2d(wide), 10, 10, 40, 0.5, true);
+    const narrow = scene(60, 20);
+    drawTimingBar(as2d(narrow), 10, 10, 40, 0.3, true);
     for (const y of [10, 11]) {
-      for (let x = 10; x < 30; x++) expect(at(g, x, y), `${x},${y}`).toBe((x + y) % 2 === 0 ? PAL.white : OUTLINE);
-      expect(colours(g, 30, y, 20, 1)).toEqual(new Set([OUTLINE]));
+      for (let x = 10; x < 22; x++) expect(at(narrow, x, y), `${x},${y}`).toBe(at(wide, x, y));
+    }
+  });
+});
+
+describe('module graph', () => {
+  it('loads without the projection module: plates take no values from layout', async () => {
+    vi.resetModules();
+    vi.doMock('../../src/render/projection', () => {
+      throw new Error('plates.ts pulled in projection.ts');
+    });
+    try {
+      await expect(import('../../src/render/plates')).resolves.toHaveProperty('drawPlate');
+    } finally {
+      vi.doUnmock('../../src/render/projection');
+      vi.resetModules();
     }
   });
 });

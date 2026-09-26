@@ -1,7 +1,8 @@
 import type { Tier, WordOption } from '../core/types';
+import { contrastRatio } from './color';
 import { drawText, FONT, textWidth } from './font';
-import { BANDS, type PlateBox } from './layout';
-import { OUTLINE, PAL, PLATE, TIER_COLOR } from './palette';
+import type { PlateBox } from './layout';
+import { OUTLINE, PAL, PLATE, TIER_COLOR, TIER_TYPED } from './palette';
 
 /**
  * How a plate is shown (spec §4.2): the local typist's active prompt, the opponent's visible word,
@@ -14,8 +15,8 @@ export type PlateStyle = 'localActive' | 'remote' | 'hiddenRemote';
  * being typed; `faded` runs 0 (shown) → 1 (gone), multiplying the canvas opacity; `lastWrongAgeMs`
  * is the time since the last wrong key (null = none); `isNextCursor` shows the inverse block on the
  * next letter; `showInitialBlock` marks the first letter of an unlocked option; `nameChip` is the
- * owner's name for a tab (first 3 letters, in capitals); `oppColor` is the opponent's belt colour for
- * remote typed letters (null = tier colour); `scale` 2 redraws the plate at double size.
+ * owner's name for a tab (first 3 letters, in capitals); `oppColor` is the owner's `#RRGGBB` belt
+ * colour, painted behind the name chip (null = dark chip); `scale` 2 redraws the plate at double size.
  */
 export interface PlateDraw {
   box: PlateBox;
@@ -53,6 +54,8 @@ const BLOCK = { x: 1, y: 3, w: 3, h: 5 };
 /** Name chip: stroke, pad, capitals (glyph rows 1–7), pad, stroke. */
 const CHIP_H = 11;
 const CHIP_LETTERS = 3;
+/** First row below the HUD band (spec §4.1, `BANDS.far[0]`); a chip above the plate may not start higher. */
+const CHIP_MIN_Y = 22;
 
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
@@ -82,14 +85,15 @@ interface LetterLook { ink: string; paper: string | null }
 
 function letterLook(p: PlateDraw, i: number, typed: number, flash: boolean): LetterLook {
   const tier = TIER_COLOR[p.opt.tier];
-  if (p.style === 'remote') return { ink: i < typed ? (p.oppColor ?? tier) : PLATE.text, paper: null };
+  const ink = i < typed ? TIER_TYPED[p.opt.tier] : PLATE.text;
+  if (p.style === 'remote') return { ink, paper: null };
   // While the fill flashes light grey every glyph turns dark, and the cursor inverts to dark.
   if (p.isNextCursor && i === typed) {
     return flash ? { ink: PLATE.flash, paper: PLATE.fill } : { ink: PLATE.fill, paper: PLATE.text };
   }
   if (p.showInitialBlock && !p.locked && typed === 0 && i === 0) return { ink: PLATE.fill, paper: tier };
   if (flash) return { ink: PLATE.fill, paper: null };
-  return { ink: i < typed ? tier : PLATE.text, paper: null };
+  return { ink, paper: null };
 }
 
 function drawLetters(ctx: CanvasRenderingContext2D, p: PlateDraw, x: number, y: number, flash: boolean): void {
@@ -116,26 +120,43 @@ function drawPips(ctx: CanvasRenderingContext2D, tier: Tier, x: number, y: numbe
   for (let i = 0; i < n; i++) rect(ctx, x + PIP_X * s, y + (top + 3 * i) * s, 2 * s, 2 * s, color);
 }
 
-/** A tab with the owner's first 3 letters, above the plate, or below it when that would reach the HUD band. */
-function drawNameChip(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, h: number, s: 1 | 2): void {
+/** Near-white or dark text, whichever contrasts more with `bg` (≥ 4.5:1 on every belt ramp shade). */
+function readableOn(bg: string): string {
+  return contrastRatio(PLATE.text, bg) >= contrastRatio(PLATE.outline, bg) ? PLATE.text : PLATE.outline;
+}
+
+/**
+ * A tab with the owner's first 3 letters on `color` (belt colour, or the plate fill), above the plate,
+ * or below it when that would reach the HUD band.
+ */
+function drawNameChip(
+  ctx: CanvasRenderingContext2D,
+  name: string,
+  color: string,
+  x: number,
+  y: number,
+  h: number,
+  s: 1 | 2,
+): void {
   const text = [...name].slice(0, CHIP_LETTERS).join('').toUpperCase();
   const w = textWidth(text, s) + 4 * s;
   const chipH = CHIP_H * s;
   const above = y - chipH + s;
-  const cy = above >= BANDS.far[0] ? above : y + h - s;
+  const cy = above >= CHIP_MIN_Y ? above : y + h - s;
   frame(ctx, x, cy, w, chipH, s, PLATE.outline);
-  rect(ctx, x + s, cy + s, w - 2 * s, chipH - 2 * s, PLATE.fill);
-  drawText(ctx, text, x + 2 * s, cy + s, PLATE.text, s);
+  rect(ctx, x + s, cy + s, w - 2 * s, chipH - 2 * s, color);
+  drawText(ctx, text, x + 2 * s, cy + s, readableOn(color), s);
 }
 
 /**
  * Draws one word plate (spec §4.2) into `p.box`, pixel-exact. Local-active: tier outline with a dark
- * 1 px halo outside the box, typed letters in the tier colour, remaining ones near-white, inverse
- * cursor block; a wrong key flashes the fill light grey for 80 ms (letters turn dark) and shakes the
- * plate by up to 2 px unless `reduceEffects`. Remote: grey outline, 70 % fill, no cursor, typed
- * letters in `oppColor`. Hidden remote: tier outline, a dim dot per letter, typed letters as 3×5
- * tier blocks. Remote plates shake on a wrong key but never flash. Every plate has 1/2/3 tier pips
- * and a 1 px dark stroke; red is never used. Canvas state is restored afterwards.
+ * 1 px halo outside the box, typed letters in the tier's typed shade (`TIER_TYPED`), remaining ones
+ * near-white, inverse cursor block; a wrong key flashes the fill light grey for 80 ms (letters turn
+ * dark) and shakes the plate by up to 2 px unless `reduceEffects`. Remote: grey outline, 70 % fill,
+ * no cursor, typed letters in the typed shade. Hidden remote: tier outline, a dim dot per letter,
+ * typed letters as 3×5 tier blocks. Remote plates shake on a wrong key but never flash. The name
+ * chip is painted in `oppColor` with light or dark text. Every plate has 1/2/3 tier pips and a 1 px
+ * dark stroke; red is never used. Canvas state is restored afterwards.
  */
 export function drawPlate(ctx: CanvasRenderingContext2D, p: PlateDraw): void {
   const alpha = 1 - clamp01(p.faded);
@@ -161,7 +182,7 @@ export function drawPlate(ctx: CanvasRenderingContext2D, p: PlateDraw): void {
   ctx.globalAlpha = opacity;
   drawPips(ctx, p.opt.tier, x, y, s, flash ? PLATE.fill : tier);
   drawLetters(ctx, p, x, y, flash);
-  if (p.nameChip !== null) drawNameChip(ctx, p.nameChip, x, y, h, s);
+  if (p.nameChip !== null) drawNameChip(ctx, p.nameChip, p.oppColor ?? PLATE.fill, x, y, h, s);
   ctx.restore();
 }
 
@@ -302,10 +323,14 @@ export function drawLeader(
   for (const [x, y] of pixels) rect(ctx, x, y, 1, 1, TIER_COLOR[tier]);
 }
 
+/** Grace-window checker cell size: the bar's full 2 px height, and 2 px wide. */
+const CHECKER = 2;
+
 /**
  * Draws the 2 px timing bar (spec §4.2) with its top-left at (x, y): a near-black track `w` px long,
  * outlined 1 px all round, filled white from the left for the remaining fraction `frac` (0–1). In
- * the grace window the filled part becomes a 1 px white/near-black checker.
+ * the grace window the filled part becomes a white/near-black checker of 2×2 px cells counted from the
+ * bar's left end (white first), so it survives Fit-mode downscaling and holds still as the bar shrinks.
  */
 export function drawTimingBar(
   ctx: CanvasRenderingContext2D,
@@ -324,7 +349,5 @@ export function drawTimingBar(
     rect(ctx, bx, by, filled, 2, PAL.white);
     return;
   }
-  for (let j = 0; j < 2; j++) {
-    for (let i = (bx + by + j) & 1; i < filled; i += 2) rect(ctx, bx + i, by + j, 1, 1, PAL.white);
-  }
+  for (let i = 0; i < filled; i += 2 * CHECKER) rect(ctx, bx + i, by, Math.min(CHECKER, filled - i), 2, PAL.white);
 }
