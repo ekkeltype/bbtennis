@@ -34,6 +34,14 @@ const HUMAN = {
   fast: { wpm: 120, err: 0.015, reactionMs: 400 },
 } as const;
 
+/**
+ * Aggression of the spec §6 human model, whose policy is "hardest option that fits" on every serve
+ * and choice. CpuBrain takes the hardest fitting option with probability `aggression`, scaled by 0.4
+ * on a second serve (the CPU's caution of spec §3.8, not part of the human model); 1 / 0.4 keeps
+ * that probability at 1 on second serves too. tests/sim/sim.test.ts checks this against CpuBrain.
+ */
+const HUMAN_AGGRESSION = 2.5;
+
 /** Reaction before a chase word's first key in the spec §6 human model (ms). */
 export const HUMAN_CHASE_REACTION_MS = 250;
 
@@ -48,18 +56,24 @@ const PLAYERS: [PlayerInfo, PlayerInfo] = [
 ];
 
 /**
- * The spec §6 human model at `wpm`: per-key error 7 % at 25 WPM → 1.5 % at 120 WPM and reaction
- * 900 → 400 ms, linear in WPM and held at the end rows outside that range; aggression 1, so the
- * adaptive policy always takes the hardest option that fits.
+ * The spec §6 human model's CpuBrain profile at `wpm`: per-key error 7 % at 25 WPM → 1.5 % at
+ * 120 WPM and reaction 900 → 400 ms, linear in WPM and held at the end rows outside that range;
+ * aggression HUMAN_AGGRESSION, so the adaptive policy always takes the hardest option that fits,
+ * second serves included. The full model adds the 250 ms chase reaction: use humanTypist.
  */
 export function humanProfile(wpm: number): CpuProfile {
   if (!Number.isFinite(wpm) || wpm <= 0) throw new RangeError(`humanProfile: WPM must be finite and positive, got ${wpm}`);
   const { slow, fast } = HUMAN;
   const f = clamp((wpm - slow.wpm) / (fast.wpm - slow.wpm), 0, 1);
-  return { wpm, err: lerp(slow.err, fast.err, f), reactionMs: lerp(slow.reactionMs, fast.reactionMs, f), aggression: 1 };
+  return {
+    wpm,
+    err: lerp(slow.err, fast.err, f),
+    reactionMs: lerp(slow.reactionMs, fast.reactionMs, f),
+    aggression: HUMAN_AGGRESSION,
+  };
 }
 
-/** A human-model typist at `wpm`: humanProfile with the 250 ms chase reaction. */
+/** The full spec §6 human model at `wpm`: humanProfile with the 250 ms chase reaction. */
 export function humanTypist(wpm: number, policy: CpuPolicy = 'adaptive'): SimTypist {
   return { profile: humanProfile(wpm), chaseReactionMs: HUMAN_CHASE_REACTION_MS, policy };
 }

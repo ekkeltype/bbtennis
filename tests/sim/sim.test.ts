@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cpuProfile } from '../../src/core/cpu';
+import { CpuBrain, cpuProfile } from '../../src/core/cpu';
+import { Engine } from '../../src/core/engine';
 import {
   HUMAN_CHASE_REACTION_MS,
   humanProfile,
@@ -10,7 +11,8 @@ import {
   type PointRecord,
   type SimTypist,
 } from '../../src/core/sim';
-import type { MatchConfig, PlayerId } from '../../src/core/types';
+import { nextDeadline } from '../../src/core/turn';
+import type { Look, MatchConfig, PlayerId, PlayerInfo, ServeTurnData } from '../../src/core/types';
 
 const CONFIG: MatchConfig = {
   format: 'short',
@@ -24,6 +26,47 @@ const CONFIG: MatchConfig = {
 const config = (over: Partial<MatchConfig> = {}): MatchConfig => ({ ...CONFIG, ...over });
 
 const HUMAN_50 = humanTypist(50);
+
+const LOOK: Look = { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 };
+const PLAYERS: [PlayerInfo, PlayerInfo] = [
+  { name: 'A', look: LOOK, kind: 'cpu', cpuLevel: null },
+  { name: 'B', look: LOOK, kind: 'cpu', cpuLevel: null },
+];
+
+/**
+ * The serve word option (0 easy, 1 medium, 2 hard) that a human-model server at `wpm` locks on
+ * the first point's serve number `serveNo` of match `seed` at Relaxed pace. For a second serve the
+ * first one is left to run out the serve clock (a time-violation fault).
+ */
+function humanServeLock(seed: number, wpm: number, serveNo: 1 | 2): number {
+  const engine = new Engine({ config: config({ pace: 'relaxed' }), players: PLAYERS, seed });
+  const server = engine.owner();
+  if (server === null) throw new Error('no server');
+  const brain = new CpuBrain(server, humanProfile(wpm), seed);
+  engine.start(server);
+  if (serveNo === 2) {
+    const first = engine.state.turn?.data.turnId;
+    for (let t = engine.state.turn; t !== null && t.data.turnId === first; t = engine.state.turn) {
+      const deadline = nextDeadline(t);
+      if (deadline === null) throw new Error('first serve stalled');
+      engine.clock(server, deadline);
+    }
+    engine.start(server);
+  }
+  const data = engine.state.turn?.data as ServeTurnData;
+  expect([data.kind, data.serveNo]).toEqual(['serve', serveNo]);
+  for (let calls = 0; calls < 10; calls++) {
+    const t = engine.state.turn;
+    if (t === null) break;
+    const prompt = t.active === null ? undefined : t.prompts[t.active];
+    if (prompt?.kind === 'serve' && prompt.locked !== null) return prompt.locked;
+    const key = brain.plan(t)[0];
+    const deadline = nextDeadline(t);
+    if (key !== undefined && (deadline === null || key.τ <= deadline)) engine.input(server, key.key, key.τ);
+    else if (deadline !== null) engine.clock(server, deadline);
+  }
+  throw new Error('the server never locked a serve word');
+}
 
 /** A record with defaults for the fields a summarize test does not care about. */
 function rec(over: Partial<PointRecord> = {}): PointRecord {
@@ -61,13 +104,13 @@ function expectConsistent(p: PointRecord): void {
 }
 
 describe('humanProfile (spec §6 human model)', () => {
-  it('uses the end points of the model at 25 and 120 WPM, with aggression 1 ("hardest that fits")', () => {
-    expect(humanProfile(25)).toEqual({ wpm: 25, err: 0.07, reactionMs: 900, aggression: 1 });
+  it('uses the end points of the model at 25 and 120 WPM, with aggression 2.5 (1 even after the second-serve × 0.4)', () => {
+    expect(humanProfile(25)).toEqual({ wpm: 25, err: 0.07, reactionMs: 900, aggression: 2.5 });
     const fast = humanProfile(120);
     expect(fast.wpm).toBe(120);
     expect(fast.err).toBeCloseTo(0.015, 12);
     expect(fast.reactionMs).toBeCloseTo(400, 9);
-    expect(fast.aggression).toBe(1);
+    expect(fast.aggression).toBe(2.5);
   });
 
   it('interpolates error rate and reaction linearly in WPM between 25 and 120', () => {
@@ -80,7 +123,7 @@ describe('humanProfile (spec §6 human model)', () => {
   });
 
   it('holds error rate and reaction at the end points outside 25–120 WPM but keeps the speed', () => {
-    expect(humanProfile(15)).toEqual({ wpm: 15, err: 0.07, reactionMs: 900, aggression: 1 });
+    expect(humanProfile(15)).toEqual({ wpm: 15, err: 0.07, reactionMs: 900, aggression: 2.5 });
     const expert = humanProfile(160);
     expect(expert.wpm).toBe(160);
     expect(expert.err).toBeCloseTo(0.015, 12);
@@ -91,6 +134,20 @@ describe('humanProfile (spec §6 human model)', () => {
     for (const wpm of [0, -10, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => humanProfile(wpm)).toThrow(RangeError);
     }
+  });
+});
+
+describe('the human model\'s serve choice (spec §6: the hardest option that fits)', () => {
+  // A 120 WPM typist at Relaxed pace fits even a 14-letter serve word (about 1.9 s) in the toss
+  // window, so the hardest option that fits is always the hard one.
+  const locks = (serveNo: 1 | 2): number[] => Array.from({ length: 40 }, (_, seed) => humanServeLock(seed, 120, serveNo));
+
+  it('takes the hard word on every first serve when every word fits', () => {
+    expect(locks(1)).toEqual(Array<number>(40).fill(2));
+  });
+
+  it('takes the hard word on every second serve too (the CPU\'s second-serve caution of spec §3.8 does not apply)', () => {
+    expect(locks(2)).toEqual(Array<number>(40).fill(2));
   });
 });
 
