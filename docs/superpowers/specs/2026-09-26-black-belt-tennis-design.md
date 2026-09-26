@@ -552,10 +552,12 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
   - `input{seq, turn, k, τ}` (guest → host, own turns only; k = letter | `toss`) and
     `clock{turn, τ}` (guest → host every 50 ms during its own turn, and immediately at a deadline).
   - `frame{turn, τ, ev?, s?}` (host → guest): `s = redact(state, guest)`; `ev = redactEvents(…)`
-    stamped with (turn, τ). During host-owned turns τ is the host's confirmed turn clock (sent every
-    50 ms and with every event); during guest-owned turns frames carry host-side updates (spare
-    re-toss words) and the host's echo of the guest's outcome. Frames without events are skipped
-    while `bufferedAmount > 16 KB`.
+    stamped with (turn, τ). `s` is included only when the state changed (events, a new turn, spare
+    re-toss words); otherwise the frame is a tiny confirmation carrying just `turn` and `τ`. During
+    host-owned turns τ is the host's confirmed turn clock (a frame every 50 ms and with every event);
+    during guest-owned turns frames carry host-side updates and the host's echo of the guest's outcome.
+    State-carrying frames without events are skipped while `bufferedAmount > 16 KB`; confirmations
+    are never skipped.
   - `ping{id}` / `pong{id}` (every 2 s; RTT shown in the lobby and HUD corner); `rematch{want}`;
     `forfeit`; `leave`.
   - `proto` is an integer checked in hello/welcome only; bumped on any change to protocol,
