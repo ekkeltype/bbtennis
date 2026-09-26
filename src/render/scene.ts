@@ -1,11 +1,13 @@
 import { COURT, netHeightAt } from '../core/court';
-import { intBelow, seedRng, uniform } from '../core/rng';
-import type { PlayerId, RngState, Surface } from '../core/types';
-import { FLOOR, checker, rgb } from './court';
+import type { PlayerId, Surface } from '../core/types';
+import { FLOOR, checker, packed, paintGrid } from './court';
+import { FAN_H, FAN_W, createCrowd, type Seat } from './crowd';
 import { drawText, textWidth } from './font';
 import { OUTLINE, PAL, SURFACE_PAL } from './palette';
 import { H, W, netScreenY, project, scaleAt, unprojectGround } from './projection';
 import { cachedLayer, createLayer, layersPerEnd, type Layer } from './screen';
+
+export { drawUmpire } from './umpire';
 
 /**
  * Animated scene inputs: `crowdExcite` 0–1 (the share of the crowd cheering), `umpireLook` where the
@@ -14,33 +16,9 @@ import { cachedLayer, createLayer, layersPerEnd, type Layer } from './screen';
  */
 export interface SceneState { crowdExcite: number; umpireLook: -1 | 0 | 1; t: number }
 
-/** RGBA packed for a little-endian Uint32Array view of ImageData. */
-function packed(c: string): number {
-  const [r, g, b] = rgb(c);
-  return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
-}
-
 const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 /** Ordered-dither threshold in [0, 1) for pixel (x, y). */
 const bayer = (x: number, y: number): number => (BAYER4[(y & 3) * 4 + (x & 3)]! + 0.5) / 16;
-
-/** Paints pixel-art `rows` with its top-left at (x0, y0): one pixel per character in `legend`'s colour; '.' is clear. */
-function paintGrid(
-  g: CanvasRenderingContext2D,
-  rows: readonly string[],
-  legend: Record<string, string>,
-  x0: number,
-  y0: number,
-): void {
-  rows.forEach((row, r) => {
-    for (let c = 0; c < row.length; c++) {
-      const ch = row[c]!;
-      if (ch === '.') continue;
-      g.fillStyle = legend[ch]!;
-      g.fillRect(x0 + c, y0 + r, 1, 1);
-    }
-  });
-}
 
 // ---------------------------------------------------------------------------------------------
 // Stadium geometry (screen space; the stadium never rotates). Side stands, walls and aisles are
@@ -231,93 +209,12 @@ function paintBoards(g: CanvasRenderingContext2D): void {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Crowd: 8 body templates, palette-swapped per fan, 4 frames (idle, bob, cheer high, cheer low).
-
-interface Body { rows: string[]; head: number }
-
-/** h hair, s skin, c shirt, d shirt shade, a accent (hat/scarf), k sunglasses. */
-const BODIES: Body[] = [
-  { rows: ['.hhh.', '.sss.', '.sss.', 'ccccd', 'ccccd', 'ccccd'], head: 3 },
-  { rows: ['.hhh.', 'hsssh', 'hsssh', 'hcccd', 'ccccd', 'ccccd'], head: 3 },
-  { rows: ['.aaa.', 'aaaaa', '.sss.', '.sss.', 'ccccd', 'ccccd', 'ccccd'], head: 4 },
-  { rows: ['.sss.', 'hsssh', '.sss.', 'ccccd', 'ccccd', 'ccccd'], head: 3 },
-  { rows: ['hhhhh', 'hhhhh', 'hsssh', '.sss.', 'ccccd', 'ccccd', 'ccccd'], head: 4 },
-  { rows: ['..h..', '.hhh.', '.sss.', '.sss.', 'ccccd', 'ccccd', 'ccccd'], head: 4 },
-  { rows: ['.hhh.', '.sss.', '.sss.', '.ccd.', '.ccd.'], head: 3 },
-  { rows: ['.hhh.', '.kkk.', '.sss.', 'aaaaa', 'ccccd', 'ccccd'], head: 3 },
-];
-
-const SKINS = [PAL.skinLight, PAL.skinLight, PAL.clayDust, PAL.woodHi, PAL.skinDark, PAL.woodLo];
-const HAIRS = [PAL.ink, PAL.night, PAL.woodLo, PAL.clayDeep, PAL.gold, PAL.silver, PAL.shadow, PAL.woodLo];
-const SHIRTS: [string, string][] = [
-  [PAL.crowdRed, PAL.clayDeep],
-  [PAL.crowdBlue, PAL.hardLo],
-  [PAL.crowdPurple, PAL.slate],
-  [PAL.gold, PAL.clayLo],
-  [PAL.cream, PAL.silver],
-  [PAL.white, PAL.mist],
-  [PAL.tierSky, PAL.hard],
-  [PAL.boardGreenHi, PAL.boardGreen],
-  [PAL.grassHi, PAL.grassLo],
-  [PAL.clayHi, PAL.clayLo],
-  [PAL.grey, PAL.slate],
-  [PAL.hardHi, PAL.hardLo],
-];
-const ACCENTS = [PAL.white, PAL.crowdRed, PAL.gold, PAL.tierSky, PAL.cream, PAL.crowdBlue, PAL.boardGreenHi];
-
-const CELL_W = 5;
-const CELL_H = 10;
-const IDLE = 0;
-const BOB = 1;
-const CHEER_HIGH = 2;
-const CHEER_LOW = 3;
-/** Crowd animation step (ms): the crowd is recomposed at most once per tick. */
-const TICK_MS = 100;
-
-interface Seat { x: number; y: number }
-/**
- * A seated fan: frames [idle, bob, cheer high, cheer low] as packed 5×10 pixels; cheers when the
- * excitement exceeds `calm`; `phase`/`beat` (ticks) time the arm pumping; bobs every `fidget` ticks (0 never).
- */
-interface Fan extends Seat {
-  frames: Uint32Array[];
-  calm: number;
-  phase: number;
-  beat: number;
-  fidget: number;
-}
-
-function pick<T>(rng: RngState, arr: readonly T[]): T {
-  return arr[intBelow(rng, arr.length)]!;
-}
-
-function fanFrames(body: Body, colors: Record<string, number>): Uint32Array[] {
-  const h = body.rows.length;
-  const frame = (lift: number, hands: number | null): Uint32Array => {
-    const out = new Uint32Array(CELL_W * CELL_H);
-    const top = CELL_H - h - lift;
-    body.rows.forEach((row, r) => {
-      for (let c = 0; c < CELL_W; c++) {
-        const ch = row[c]!;
-        if (ch !== '.') out[(top + r) * CELL_W + c] = colors[ch]!;
-      }
-    });
-    if (hands !== null) {
-      const hand = top - hands;
-      for (let r = hand; r < top + body.head; r++) {
-        out[r * CELL_W] = r === hand ? colors.s! : colors.c!;
-        out[r * CELL_W + CELL_W - 1] = r === hand ? colors.s! : colors.d!;
-      }
-    }
-    return out;
-  };
-  return [frame(0, null), frame(1, null), frame(1, 2), frame(0, 1)];
-}
+// Seats: 5-px fan cells along every seat line, rows staggered, clear of the aisles and side walls.
 
 /** Left-column grid positions for a row of 5-px seats, `phase` staggering rows against each other. */
 function gridFrom(lo: number, hi: number, phase: number): number[] {
   const xs: number[] = [];
-  for (let x = lo + ((((phase - lo) % CELL_W) + CELL_W) % CELL_W); x <= hi; x += CELL_W) xs.push(x);
+  for (let x = lo + ((((phase - lo) % FAN_W) + FAN_W) % FAN_W); x <= hi; x += FAN_W) xs.push(x);
   return xs;
 }
 
@@ -325,91 +222,21 @@ function layoutSeats(): Seat[] {
   const seats: Seat[] = [];
   BACK_ROWS.forEach((y, i) => {
     const lo = aisleX(y) + 1;
-    for (const x of gridFrom(lo, W - CELL_W - lo, i * 2)) seats.push({ x, y });
+    for (const x of gridFrom(lo, W - FAN_W - lo, i * 2)) seats.push({ x, y });
   });
   SIDE_ROWS.forEach((e, j) => {
-    for (const x of gridFrom(-CELL_W + 1, VPX, j * 3)) {
-      const y = Math.round(sideRow(e, x + CELL_W / 2));
-      const clearOfAisle = x + CELL_W - 1 < aisleX(y - CELL_H) - 3;
-      const aboveWall = y <= sideWallTop(x + CELL_W - 1);
+    for (const x of gridFrom(-FAN_W + 1, VPX, j * 3)) {
+      const y = Math.round(sideRow(e, x + FAN_W / 2));
+      const clearOfAisle = x + FAN_W - 1 < aisleX(y - FAN_H) - 3;
+      const aboveWall = y <= sideWallTop(x + FAN_W - 1);
       if (!clearOfAisle || !aboveWall) continue;
-      seats.push({ x, y }, { x: W - CELL_W - x, y });
+      seats.push({ x, y }, { x: W - FAN_W - x, y });
     }
   });
   return seats.sort((a, b) => a.y - b.y || a.x - b.x);
 }
 
 const SEATS: Seat[] = layoutSeats();
-
-function makeFans(): Fan[] {
-  const rng = seedRng(0x5ea75);
-  const fans: Fan[] = [];
-  for (const seat of SEATS) {
-    if (uniform(rng) < 0.07) continue;
-    const [shirt, shade] = pick(rng, SHIRTS);
-    const colors = {
-      h: packed(pick(rng, HAIRS)),
-      s: packed(pick(rng, SKINS)),
-      c: packed(shirt),
-      d: packed(shade),
-      a: packed(pick(rng, ACCENTS)),
-      k: packed(PAL.ink),
-    };
-    fans.push({
-      ...seat,
-      frames: fanFrames(pick(rng, BODIES), colors),
-      calm: 0.04 + uniform(rng) * 0.95,
-      phase: intBelow(rng, 16),
-      beat: 3 + intBelow(rng, 2),
-      fidget: uniform(rng) < 0.45 ? 6 + intBelow(rng, 10) : 0,
-    });
-  }
-  return fans;
-}
-
-/** Frame of fan `f` at animation `tick`: cheering (arms pumping) above its calm threshold, else idle with an occasional bob. */
-function pose(f: Fan, tick: number, excite: number): number {
-  const step = tick + f.phase;
-  if (excite > f.calm) return (step % f.beat) * 2 < f.beat ? CHEER_HIGH : CHEER_LOW;
-  if (f.fidget > 0 && step % f.fidget === 0) return BOB;
-  return IDLE;
-}
-
-const CROWD_H = 140;
-
-interface Crowd { fans: Fan[]; layer: Layer; img: ImageData; px: Uint32Array; key: string }
-let crowd: Crowd | null = null;
-
-function crowdLayer(s: SceneState): Layer {
-  if (!crowd) {
-    const layer = createLayer(W, CROWD_H);
-    const img = layer.g.createImageData(W, CROWD_H);
-    crowd = { fans: makeFans(), layer, img, px: new Uint32Array(img.data.buffer), key: '' };
-  }
-  // Quantised so a smoothly easing excitement recomposes only at 1/32 steps.
-  const excite = Number.isFinite(s.crowdExcite) ? Math.round(Math.min(1, Math.max(0, s.crowdExcite)) * 32) / 32 : 0;
-  const tick = Number.isFinite(s.t) ? Math.floor(s.t / TICK_MS) : 0;
-  const key = `${tick}|${excite}`;
-  if (key === crowd.key) return crowd.layer;
-  crowd.key = key;
-  const { px } = crowd;
-  px.fill(0);
-  for (const f of crowd.fans) {
-    const frame = f.frames[pose(f, tick, excite)]!;
-    const top = f.y - CELL_H;
-    for (let r = 0; r < CELL_H; r++) {
-      const y = top + r;
-      if (y < 0 || y >= CROWD_H) continue;
-      for (let c = 0; c < CELL_W; c++) {
-        const v = frame[r * CELL_W + c]!;
-        const x = f.x + c;
-        if (v !== 0 && x >= 0 && x < W) px[y * W + x] = v;
-      }
-    }
-  }
-  crowd.layer.g.putImageData(crowd.img, 0, 0);
-  return crowd.layer;
-}
 
 // ---------------------------------------------------------------------------------------------
 // Dojo lanterns: paper lanterns hanging from the roof, in front of the stands.
@@ -438,6 +265,7 @@ function paintLanterns(): Layer {
 
 const bases = new Map<Surface, Layer>();
 let lanterns: Layer | null = null;
+let drawCrowd: ReturnType<typeof createCrowd> | null = null;
 
 /**
  * Paints the stadium behind the court: dithered sky (or the dojo's roof and paper lanterns), shaded
@@ -447,7 +275,7 @@ let lanterns: Layer | null = null;
  */
 export function drawBackdrop(ctx: CanvasRenderingContext2D, surface: Surface, s: SceneState): void {
   ctx.drawImage(cachedLayer(bases, surface, () => paintBase(surface)).canvas, 0, 0);
-  ctx.drawImage(crowdLayer(s).canvas, 0, 0);
+  (drawCrowd ??= createCrowd(SEATS))(ctx, s.crowdExcite, s.t);
   if (surface === 'dojo') ctx.drawImage((lanterns ??= paintLanterns()).canvas, 0, 0);
 }
 
@@ -504,110 +332,4 @@ const netLayer = layersPerEnd(paintNet);
  */
 export function drawNet(ctx: CanvasRenderingContext2D, surface: Surface, viewer: PlayerId | 'spectator'): void {
   ctx.drawImage(netLayer(surface, viewer).canvas, 0, NET_TOP);
-}
-
-// ---------------------------------------------------------------------------------------------
-// Umpire on a high chair beside the screen-right net post, head turning towards the ball.
-
-/** o outline, G/g chair green, b/B blazer, c/C trousers and shirt, s/S skin, h hair, k shoes. */
-const CHAIR = [
-  '..........................',
-  '..........................',
-  '..................ooo.....',
-  '..................oGo.....',
-  '..................oGo.....',
-  '..................oGo.....',
-  '..................oGo.....',
-  '.........ooooooo..oGo.....',
-  '........obbbccbbo.oGo.....',
-  '.......obbbbcbbbBooGo.....',
-  '.......obbbbbbbbBooGo.....',
-  '.......obbbbbbbbBooGo.....',
-  '......obbbbbbbbbBooGo.....',
-  '......obboobbbbbBooGo.....',
-  '.....osbbbbboobbBooGo.....',
-  '....oSsoooooccbbBooGo.....',
-  '....ooocccccccccCooGo.....',
-  '.....occcccccccccCoGo.....',
-  '.....occoooooooooooGoo....',
-  '.....occoGGGGGGGGGGGGGo...',
-  '.....occogggggggggggggo...',
-  '.....occoooooooooooooooo..',
-  '.....occo.oGo.....oGo.....',
-  '.....occo.oGo.....oGo.....',
-  '.....occo.oGo.....oGo.....',
-  '....okkko.oGo.....oGo.....',
-  '...okkkkooGGooooooGGo.....',
-  '...oooooGGGGGGGGGGGGo.....',
-  '........oooGoooooooGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGooooooooGo....',
-  '..........oGGGGGGGGGGo....',
-  '..........oGooooooooGo....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGooooooooGo....',
-  '..........oGGGGGGGGGGo....',
-  '..........oGooooooooGo....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '..........oGo.....oGo.....',
-  '.........oGGGo...oGGGo....',
-  '.........ooooo...ooooo....',
-];
-
-/** Head frames 7×8 (placed with the chin row on the collar): far end, across the court, near end. */
-const HEADS: Record<-1 | 0 | 1, string[]> = {
-  [-1]: ['.ooooo.', 'ohhhhho', 'ohhhhho', 'ohhhhho', 'oShhhho', 'osShhho', '.oSSho.', '..oso..'],
-  [0]: ['.ooooo.', 'ohhhhho', 'osshhho', 'oksshho', 'osssSho', '.osSSho', '..oSSo.', '..oso..'],
-  [1]: ['.ooooo.', 'ohhhhho', 'ohssshh', 'oskskho', 'osssSho', 'oossSho', '..oSSo.', '..oso..'],
-};
-const HEAD_AT = { x: 9, y: 0 };
-
-const UMPIRE_COLORS: Record<string, string> = {
-  o: OUTLINE,
-  G: PAL.boardGreenHi,
-  g: PAL.boardGreen,
-  b: PAL.crowdBlue,
-  B: PAL.hardLo,
-  c: PAL.cream,
-  C: PAL.silver,
-  s: PAL.skinLight,
-  S: PAL.clayDust,
-  h: PAL.slate,
-  k: PAL.ink,
-};
-
-/** World x of the umpire chair (beside the right-hand net post as the stadium camera sees it). */
-const UMPIRE_X = 7.9;
-/** Column of `CHAIR` that stands on `UMPIRE_X`. */
-const CHAIR_ANCHOR = 12;
-
-function paintUmpire(look: -1 | 0 | 1): Layer {
-  const layer = createLayer(CHAIR[0]!.length, CHAIR.length);
-  paintGrid(layer.g, CHAIR, UMPIRE_COLORS, 0, 0);
-  paintGrid(layer.g, HEADS[look], UMPIRE_COLORS, HEAD_AT.x, HEAD_AT.y);
-  return layer;
-}
-
-const umpires = new Map<-1 | 0 | 1, Layer>();
-
-/**
- * Paints the umpire on the high chair beside the screen-right net post (the stadium does not rotate
- * with the viewer), head turned per `s.umpireLook`. Three cached frames; one blit per call.
- */
-export function drawUmpire(ctx: CanvasRenderingContext2D, s: SceneState): void {
-  const look: -1 | 0 | 1 = s.umpireLook === -1 || s.umpireLook === 1 ? s.umpireLook : 0;
-  const frame = cachedLayer(umpires, look, () => paintUmpire(look));
-  const foot = project({ x: UMPIRE_X, y: 0, z: 0 }, 0);
-  ctx.drawImage(frame.canvas, Math.floor(foot.x) - CHAIR_ANCHOR, Math.floor(foot.y) - CHAIR.length + 1);
 }

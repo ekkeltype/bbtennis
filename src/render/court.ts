@@ -27,6 +27,30 @@ export function rgb(c: string): Rgb {
   return v;
 }
 
+/** A palette colour as one opaque pixel of a little-endian `Uint32Array` view of ImageData. */
+export function packed(c: string): number {
+  const [r, g, b] = rgb(c);
+  return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
+}
+
+/** Paints pixel-art `rows` with its top-left at (x0, y0): one pixel per character in `legend`'s colour; '.' is clear. */
+export function paintGrid(
+  g: CanvasRenderingContext2D,
+  rows: readonly string[],
+  legend: Record<string, string>,
+  x0: number,
+  y0: number,
+): void {
+  rows.forEach((row, r) => {
+    for (let c = 0; c < row.length; c++) {
+      const ch = row[c]!;
+      if (ch === '.') continue;
+      g.fillStyle = legend[ch]!;
+      g.fillRect(x0 + c, y0 + r, 1, 1);
+    }
+  });
+}
+
 /** Deterministic hash of two integers into [0, 1). */
 function hash(a: number, b: number): number {
   let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul((b | 0) + 0x9e3779b9, 0x165667b1);
