@@ -263,6 +263,47 @@ describe('loopbackPair listeners added late', () => {
     expect(log).toEqual(['leave', 'close:closed']);
   });
 
+  it('releases a held close only after the held messages, even when onClose is added first', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    a.send({ type: 'reject', reason: 'full', proto: 1, app: 'bbtennis' });
+    a.send({ type: 'leave' });
+    a.close();
+    s.advance(50);
+    const log: string[] = [];
+    b.onClose((r) => log.push(`close:${r}`));
+    expect(log).toEqual([]);
+    b.onMessage((m) => log.push(m.type));
+    expect(log).toEqual(['reject', 'leave', 'close:closed']);
+  });
+
+  it('holds back a close that arrives while messages wait for their first listener', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const log: string[] = [];
+    b.onClose((r) => log.push(`close:${r}`));
+    a.send({ type: 'leave' });
+    a.close();
+    s.advance(50);
+    expect(log).toEqual([]);
+    b.onMessage((m) => log.push(m.type));
+    expect(log).toEqual(['leave', 'close:closed']);
+  });
+
+  it('reports a held close to every close listener added before it was released, and to no later one', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    a.send({ type: 'leave' });
+    a.close();
+    s.advance(50);
+    const log: string[] = [];
+    b.onClose((r) => log.push(`first:${r}`));
+    b.onClose((r) => log.push(`second:${r}`));
+    b.onMessage((m) => log.push(m.type));
+    b.onClose((r) => log.push(`late:${r}`));
+    expect(log).toEqual(['leave', 'first:closed', 'second:closed']);
+  });
+
   it('drops held messages on a local close', () => {
     const s = new VirtualScheduler();
     const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });

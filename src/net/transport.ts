@@ -16,7 +16,9 @@ export interface Transport {
   onMessage(cb: (m: NetMsg) => void): void;
   /**
    * Adds a listener for the remote side closing or the connection failing; not called after a local
-   * `close()`. A close that happens before the first listener is added is reported to it when it is added.
+   * `close()`. A close that happens before the first listener is added is reported to it when it is
+   * added, but never ahead of a message that arrived before it: while such messages are held for the
+   * first onMessage listener, the close waits until they have been handed over.
    */
   onClose(cb: (reason: string) => void): void;
   /** Closes the channel after the messages already sent; idempotent. Held messages are dropped. */
@@ -37,6 +39,8 @@ export const REMOTE_CLOSED = 'closed';
 /**
  * The message and close listeners of a transport. Until the first listener of each kind is added,
  * incoming messages and the close reason are held for it, so a listener added late misses nothing.
+ * The close is reported only after every held message has been handed over, whichever listener
+ * comes first.
  */
 export class TransportListeners {
   private readonly messageCbs: ((m: NetMsg) => void)[] = [];
@@ -44,19 +48,18 @@ export class TransportListeners {
   private held: NetMsg[] = [];
   private heldClose: string | null = null;
 
-  /** Adds a message listener; the first one is handed the held messages at once (until dropHeld). */
+  /** Adds a message listener; the first one is handed the held messages at once (until dropHeld), then the held close goes out. */
   onMessage(cb: (m: NetMsg) => void): void {
     this.messageCbs.push(cb);
     if (this.messageCbs.length > 1) return;
     while (this.held.length > 0) cb(this.held.shift()!);
+    this.releaseClose();
   }
 
-  /** Adds a close listener; the first one is told at once if the close already happened. */
+  /** Adds a close listener; it is told at once if the close already happened and no messages are still held. */
   onClose(cb: (reason: string) => void): void {
     this.closeCbs.push(cb);
-    const reason = this.heldClose;
-    this.heldClose = null;
-    if (reason !== null) cb(reason);
+    this.releaseClose();
   }
 
   /** Hands an incoming message to the listeners, or holds it until there is one. */
@@ -65,10 +68,18 @@ export class TransportListeners {
     else for (const cb of this.messageCbs) cb(m);
   }
 
-  /** Reports the remote close or a failure to the listeners, or holds it until there is one. */
+  /** Reports the remote close or a failure to the listeners, holding it while it has none or messages are held. */
   close(reason: string): void {
-    if (this.closeCbs.length === 0) this.heldClose = reason;
-    else for (const cb of this.closeCbs) cb(reason);
+    this.heldClose = reason;
+    this.releaseClose();
+  }
+
+  /** Reports the held close to the close listeners there are, once no message is held before it. */
+  private releaseClose(): void {
+    const reason = this.heldClose;
+    if (reason === null || this.closeCbs.length === 0 || this.held.length > 0) return;
+    this.heldClose = null;
+    for (const cb of this.closeCbs) cb(reason);
   }
 
   /** Drops the held messages; after a local close nothing more is delivered. */

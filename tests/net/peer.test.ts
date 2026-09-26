@@ -296,6 +296,21 @@ describe('hostGame', () => {
     expect(log).toEqual(['leave', 'close:closed']);
   });
 
+  it('reports a close only after the held messages, even when onClose is added first', async () => {
+    const { handle, arrive } = await openHost();
+    const transports: Transport[] = [];
+    handle.onGuest((t) => transports.push(t));
+    const conn = arrive();
+    conn.emit('open');
+    const log: string[] = [];
+    transports[0]!.onClose((r) => log.push(`close:${r}`));
+    conn.emit('data', '{"type":"leave"}');
+    conn.emit('error', peerError('negotiation-failed'));
+    expect(log).toEqual([]);
+    transports[0]!.onMessage((m) => log.push(m.type));
+    expect(log).toEqual(['leave', 'close:negotiation-failed']);
+  });
+
   it('drops held messages on a local close', async () => {
     const { handle, arrive } = await openHost();
     let transport: Transport | null = null;
