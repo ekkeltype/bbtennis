@@ -286,7 +286,8 @@ function message(ctx: CanvasRenderingContext2D, title: string, line: string | nu
 /**
  * The heads-up display (spec §4.3, Task 18 ruling 5): TV scoreboard, serve clock, strike speed and
  * last-word WPM, pause button, coach text, call and situation banners, and the session overlays
- * (pause dim, resume countdown, focus lost, "Connection unstable...", RTT).
+ * (pause dim, resume countdown, focus lost, "Connection unstable...", RTT). A spectator (the attract
+ * demo behind Title and Main menu) gets none of it, whatever the display prefs.
  */
 export class Hud {
   private lastWpm: number | null = null;
@@ -309,6 +310,7 @@ export class Hud {
 
   /** Draws the HUD, the banners and the overlays over the world and prompt layers. */
   draw(ctx: CanvasRenderingContext2D, f: WorldFrame, prefs: DisplayPrefs): void {
+    if (f.vm.viewer === 'spectator') return;
     const { overlay } = f.vm;
     if (overlay.paused || overlay.focusLost) dim(ctx);
     if (overlay.coach) drawCoach(ctx, overlay.coach);

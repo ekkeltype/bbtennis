@@ -278,24 +278,30 @@ describe('banners', () => {
   });
 });
 
-/** A 2D context stand-in that records every filled rectangle with its fill style. */
-function recordingContext(): { ctx: CanvasRenderingContext2D; rects: { x: number; y: number; w: number; h: number; style: string }[] } {
+/** A 2D context stand-in that records every filled rectangle with its fill style, and the name of every drawing call. */
+function recordingContext(): {
+  ctx: CanvasRenderingContext2D;
+  rects: { x: number; y: number; w: number; h: number; style: string }[];
+  calls: string[];
+} {
   const rects: { x: number; y: number; w: number; h: number; style: string }[] = [];
+  const calls: string[] = [];
   const state: Record<string, unknown> = {
     fillStyle: '#000000',
     globalAlpha: 1,
     fillRect(x: number, y: number, w: number, h: number) {
+      calls.push('fillRect');
       rects.push({ x, y, w, h, style: String(state.fillStyle) });
     },
   };
   const ctx = new Proxy(state, {
-    get: (t, key: string) => (key in t ? t[key] : () => undefined),
+    get: (t, key: string) => (key in t ? t[key] : () => calls.push(key)),
     set: (t, key: string, value) => {
       t[key] = value;
       return true;
     },
   }) as unknown as CanvasRenderingContext2D;
-  return { ctx, rects };
+  return { ctx, rects, calls };
 }
 
 /** An offscreen canvas for the font atlas whose context accepts and ignores every call. */
@@ -335,6 +341,55 @@ describe('Hud.draw', () => {
     expect(band.length).toBeGreaterThan(0);
     // Everything in the band stays clear of the speed/WPM readouts and the pause icon on the right.
     expect(Math.max(...band.map((r) => r.x + r.w))).toBeLessThanOrEqual(226);
+  });
+});
+
+describe('Hud.draw in attract mode (a spectator)', () => {
+  beforeEach(() => vi.stubGlobal('OffscreenCanvas', FakeCanvas));
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Frames with every HUD part up: lead-in banner, serve clock and situation banner, speed and WPM readouts, champion banner. */
+  function busyFrames(viewer: PlayerId | 'spectator'): ReturnType<typeof worldFrame>[] {
+    const intro = serveTurn();
+    const preServe = serveTurn({ side: 'ad' });
+    turnClock(preServe, 2600);
+    const score: ScoreState = { ...createScore('bo3', 'advantage', 0), points: [2, 3] };
+    const serve = serveTurn();
+    turnInput(serve, 'toss', 2600);
+    for (const [i, ch] of [...'ball'].entries()) turnInput(serve, ch, 2800 + i * 100);
+    const o = serve.outcome;
+    if (o?.kind !== 'strike') throw new Error('expected a strike');
+    const ret = createTurn(returnData({ turnId: 8, incoming: o.strike.flight, chase: opt('ball'), isServeReturn: true, n: 0 }));
+    startTurn(ret);
+    const done: GameEvent = { turn: 7, τ: 0, type: 'wordDone', player: 0, prompt: 40, wpm: 61.6 };
+    return [
+      worldFrame(view(matchState(intro), 100, viewer)),
+      worldFrame(view(matchState(preServe, null, { score }), 2600, viewer)),
+      worldFrame(view(matchState(ret, serve), 100, viewer, [done])),
+      worldFrame(view(matchState(null, ret, { status: 'over', winner: 1 }), 0, viewer), 500),
+    ];
+  }
+
+  it('draws no scoreboard, serve clock, readouts, pause icon or banners, whatever the display prefs', () => {
+    for (const prefs of [PREFS, { largeWords: true, reduceEffects: true, showWpm: true }]) {
+      const hud = new Hud();
+      for (const f of busyFrames('spectator')) {
+        const { ctx, calls } = recordingContext();
+        hud.update(f);
+        hud.draw(ctx, f, prefs);
+        expect(calls).toEqual([]);
+      }
+    }
+  });
+
+  it('while the same frames show the HUD to a player', () => {
+    const hud = new Hud();
+    for (const f of busyFrames(0)) {
+      const { ctx, rects } = recordingContext();
+      hud.update(f);
+      hud.draw(ctx, f, PREFS);
+      expect(rects.some((r) => r.x === PAUSE_ICON_RECT.x && r.y === PAUSE_ICON_RECT.y)).toBe(true);
+    }
   });
 });
 
