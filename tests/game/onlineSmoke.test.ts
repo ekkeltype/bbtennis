@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { CpuBrain, cpuProfile } from '../../src/core/cpu';
 import { Engine } from '../../src/core/engine';
+import { redact } from '../../src/core/redact';
 import { TUNING } from '../../src/core/tuning';
-import type { GameEvent, PlayerId, PlayerInfo, TurnState, ViewModel } from '../../src/core/types';
+import type { GameEvent, PlayerId, PlayerInfo, PublicState, TurnState, ViewModel } from '../../src/core/types';
 import { VirtualScheduler } from '../../src/game/clock';
 import { DisplayQueue } from '../../src/game/displayQueue';
 import { GuestSession } from '../../src/game/guestSession';
-import { HostSession, OnlineLifecycle } from '../../src/game/hostSession';
+import { FrameFit, HostSession } from '../../src/game/hostSession';
+import { KeyRate, LobbyLink, OnlineLifecycle, TransportSwitch } from '../../src/game/onlineLink';
 import type { Session } from '../../src/game/session';
 import { MAX_SEND_BYTES, msgBytes, type NetMsg } from '../../src/net/protocol';
 import { loopbackPair, type Transport } from '../../src/net/transport';
@@ -16,23 +18,40 @@ const LOOK = { skin: 1, hairStyle: 2, hair: 3, shirt: 4, shorts: 5, headband: nu
 const HOST: PlayerInfo = { name: 'Hana', look: LOOK, kind: 'human', cpuLevel: null };
 const GUEST: PlayerInfo = { name: 'Gus', look: LOOK, kind: 'remote', cpuLevel: null };
 
-/** A transport that records what it sends, can go silent, and can lose chosen messages. */
+type FrameMsg = Extract<NetMsg, { type: 'frame' }>;
+
+/** A transport that records what it sends (and when), can go silent, lose chosen messages or hold them back. */
 interface Tap extends Transport {
   sent: NetMsg[];
+  /** Local time each message of `sent` was sent at. */
+  sentAt: number[];
   mute: boolean;
   lose: ((m: NetMsg) => boolean) | null;
+  /** Messages it matches are kept back, in order, until `release`. */
+  hold: ((m: NetMsg) => boolean) | null;
+  /** Sends the messages kept back and stops holding. */
+  release(): void;
 }
 
-function tap(t: Transport): Tap {
+function tap(t: Transport, s: VirtualScheduler): Tap {
+  const held: NetMsg[] = [];
   const x: Tap = {
     sent: [],
+    sentAt: [],
     mute: false,
     lose: null,
+    hold: null,
     send(m) {
       if (x.mute) return;
       x.sent.push(m);
+      x.sentAt.push(s.now());
       if (x.lose?.(m) === true) return;
-      t.send(m);
+      if (x.hold?.(m) === true) held.push(m);
+      else t.send(m);
+    },
+    release() {
+      x.hold = null;
+      for (const m of held.splice(0)) t.send(m);
     },
     onMessage: (cb) => t.onMessage(cb),
     onClose: (cb) => t.onClose(cb),
@@ -55,8 +74,8 @@ interface Online {
 function online(opts: { seed: number; latencyMs?: number; jitterMs?: number }): Online {
   const s = new VirtualScheduler(1000);
   const [a, b] = loopbackPair(s, { latencyMs: opts.latencyMs ?? 80, jitterMs: opts.jitterMs ?? 20, seed: 5 });
-  const hostNet = tap(a);
-  const guestNet = tap(b);
+  const hostNet = tap(a, s);
+  const guestNet = tap(b, s);
   const ticker = (ms: number, fn: () => void): (() => void) => s.every(ms, fn);
   const host = new HostSession({ transport: hostNet, config: TIEBREAK, host: HOST, guest: GUEST, seed: opts.seed, scheduler: s, ticker });
   const guest = new GuestSession({ transport: guestNet, scheduler: s, me: { ...GUEST, kind: 'human' }, ticker });
@@ -583,6 +602,283 @@ describe('OnlineLifecycle: the shared start and end of an online match', () => {
     expect(life.mayRematch).toBe(false);
     life.reset();
     expect(life.reason).toBe('left');
+  });
+
+  it('open is idempotent: a second open starts no second tick, and dispose stops the only one', () => {
+    const { s, life, ticks } = lifecycle();
+    let again = 0;
+    life.open((ms, fn) => s.every(ms, fn), () => again++);
+    s.advance(200);
+    expect(ticks()).toBe(4);
+    expect(again).toBe(0);
+    life.dispose();
+    s.advance(200);
+    expect(ticks()).toBe(4);
+    expect(again).toBe(0);
+  });
+});
+
+describe('KeyRate: at most 30 keys per second of a turn clock', () => {
+  it('allows 30 keys in any second of a turn, starting afresh with each turn', () => {
+    const r = new KeyRate();
+    const allowed = (turn: number, from: number, n: number, step: number): number =>
+      Array.from({ length: n }, (_, i) => r.allow(turn, from + i * step)).filter(Boolean).length;
+    expect(allowed(1, 0, 40, 10)).toBe(30);
+    // (τ − 1 s, τ] at τ = 1000 no longer holds the key at 0, so one more fits.
+    expect(r.allow(1, 1000)).toBe(true);
+    expect(r.allow(1, 1000)).toBe(false);
+    expect(allowed(2, 0, 40, 10)).toBe(30);
+  });
+
+  it('counts a key at the highest τ counted this turn when its own τ is lower: decreasing τ never bypasses the limit', () => {
+    const r = new KeyRate();
+    const allowed = Array.from({ length: 100 }, (_, i) => r.allow(1, 5000 - i * 40)).filter(Boolean).length;
+    expect(allowed).toBe(30);
+    // Time moves on from the highest τ counted, not from the lowest one sent.
+    expect(r.allow(1, 5999)).toBe(false);
+    expect(r.allow(1, 6000)).toBe(true);
+  });
+});
+
+describe('online sessions: frames', () => {
+  it('the host never sends a second frame of the same state at one moment (a tick whose step already sent one sends no other)', () => {
+    const o = online({ seed: seedWhere(0) });
+    play(o.s, sides(o), 20000);
+    const seen = new Set<string>();
+    let frames = 0;
+    o.hostNet.sent.forEach((m, i) => {
+      if (m.type !== 'frame') return;
+      frames++;
+      const key = `${o.hostNet.sentAt[i]} ${JSON.stringify({ ...m, ev: undefined })}`;
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+    });
+    expect(frames).toBeGreaterThan(100);
+  }, 60000);
+
+  it('a frame over the size cap keeps only the last 200 entries of lastTurn\'s log, with one warning ever', () => {
+    const state = redact(new Engine({ config: TIEBREAK, players: [HOST, GUEST], seed: 1 }).state, 1);
+    const frameWithLog = (entries: number): FrameMsg => {
+      const last = structuredClone(state.turn!);
+      last.log = Array.from({ length: entries }, (_, i) => ({ τ: i + 0.123456789, k: 'ok', prompt: 1, ch: 'a' }));
+      return { type: 'frame', turn: 1, τ: 0, s: { ...structuredClone(state), lastTurn: last } };
+    };
+    const fit = new FrameFit();
+    const big = frameWithLog(900);
+    expect(msgBytes(big)).toBeGreaterThan(MAX_SEND_BYTES);
+    const tail = big.s!.lastTurn!.log.slice(-200);
+    fit.fit(big);
+    expect(big.s!.lastTurn!.log).toEqual(tail);
+    expect(msgBytes(big)).toBeLessThanOrEqual(MAX_SEND_BYTES);
+    expect(warn).toHaveBeenCalledOnce();
+    const again = frameWithLog(1000);
+    fit.fit(again);
+    expect(again.s!.lastTurn!.log).toHaveLength(200);
+    expect(warn).toHaveBeenCalledOnce();
+    // A frame within the cap keeps its whole log, however long.
+    const small = frameWithLog(300);
+    expect(msgBytes(small)).toBeLessThanOrEqual(MAX_SEND_BYTES);
+    fit.fit(small);
+    expect(small.s!.lastTurn!.log).toHaveLength(300);
+  });
+});
+
+describe('online sessions: the scoreboard follows the display', () => {
+  it('each side\'s score changes only as the display reaches the next point call, and its stats and status only between turns (spec §3.1)', () => {
+    const o = online({ seed: seedWhere(1) });
+    const last = new Map<string, { turn: number | null; score: string; rest: string }>();
+    let scoreChanges = 0;
+    play(o.s, sides(o), 90000, (x, vm) => {
+      const t = vm.pub.turn;
+      const turn = t?.data.turnId ?? null;
+      const score = JSON.stringify(vm.pub.score);
+      const rest = JSON.stringify([vm.pub.stats, vm.pub.status]);
+      // From the first displayed turn on (the guest shows a waiting placeholder before it).
+      const prev = last.get(x.name);
+      if (prev !== undefined && prev.turn !== null && prev.score !== score) {
+        scoreChanges++;
+        expect(turn).not.toBe(prev.turn);
+        // The new score shows with the next serve's point call, or once the last turn has been shown.
+        expect(t === null || (t.data.kind === 'serve' && t.data.leadIn.kind === 'point')).toBe(true);
+      }
+      if (prev !== undefined && prev.turn !== null && prev.rest !== rest) expect(turn).not.toBe(prev.turn);
+      if (turn !== null || prev !== undefined) last.set(x.name, { turn, score, rest });
+    });
+    expect(scoreChanges).toBeGreaterThanOrEqual(4);
+  }, 120000);
+});
+
+/** Frames both sessions until the guest's own running turn passes `done`, and returns it. */
+function guestTurnUntil(o: Online, done: (t: TurnState) => boolean, limitMs = 20000): TurnState {
+  for (let ms = 0; ms < limitMs; ms += FRAME) {
+    run(o, FRAME);
+    const t = o.guest.frame(FRAME).liveTurn;
+    if (t !== null && done(t)) return t;
+  }
+  throw new Error('the guest\'s turn never got there');
+}
+
+describe('online sessions: a guest toss waits for its word set', () => {
+  it('a toss pressed before the next serve word set has arrived is held, then applied and sent when it arrives (spec §5.3)', () => {
+    const o = online({ seed: seedWhere(1) });
+    guestTurnUntil(o, (t) => t.phase === 'preServe');
+    // The host's frames, which bring the spare word sets it adds after each catch, are held back.
+    o.hostNet.hold = (m) => m.type === 'frame';
+    // Two tosses with no typing: each ends in a catch, using up the current set and then the spare.
+    for (const n of [1, 2]) {
+      o.guest.key({ kind: 'toss' }, o.s.now());
+      guestTurnUntil(o, (t) => t.phase === 'preServe' && t.setIndex === n);
+    }
+    const sets = (): number => {
+      const d = o.guest.frame(FRAME).liveTurn?.data;
+      return d?.kind === 'serve' ? d.wordSets.length : 0;
+    };
+    const tosses = (): number => o.guestNet.sent.filter((m) => m.type === 'input' && m.k === 'toss').length;
+    expect(sets()).toBe(2);
+    expect(tosses()).toBe(2);
+    o.guest.key({ kind: 'toss' }, o.s.now());
+    run(o, 300);
+    expect(o.guest.frame(FRAME).liveTurn?.phase).toBe('preServe');
+    expect(tosses()).toBe(2);
+    o.hostNet.release();
+    run(o, 300);
+    expect(sets()).toBeGreaterThanOrEqual(3);
+    expect(tosses()).toBe(3);
+    expect(o.guest.frame(FRAME).liveTurn?.phase).toBe('toss');
+    // The host's engine applied the same three tosses at the same τ.
+    run(o, 300);
+    const tossτ = (t: TurnState | null | undefined): number[] => (t?.log ?? []).filter((e) => e.k === 'toss').map((e) => e.τ);
+    const mine = tossτ(o.guest.frame(FRAME).liveTurn);
+    expect(mine).toHaveLength(3);
+    expect(tossτ(o.host.frame(FRAME).pub.turn)).toEqual(mine);
+    expect(warn).not.toHaveBeenCalled();
+  }, 60000);
+});
+
+describe('online sessions: a malformed frame from the host', () => {
+  it('the guest drops a frame whose turn or lastTurn is malformed, with one warning, and takes the next good frame', () => {
+    const s = new VirtualScheduler(1000);
+    const [a, b] = loopbackPair(s, { latencyMs: 20, jitterMs: 0, seed: 1 });
+    const guest = new GuestSession({ transport: b, scheduler: s, me: { ...GUEST, kind: 'human' }, ticker: (ms, fn) => s.every(ms, fn) });
+    a.onMessage(() => {});
+    const state = redact(new Engine({ config: TIEBREAK, players: [HOST, GUEST], seed: 1 }).state, 1);
+    const turn = state.turn!;
+    const bad: unknown[] = [
+      { ...state, turn: { data: 'serve' } },
+      { ...state, turn: { ...turn, prompts: null } },
+      { ...state, turn: { ...turn, log: {} } },
+      { ...state, turn: { ...turn, data: { ...turn.data, owner: 7 } } },
+      { ...state, turn: { ...turn, data: { ...turn.data, turnId: 1.5 } } },
+      { ...state, turn: { ...turn, data: { ...turn.data, kind: 'volley' } } },
+      { ...state, lastTurn: 5 },
+    ];
+    for (const x of bad) a.send({ type: 'frame', turn: 1, τ: 0, s: x as PublicState });
+    expect(() => s.advance(100)).not.toThrow();
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]![0])).toContain('[bbt]');
+    let vm = guest.frame(FRAME);
+    expect(vm.pub.turn).toBeNull();
+    expect(vm.pub.players[0].name).toBe('');
+    a.send({ type: 'frame', turn: 1, τ: 0, s: state });
+    s.advance(100);
+    vm = guest.frame(FRAME);
+    expect(vm.pub.turn?.data.turnId).toBe(1);
+    expect(vm.pub.players[0].name).toBe(HOST.name);
+  });
+});
+
+describe('TransportSwitch: one transport handed from the lobby to the match', () => {
+  function pair(): { s: VirtualScheduler; a: Transport; b: Transport; toB: NetMsg[] } {
+    const s = new VirtualScheduler(0);
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const toB: NetMsg[] = [];
+    b.onMessage((m) => toB.push(m));
+    return { s, a, b, toB };
+  }
+
+  it('the first channel gets what arrived earlier; after next() it hears and sends nothing, and the new one gets `first`, then the rest', () => {
+    const { s, a, b, toB } = pair();
+    b.send({ type: 'ready', on: true });
+    s.advance(20);
+    const sw = new TransportSwitch(a);
+    const lobby = sw.current;
+    const heard: NetMsg[] = [];
+    lobby.onMessage((m) => heard.push(m));
+    expect(heard).toEqual([{ type: 'ready', on: true }]);
+    lobby.send({ type: 'ping', id: 1 });
+    s.advance(20);
+    expect(toB).toEqual([{ type: 'ping', id: 1 }]);
+
+    const match = sw.next([{ type: 'rematch', want: true }]);
+    expect(sw.current).toBe(match);
+    b.send({ type: 'forfeit' });
+    s.advance(20);
+    const got: NetMsg[] = [];
+    match.onMessage((m) => got.push(m));
+    expect(got).toEqual([{ type: 'rematch', want: true }, { type: 'forfeit' }]);
+    expect(heard).toHaveLength(1);
+    // The old channel can neither send nor close the transport the match now uses.
+    lobby.send({ type: 'ping', id: 2 });
+    lobby.close();
+    match.send({ type: 'pong', id: 9 });
+    s.advance(20);
+    expect(toB).toEqual([{ type: 'ping', id: 1 }, { type: 'pong', id: 9 }]);
+  });
+
+  it('a close reaches the current channel, and a channel made after the close is told too', () => {
+    const { s, a, b } = pair();
+    const sw = new TransportSwitch(a);
+    const closes: string[] = [];
+    sw.current.onClose((r) => closes.push(`lobby ${r}`));
+    b.close();
+    s.advance(20);
+    expect(closes).toEqual(['lobby closed']);
+    sw.next().onClose((r) => closes.push(`match ${r}`));
+    expect(closes).toEqual(['lobby closed', 'match closed']);
+  });
+});
+
+describe('LobbyLink: the lobby\'s heartbeat until the match takes over', () => {
+  it('measures the round trip, hears the other side leave, and after handOver neither sends nor hears', () => {
+    const s = new VirtualScheduler(0);
+    const [a, b] = loopbackPair(s, { latencyMs: 30, jitterMs: 0, seed: 1 });
+    const hostHeard: NetMsg[] = [];
+    const gone: string[] = [];
+    const host = new LobbyLink(a, s, { message: (m) => hostHeard.push(m), gone: (why) => gone.push(why) });
+    const guest = new LobbyLink(b, s, { message: () => {}, gone: () => {} });
+    s.advance(2100);
+    expect(host.rttMs).toBe(60);
+    guest.send({ type: 'ready', on: true });
+    s.advance(50);
+    expect(hostHeard).toEqual([{ type: 'ready', on: true }]);
+
+    const match = host.handOver();
+    const got: NetMsg[] = [];
+    match.onMessage((m) => got.push(m));
+    guest.send({ type: 'ready', on: false });
+    s.advance(50);
+    expect(hostHeard).toHaveLength(1);
+    expect(got).toEqual([{ type: 'ready', on: false }]);
+    // The handed-over lobby link pings no more; the guest's link keeps pinging the match's channel.
+    s.advance(4000);
+    expect(got.filter((m) => m.type === 'pong')).toEqual([]);
+    expect(got.some((m) => m.type === 'ping')).toBe(true);
+    guest.close();
+    s.advance(50);
+    expect(gone).toEqual([]);
+    expect(got.at(-1)).toEqual({ type: 'leave' });
+  });
+
+  it('reports the other side leaving or going silent once', () => {
+    const s = new VirtualScheduler(0);
+    const [a, b] = loopbackPair(s, { latencyMs: 30, jitterMs: 0, seed: 1 });
+    const gone: string[] = [];
+    new LobbyLink(a, s, { message: () => {}, gone: (why) => gone.push(why) });
+    const guest = new LobbyLink(b, s, { message: () => {}, gone: () => {} });
+    guest.close();
+    s.advance(100);
+    s.advance(10000);
+    expect(gone).toEqual(['left']);
   });
 });
 

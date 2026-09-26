@@ -22,12 +22,13 @@ import {
   KeyRate,
   OnlineLifecycle,
   onlineOverlay,
+  Scoreboards,
   WaitTag,
   type Departure,
   type EndReason,
   type PeerLink,
   type Ticker,
-} from './hostSession';
+} from './onlineLink';
 import { workerTicker } from './loop';
 import type { Session } from './session';
 
@@ -67,6 +68,8 @@ interface OwnTurn {
   outcome: OutcomeSummary | null;
   /** True once the host's result for the turn has been compared. */
   checked: boolean;
+  /** A toss pressed before its serve word set arrived, waiting for it (spec §5.3). */
+  tossHeld: boolean;
 }
 
 /** How to set up the guest's side of an online match. */
@@ -95,6 +98,7 @@ export class GuestSession implements Session {
   private readonly life: OnlineLifecycle;
   private readonly link: PeerLink;
   private readonly wait = new WaitTag();
+  private readonly boards = new Scoreboards();
   private queue: DisplayQueue;
   private rate = new KeyRate();
   /** The latest state from the host; the placeholder until the first one arrives. */
@@ -106,6 +110,7 @@ export class GuestSession implements Session {
   private final: MatchState | null = null;
   private wantsRematch = false;
   private lastView: ViewModel | null = null;
+  private malformedWarned = false;
 
   /** Sets up the waiting view; only then takes the host's messages (earlier ones included). */
   constructor(opts: GuestSessionOptions) {
@@ -157,10 +162,9 @@ export class GuestSession implements Session {
 
   /**
    * A guest key at `timeStamp` (a future or non-finite one counts as now): while the guest's own turn
-   * is displayed and running, a letter or toss goes to the local runner at τ = timeStamp − the turn's
-   * local start and then to the host as an `input` (after a `clock` with the runner's latest τ, so the
-   * host clamps it the same way). Keys beyond 30 per second, keys stamped before the turn's start and
-   * a toss whose word set has not arrived yet are dropped; an off-turn letter shows WAIT.
+   * is displayed and running, a letter or toss is pressed at τ = timeStamp − the turn's local start.
+   * Keys stamped before the turn's start and tosses in a return turn are dropped; a toss whose serve
+   * word set has not arrived yet waits for it (spec §5.3); an off-turn letter shows WAIT.
    */
   key(k: KeyClass, timeStamp: number): void {
     if (!this.life.playing || k.kind === 'ignore') return;
@@ -173,15 +177,14 @@ export class GuestSession implements Session {
     const t = Number.isFinite(timeStamp) ? Math.min(timeStamp, now) : now;
     if (t < own.start) return;
     const r = own.runner;
-    if (k.kind === 'toss' && (r.data.kind !== 'serve' || (r.phase === 'preServe' && r.data.wordSets[r.setIndex] === undefined))) return;
-    const key = k.kind === 'toss' ? 'toss' : k.letter;
-    const turn = r.data.turnId;
-    const τ = t - own.start;
-    if (!this.rate.allow(turn, τ)) return;
-    this.sendClock(own, now);
-    this.onOwnEvents(own, turnInput(r, key, τ));
-    this.link.send({ type: 'input', seq: this.seq++, turn, k: key, τ });
-    own.sent = Math.max(own.sent, r.τ);
+    if (k.kind === 'toss') {
+      if (r.data.kind !== 'serve') return;
+      if (r.phase === 'preServe' && r.data.wordSets[r.setIndex] === undefined) {
+        own.tossHeld = true;
+        return;
+      }
+    }
+    this.press(own, k.kind === 'toss' ? 'toss' : k.letter, t - own.start, now);
     this.step(now);
   }
 
@@ -237,6 +240,31 @@ export class GuestSession implements Session {
     for (const entry of this.queue.advance(now)) if (entry.local) this.startOwn(entry);
   }
 
+  /**
+   * Presses `key` at τ in the guest's own running turn: the local runner applies it, and the host gets
+   * it as an `input`, after a `clock` with the runner's latest τ so that it clamps the key the same way.
+   * Keys beyond 30 per second are dropped.
+   */
+  private press(own: OwnTurn, key: string, τ: number, now: number): void {
+    const r = own.runner;
+    const turn = r.data.turnId;
+    if (!this.rate.allow(turn, τ)) return;
+    this.sendClock(own, now);
+    this.onOwnEvents(own, turnInput(r, key, τ));
+    this.link.send({ type: 'input', seq: this.seq++, turn, k: key, τ });
+    own.sent = Math.max(own.sent, r.τ);
+  }
+
+  /** A toss that waited for its word set is pressed now that the set has arrived, if the serve still waits in PRE_SERVE. */
+  private releaseToss(own: OwnTurn): void {
+    const r = own.runner;
+    if (!own.tossHeld || r.data.kind !== 'serve' || r.data.wordSets[r.setIndex] === undefined) return;
+    own.tossHeld = false;
+    if (this.running() !== own || r.phase !== 'preServe') return;
+    const now = this.scheduler.now();
+    this.press(own, 'toss', now - own.start, now);
+  }
+
   /** The guest's own turn that is displayed and still running locally, if any. */
   private running(): OwnTurn | null {
     const own = this.own;
@@ -250,7 +278,7 @@ export class GuestSession implements Session {
     runner.seenKinds = [...entry.turn.seenKinds];
     const events = startTurn(runner);
     entry.turn = runner;
-    const own: OwnTurn = { entry, runner, start: entry.startedAt ?? this.scheduler.now(), sent: 0, outcome: null, checked: false };
+    const own: OwnTurn = { entry, runner, start: entry.startedAt ?? this.scheduler.now(), sent: 0, outcome: null, checked: false, tossHeld: false };
     this.own = own;
     this.link.send({ type: 'clock', turn: runner.data.turnId, τ: 0 });
     this.onOwnEvents(own, events);
@@ -297,11 +325,17 @@ export class GuestSession implements Session {
   /**
    * A frame from the host: its state becomes the latest one; each new turn in it is queued for display
    * and known ones refreshed; its (turn, τ) confirms the playback of a host-owned turn; its events are
-   * held for the display, except those the guest's own runner already showed.
+   * held for the display, except those the guest's own runner already showed. A frame whose turn or
+   * last turn is malformed is dropped (with one warning per session).
    */
   private onFrame(m: FrameMsg): void {
     if (!this.life.showing) return;
     const s = m.s;
+    if (s !== undefined && !(isTurnShaped(s.turn) && isTurnShaped(s.lastTurn))) {
+      if (!this.malformedWarned) console.warn('[bbt] dropped a frame with a malformed turn from the host', m.turn);
+      this.malformedWarned = true;
+      return;
+    }
     if (s !== undefined) {
       this.latest = s;
       if (s.lastTurn !== null) this.offer(s.lastTurn);
@@ -312,12 +346,16 @@ export class GuestSession implements Session {
     if (m.ev !== undefined) this.queue.hold(m.ev.filter((e) => !this.shownLocally(e)));
   }
 
-  /** A turn from the host's state: queued if new; otherwise its display entry follows it (the guest's running own turn only takes new serve word sets). */
+  /**
+   * A turn from the host's latest state: queued if new, with the scoreboard of that state; otherwise its
+   * display entry follows it (the guest's running own turn only takes new serve word sets, which may
+   * release a waiting toss).
+   */
   private offer(t: TurnState): void {
     const id = t.data.turnId;
     if (id > this.lastPushed) {
       this.lastPushed = id;
-      this.queue.push(t, t.data.owner === GUEST);
+      this.boards.note(this.queue.push(t, t.data.owner === GUEST), this.latest);
       return;
     }
     const own = this.own;
@@ -326,6 +364,7 @@ export class GuestSession implements Session {
       return;
     }
     appendSets(own.runner, t);
+    this.releaseToss(own);
     if (t.ended && !own.checked) this.check(own, t);
   }
 
@@ -372,6 +411,7 @@ export class GuestSession implements Session {
     const p = this.queue.previous;
     pub.turn = f === null ? null : copy(f.turn);
     pub.lastTurn = p === null ? null : copy(p.turn);
+    this.boards.show(pub, f);
     const own = this.own;
     const live = own !== null && f === own.entry && f.turn === own.runner;
     const vm: ViewModel = {
@@ -408,6 +448,39 @@ function waitingState(config: MatchConfig, players: [PlayerInfo, PlayerInfo]): P
     rng: null,
     picker: null,
   };
+}
+
+const isRec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * True for null or a turn whose parts the guest reads have the right shape: the start data's kind,
+ * owner and id (and a serve's word sets), the prompts, log and seen kinds, the ended flag and the
+ * outcome (with a strike's word and landing). The protocol checks a frame's state at the top level
+ * only, so this keeps a broken host from throwing in the guest's message handler.
+ */
+function isTurnShaped(t: unknown): boolean {
+  if (t === null) return true;
+  if (!isRec(t) || !isRec(t.data)) return false;
+  const d = t.data;
+  return (
+    (d.kind === 'return' || (d.kind === 'serve' && Array.isArray(d.wordSets))) &&
+    (d.owner === 0 || d.owner === 1) &&
+    Number.isSafeInteger(d.turnId) &&
+    Array.isArray(t.prompts) &&
+    Array.isArray(t.log) &&
+    Array.isArray(t.seenKinds) &&
+    typeof t.ended === 'boolean' &&
+    isOutcomeShaped(t.outcome)
+  );
+}
+
+/** True for null or an outcome with a kind and a finite endτ (a strike's word and landing included). */
+function isOutcomeShaped(o: unknown): boolean {
+  if (o === null) return true;
+  if (!isRec(o) || typeof o.kind !== 'string' || typeof o.endτ !== 'number' || !Number.isFinite(o.endτ)) return false;
+  if (o.kind !== 'strike') return true;
+  const s = o.strike;
+  return isRec(s) && isRec(s.word) && isRec(s.shot) && isRec(s.shot.landing);
 }
 
 function summary(o: TurnOutcome): OutcomeSummary {
