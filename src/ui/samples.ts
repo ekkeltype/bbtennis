@@ -23,7 +23,10 @@ function stats(s: Partial<PlayerStats>): PlayerStats {
   };
 }
 
-/** A finished best-of-three vs a Green belt, won by the player, for the dev `?screen=results` preview. */
+/**
+ * A finished best-of-three vs a Green belt, won by the player with the third set decided in a tiebreak
+ * (so the score line shows its superscript), for the dev `?screen=results` preview.
+ */
 function sampleMatch(profile: Profile): MatchState {
   const s = new Engine({ config: SAMPLE_CONFIG, players: [humanPlayer(profile), cpuPlayer(6)], seed: 7 }).state;
   s.status = 'over';
@@ -35,6 +38,7 @@ function sampleMatch(profile: Profile): MatchState {
     [3, 5],
     [5, 4],
   ];
+  s.score.setTiebreaks = [null, null, [7, 3]];
   s.score.games = [0, 0];
   s.score.setsWon = [2, 1];
   s.longestRally = 11;
