@@ -33,7 +33,7 @@ function publicState(names: [string, string] = ['ALEX', 'Sam-2']): PublicState {
       { name: names[1], look: noBand, kind: 'remote', cpuLevel: null },
     ],
     score: {
-      format: 'short', deuceRule: 'golden', setGames: [], games: [1, 0], points: [2, 3], inTiebreak: false,
+      format: 'short', deuceRule: 'golden', setGames: [], setTiebreaks: [], games: [1, 0], points: [2, 3], inTiebreak: false,
       setsWon: [0, 0], firstServerOfMatch: 1, gameServer: 0, winner: null,
     },
     stats: [zeroStats(), zeroStats()],

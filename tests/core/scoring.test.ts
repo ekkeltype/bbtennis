@@ -382,7 +382,7 @@ describe('setLine', () => {
 
   it('shows plain games for sets without a recorded tiebreak (a score built without setTiebreaks)', () => {
     const s: ScoreState = { ...createScore('bo3', 'advantage', 0), setGames: [[4, 2], [5, 4]], setsWon: [2, 0], winner: 0 };
-    delete s.setTiebreaks;
+    delete (s as Partial<ScoreState>).setTiebreaks;
     expect(setLine(s)).toStrictEqual([
       [{ value: 4, sup: null }, { value: 5, sup: null }],
       [{ value: 2, sup: null }, { value: 4, sup: null }],
