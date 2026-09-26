@@ -5,9 +5,10 @@ import { Hud } from './hud';
 import { OUTLINE } from './palette';
 import { PlayerAnimator } from './players';
 import { H, W } from './projection';
+import { drawPrompts, promptScene } from './prompts';
 import type { Screen } from './screen';
 import { buildSheet, type SpriteSheet } from './sprites/sheet';
-import { drawPrompts, drawWorld, promptScene, worldFrame, type WorldFrame } from './world';
+import { drawWorld, worldFrame, type WorldFrame } from './world';
 
 export type { DisplayPrefs } from '../core/types';
 export { PAUSE_ICON_RECT } from './hud';
