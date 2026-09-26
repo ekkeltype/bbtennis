@@ -13,17 +13,19 @@ export const APP_ID = 'bbtennis';
 export const MAX_MSG_CHARS = 32 * 1024;
 
 /**
- * Largest message a transport sends, in UTF-8 bytes of its JSON (see msgBytes). PeerJS's JSON
- * channel refuses 16300 bytes or more, so every sender (above all frames carrying `s`) must stay
- * within this; transports never send a larger message.
+ * Largest message a transport sends, in UTF-8 bytes of its JSON (see msgBytes); transports drop a
+ * larger one (see encodeMsg). Every sendable message is within MAX_MSG_CHARS and well under the
+ * 64 KiB a WebRTC data channel always accepts.
  */
-export const MAX_SEND_BYTES = 16000;
+export const MAX_SEND_BYTES = 32000;
 
 const utf8 = new TextEncoder();
 
-/** Size of `msg` on the wire: the UTF-8 byte length of its JSON, measured as PeerJS measures it. */
+const jsonBytes = (json: string): number => utf8.encode(json).byteLength;
+
+/** Size of `msg` on the wire: the UTF-8 byte length of its JSON. */
 export function msgBytes(msg: NetMsg): number {
-  return utf8.encode(JSON.stringify(msg)).byteLength;
+  return jsonBytes(JSON.stringify(msg));
 }
 
 /** Every message exchanged between host and guest (spec §5.3). `τ` is a turn-clock time in ms. */
@@ -217,4 +219,25 @@ export function parseMsg(raw: unknown): NetMsg | null {
     return null;
   }
   return chars > MAX_MSG_CHARS ? null : parseFields(raw);
+}
+
+/** The wire form of `msg` (its JSON), or null with a `[bbt] frame too big` warning when it is over MAX_SEND_BYTES. */
+export function encodeMsg(msg: NetMsg): string | null {
+  const json = JSON.stringify(msg);
+  const bytes = jsonBytes(json);
+  if (bytes <= MAX_SEND_BYTES) return json;
+  console.warn('[bbt] frame too big', bytes);
+  return null;
+}
+
+/** A received wire message: a JSON string that passes parseMsg. Anything else (invalid JSON, non-strings) is null. */
+export function decodeMsg(data: unknown): NetMsg | null {
+  if (typeof data !== 'string') return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  return parseMsg(raw);
 }

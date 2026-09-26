@@ -2,7 +2,7 @@ import { RealScheduler, type Scheduler } from '../game/clock';
 import { genCode, normalizeCode } from './codes';
 import { NetError, errorKind, type NetErrorKind } from './netErrors';
 import { peerOptions, type BrokerOptions, type PeerEnvVars } from './peerConfig';
-import { MAX_SEND_BYTES, msgBytes, parseMsg, type NetMsg } from './protocol';
+import { decodeMsg, encodeMsg, type NetMsg } from './protocol';
 import { REMOTE_CLOSED, type Transport } from './transport';
 
 export { NetError, errorKind, errorText, type NetErrorKind } from './netErrors';
@@ -20,7 +20,7 @@ export const JOIN_TIMEOUT_MS = 20000;
 /** Delay before a join reports STILL_CONNECTING (spec §5.4). */
 export const SLOW_STATUS_MS = 5000;
 
-/** A closing transport waits this long for its flush before force-closing (spec §5.3). */
+/** A closing transport waits this long, so the messages it already sent can arrive, before it closes the connection (spec §5.3). */
 export const CLOSE_FLUSH_MS = 500;
 
 /** Delay before a host that lost the broker re-registers its code. */
@@ -32,14 +32,14 @@ export const STILL_CONNECTING = 'Still connecting…';
 /** A PeerJS error: `type` is a PeerErrorType or connection error type string. */
 export interface PeerErrorLike { type: string; message: string }
 
-/** The part of a PeerJS DataConnection used here. */
+/** The part of a PeerJS DataConnection used here; with raw serialization it carries strings as they are. */
 export interface ConnLike {
   on(event: 'open', fn: () => void): unknown;
   on(event: 'data', fn: (data: unknown) => void): unknown;
   on(event: 'close', fn: () => void): unknown;
   on(event: 'error', fn: (err: PeerErrorLike) => void): unknown;
-  send(data: unknown): unknown;
-  close(options?: { flush?: boolean }): void;
+  send(data: string): unknown;
+  close(): void;
   readonly dataChannel: { readonly bufferedAmount: number } | null | undefined;
 }
 
@@ -79,7 +79,7 @@ export interface HostHandle {
   code: string;
   /** Sets the listener for guests whose connection is open; guests that arrived earlier are handed over at once. */
   onGuest(cb: (t: Transport) => void): void;
-  /** Closes every guest transport (with flush) and releases the code. */
+  /** Closes every guest transport (letting sent messages arrive first) and releases the code. */
   close(): void;
 }
 
@@ -121,14 +121,12 @@ async function newPeer(d: Deps, id: string | null): Promise<PeerLike> {
   }
 }
 
-/** PeerJS's DataConnection error for a send over its JSON channel limit; the connection itself is fine. */
-const MESSAGE_TOO_BIG = 'message-too-big';
-
 /**
- * Wraps an open DataConnection. Incoming data goes through parseMsg; a remote close or connection
- * error is reported once via onClose; close() flushes, then force-closes after CLOSE_FLUSH_MS.
- * A message over MAX_SEND_BYTES is dropped with a warning, and so is one PeerJS refuses as too big;
- * neither ends the connection. `onEnd` runs once when the connection is finished either way.
+ * Wraps an open raw DataConnection. Messages go out as JSON strings (encodeMsg) and incoming data
+ * goes through decodeMsg; a remote close or connection error is reported once via onClose; close()
+ * closes the connection after CLOSE_FLUSH_MS. PeerJS's `close({ flush: true })` is not used: in raw
+ * mode its close marker reaches the other side as the string "[object Object]" and closes nothing.
+ * `onEnd` runs once when the connection is finished either way.
  */
 function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transport {
   let open = true;
@@ -141,21 +139,17 @@ function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transpo
     onEnd();
     for (const cb of closeCbs) cb(reason);
   };
-  conn.on('data', (raw) => {
+  conn.on('data', (data) => {
     if (!open) return;
-    const msg = parseMsg(raw);
+    const msg = decodeMsg(data);
     if (msg) for (const cb of messageCbs) cb(msg);
   });
   conn.on('close', () => lost(REMOTE_CLOSED));
-  conn.on('error', (err) => {
-    if (err.type === MESSAGE_TOO_BIG) console.warn(`[bbt] PeerJS dropped a message: ${err.message}`);
-    else lost(err.type);
-  });
+  conn.on('error', (err) => lost(err.type));
   return {
     send(msg) {
-      const bytes = msgBytes(msg);
-      if (bytes > MAX_SEND_BYTES) console.warn(`[bbt] dropped a ${msg.type} message of ${bytes} bytes (limit ${MAX_SEND_BYTES})`);
-      else if (open) conn.send(msg);
+      const json = encodeMsg(msg);
+      if (json !== null && open) conn.send(json);
     },
     onMessage(cb) {
       messageCbs.push(cb);
@@ -166,7 +160,6 @@ function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transpo
     close() {
       if (!open) return;
       open = false;
-      conn.close({ flush: true });
       s.after(CLOSE_FLUSH_MS, () => {
         conn.close();
         onEnd();
@@ -264,7 +257,7 @@ export async function hostGame(opts: PeerEnv = {}): Promise<HostHandle> {
 }
 
 /**
- * Connects to the host of `code` with a reliable JSON DataConnection, resolving once it is open.
+ * Connects to the host of `code` with a reliable raw DataConnection, resolving once it is open.
  * Fails after JOIN_TIMEOUT_MS with 'nat' if the broker was reached, else 'broker'; a malformed code
  * fails with 'notFound'. Reports STILL_CONNECTING through `opts.onStatus` after SLOW_STATUS_MS.
  */
@@ -295,7 +288,7 @@ export async function joinGame(code: string, opts: PeerEnv = {}): Promise<Transp
     peer.on('error', (err) => fail(errorKind(err.type), err.message));
     peer.on('open', () => {
       brokerReached = true;
-      const conn = peer.connect(PEER_ID_PREFIX + normalized, { reliable: true, serialization: 'json' });
+      const conn = peer.connect(PEER_ID_PREFIX + normalized, { reliable: true, serialization: 'raw' });
       conn.on('open', () => {
         if (settle()) resolve(connTransport(conn, d.s, () => peer.destroy()));
       });

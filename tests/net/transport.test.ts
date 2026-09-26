@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VirtualScheduler } from '../../src/game/clock';
 import { MAX_SEND_BYTES, type NetMsg } from '../../src/net/protocol';
 import { loopbackPair, type Transport } from '../../src/net/transport';
@@ -16,6 +16,10 @@ function helloOfBytes(bytes: number, pad = 'x'): Extract<NetMsg, { type: 'hello'
   expect(utf8.encode(JSON.stringify(m)).byteLength).toBe(bytes);
   return m;
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 interface Arrival { id: number; at: number }
 
@@ -145,7 +149,8 @@ describe('loopbackPair delivery', () => {
     expect(got).toHaveLength(1);
   });
 
-  it.each([['x'], ['é']])('throws RangeError for a message over MAX_SEND_BYTES (padded with %j) and sends nothing', (pad) => {
+  it.each([['x'], ['é']])('drops a message over MAX_SEND_BYTES (padded with %j) with a warning and keeps the channel', (pad) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const s = new VirtualScheduler();
     const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
     const got: NetMsg[] = [];
@@ -153,7 +158,8 @@ describe('loopbackPair delivery', () => {
     b.onMessage((m) => got.push(m));
     b.onClose((r) => closes.push(r));
     a.onClose((r) => closes.push(r));
-    expect(() => a.send(helloOfBytes(MAX_SEND_BYTES + 1, pad))).toThrow(RangeError);
+    a.send(helloOfBytes(MAX_SEND_BYTES + 1, pad));
+    expect(warn.mock.calls).toEqual([['[bbt] frame too big', MAX_SEND_BYTES + 1]]);
     a.send({ type: 'ping', id: 1 });
     s.advance(100);
     expect(got).toEqual([{ type: 'ping', id: 1 }]);
@@ -161,11 +167,33 @@ describe('loopbackPair delivery', () => {
   });
 
   it('measures UTF-8 bytes, not characters', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const s = new VirtualScheduler();
-    const [a] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const got = record(s, b);
     const m = helloOfBytes(MAX_SEND_BYTES + 2, 'é');
     expect(JSON.stringify(m).length).toBeLessThan(MAX_SEND_BYTES);
-    expect(() => a.send(m)).toThrow(RangeError);
+    a.send(m);
+    s.advance(100);
+    expect(got).toEqual([]);
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it('a dropped message does not disturb the seeded delays of the others', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const arrivals = (withOversized: boolean): number[] => {
+      const s = new VirtualScheduler();
+      const [a, b] = loopbackPair(s, { latencyMs: 20, jitterMs: 50, seed: 6 });
+      const got = record(s, b);
+      for (let id = 0; id < 10; id++) {
+        if (withOversized && id === 3) a.send(helloOfBytes(MAX_SEND_BYTES + 1));
+        a.send({ type: 'ping', id });
+        s.advance(5);
+      }
+      s.advance(200);
+      return got.map((g) => g.at);
+    };
+    expect(arrivals(true)).toEqual(arrivals(false));
   });
 
   it.each([

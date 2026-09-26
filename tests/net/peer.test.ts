@@ -1,4 +1,4 @@
-import { DataConnectionErrorType, util } from 'peerjs';
+import { util } from 'peerjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { seedRng, uniform } from '../../src/core/rng';
 import { VirtualScheduler } from '../../src/game/clock';
@@ -39,12 +39,8 @@ class FakeConn extends Emitter implements ConnLike {
     super();
   }
 
-  /** Like PeerJS 1.5's JSON channel: a message of util.chunkedMTU UTF-8 bytes or more raises a synchronous error instead. */
+  /** Like a PeerJS 1.5 raw DataConnection: whatever is sent goes to the data channel as it is. */
   send(data: unknown): void {
-    if (utf8.encode(JSON.stringify(data)).byteLength >= util.chunkedMTU) {
-      this.emit('error', { type: DataConnectionErrorType.MessageToBig, message: 'Message too big for JSON channel' });
-      return;
-    }
     this.sent.push(data);
   }
 
@@ -259,17 +255,21 @@ describe('hostGame', () => {
     conn.emit('open');
     const got: NetMsg[] = [];
     transport!.onMessage((m) => got.push(m));
-    conn.emit('data', { ...HELLO, name: '<Sam>' });
-    conn.emit('data', { type: 'hello' });
+    conn.emit('data', JSON.stringify({ ...HELLO, name: '<Sam>' }));
+    conn.emit('data', '{"type":"hello"}');
     conn.emit('data', 'garbage');
-    expect(got).toEqual([{ ...HELLO, name: '?Sam?' }]);
+    conn.emit('data', '[object Object]');
+    conn.emit('data', { type: 'leave' });
+    conn.emit('data', utf8.encode('{"type":"leave"}').buffer);
+    conn.emit('data', JSON.stringify({ type: 'ping', id: 3 }));
+    expect(got).toEqual([{ ...HELLO, name: '?Sam?' }, { type: 'ping', id: 3 }]);
     transport!.send({ type: 'ping', id: 4 });
-    expect(conn.sent).toEqual([{ type: 'ping', id: 4 }]);
+    expect(conn.sent).toEqual(['{"type":"ping","id":4}']);
     conn.dataChannel.bufferedAmount = 20000;
     expect(transport!.bufferedAmount).toBe(20000);
   });
 
-  it(`a local close flushes, then hard-closes after ${CLOSE_FLUSH_MS} ms, without reporting onClose`, async () => {
+  it(`a local close lets sent messages go out and closes after ${CLOSE_FLUSH_MS} ms, without reporting onClose`, async () => {
     const { handle, arrive, s } = await openHost();
     let transport: import('../../src/net/transport').Transport | null = null;
     handle.onGuest((t) => (transport = t));
@@ -281,12 +281,13 @@ describe('hostGame', () => {
     transport!.close();
     transport!.close();
     transport!.send({ type: 'leave' });
-    expect(conn.sent).toHaveLength(1);
-    expect(conn.closes).toEqual([{ flush: true }]);
+    expect(conn.sent).toEqual(['{"type":"reject","reason":"full","proto":1,"app":"bbtennis"}']);
+    expect(conn.closes).toEqual([]);
     s.advance(CLOSE_FLUSH_MS - 1);
-    expect(conn.closes).toHaveLength(1);
+    expect(conn.closes).toEqual([]);
     s.advance(1);
-    expect(conn.closes).toEqual([{ flush: true }, undefined]);
+    expect(conn.closes).toEqual([undefined]);
+    expect(conn.sent).toHaveLength(1);
     conn.emit('close');
     expect(reasons).toEqual([]);
   });
@@ -305,7 +306,7 @@ describe('hostGame', () => {
     transports[0]!.onMessage((m) => got.push(m));
     c1.emit('close');
     c1.emit('close');
-    c1.emit('data', { type: 'leave' });
+    c1.emit('data', '{"type":"leave"}');
     c2.emit('error', peerError('negotiation-failed'));
     expect(reasons).toEqual(['1:closed', '2:negotiation-failed']);
     expect(got).toEqual([]);
@@ -351,9 +352,10 @@ describe('hostGame', () => {
     const conn = arrive();
     conn.emit('open');
     handle.close();
-    expect(conn.closes).toEqual([{ flush: true }]);
+    expect(conn.closes).toEqual([]);
     expect(peer.destroyed).toBe(false);
     s.advance(CLOSE_FLUSH_MS);
+    expect(conn.closes).toEqual([undefined]);
     expect(peer.destroyed).toBe(true);
     peer.dropBroker();
     s.advance(10 * RECONNECT_DELAY_MS);
@@ -371,49 +373,36 @@ describe('hostGame', () => {
 });
 
 describe('PeerJS transport message size', () => {
-  it(`MAX_SEND_BYTES fits PeerJS's JSON channel (${util.chunkedMTU} bytes or more is refused)`, () => {
-    expect(MAX_SEND_BYTES).toBeLessThan(util.chunkedMTU);
-  });
-
-  it('sends a message of exactly MAX_SEND_BYTES', async () => {
+  it(`sends a message of exactly MAX_SEND_BYTES (${MAX_SEND_BYTES}) as its JSON`, async () => {
     const { conn, transport, reasons } = await openGuest();
     const big = helloOfBytes(MAX_SEND_BYTES);
     transport.send(big);
-    expect(conn.sent).toEqual([big]);
+    expect(conn.sent).toEqual([JSON.stringify(big)]);
     expect(reasons).toEqual([]);
   });
 
-  it.each([MAX_SEND_BYTES + 1, util.chunkedMTU, 32 * 1024])(
-    'drops a %i-byte message with a [bbt] warning and keeps the connection',
+  it(`sends a 20000-byte message, over the ${util.chunkedMTU}-byte limit of PeerJS's JSON channel`, async () => {
+    const { conn, transport } = await openGuest();
+    const big = helloOfBytes(20000);
+    expect(20000).toBeGreaterThan(util.chunkedMTU);
+    transport.send(big);
+    expect(conn.sent).toEqual([JSON.stringify(big)]);
+  });
+
+  it.each([MAX_SEND_BYTES + 1, 40000])(
+    'drops a %i-byte message with a "[bbt] frame too big" warning and keeps the connection',
     async (bytes) => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { conn, transport, reasons } = await openGuest();
       transport.send(helloOfBytes(bytes));
       expect(conn.sent).toEqual([]);
-      expect(warn).toHaveBeenCalledOnce();
-      expect(String(warn.mock.calls[0]![0])).toMatch(/^\[bbt\] .*hello.*\d+ bytes/);
+      expect(warn.mock.calls).toEqual([['[bbt] frame too big', bytes]]);
       transport.send({ type: 'ping', id: 1 });
-      expect(conn.sent).toEqual([{ type: 'ping', id: 1 }]);
+      expect(conn.sent).toEqual(['{"type":"ping","id":1}']);
       expect(conn.closes).toEqual([]);
       expect(reasons).toEqual([]);
     },
   );
-
-  it('a message-too-big error from PeerJS is not a disconnect', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { conn, transport, reasons } = await openGuest();
-    const got: NetMsg[] = [];
-    transport.onMessage((m) => got.push(m));
-    conn.emit('error', { type: DataConnectionErrorType.MessageToBig, message: 'Message too big for JSON channel' });
-    expect(warn).toHaveBeenCalledOnce();
-    expect(String(warn.mock.calls[0]![0])).toMatch(/^\[bbt\] /);
-    expect(conn.closes).toEqual([]);
-    expect(reasons).toEqual([]);
-    conn.emit('data', { type: 'leave' });
-    transport.send({ type: 'ping', id: 2 });
-    expect(got).toEqual([{ type: 'leave' }]);
-    expect(conn.sent).toEqual([{ type: 'ping', id: 2 }]);
-  });
 });
 
 describe('PeerJS unavailable', () => {
@@ -445,7 +434,7 @@ describe('joinGame', () => {
     return { ...net, peer: net.peers[0]!, pending, settled, statuses };
   }
 
-  it('connects reliably with JSON to the host only after reaching the broker', async () => {
+  it('connects reliably with raw serialization to the host only after reaching the broker', async () => {
     const { peer, pending } = await startJoin();
     expect(peer.id).toBeNull();
     expect(peer.conns).toHaveLength(0);
@@ -453,11 +442,16 @@ describe('joinGame', () => {
     expect(peer.conns).toHaveLength(1);
     const conn = peer.conns[0]!;
     expect(conn.remoteId).toBe('bbtennis-K7TQM');
-    expect(conn.options).toEqual({ reliable: true, serialization: 'json' });
+    expect(conn.options).toEqual({ reliable: true, serialization: 'raw' });
     conn.emit('open');
     const t = await pending;
+    const got: NetMsg[] = [];
+    t.onMessage((m) => got.push(m));
     t.send({ type: 'ready', on: true });
-    expect(conn.sent).toEqual([{ type: 'ready', on: true }]);
+    expect(conn.sent).toEqual(['{"type":"ready","on":true}']);
+    conn.emit('data', '{"type":"lobby","config":null,"ready":[true,false]}');
+    conn.emit('data', '{"type":"pong","id":9}');
+    expect(got).toEqual([{ type: 'pong', id: 9 }]);
   });
 
   it('maps peer-unavailable to notFound and destroys the peer', async () => {
@@ -537,7 +531,7 @@ describe('joinGame', () => {
     expect(conn.closes).toEqual([]);
   });
 
-  it('closing the joined transport flushes, then closes the connection and destroys the peer', async () => {
+  it(`closing the joined transport closes the connection after ${CLOSE_FLUSH_MS} ms and destroys the peer`, async () => {
     const { s, peer, pending } = await startJoin();
     peer.emit('open', 'guest-id');
     const conn = peer.conns[0]!;
@@ -545,10 +539,11 @@ describe('joinGame', () => {
     const t = await pending;
     t.send({ type: 'leave' });
     t.close();
-    expect(conn.closes).toEqual([{ flush: true }]);
+    expect(conn.sent).toEqual(['{"type":"leave"}']);
+    expect(conn.closes).toEqual([]);
     expect(peer.destroyed).toBe(false);
     s.advance(CLOSE_FLUSH_MS);
-    expect(conn.closes).toEqual([{ flush: true }, undefined]);
+    expect(conn.closes).toEqual([undefined]);
     expect(peer.destroyed).toBe(true);
   });
 

@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { APP_ID, MAX_MSG_CHARS, MAX_SEND_BYTES, PROTO, msgBytes, parseMsg, type NetMsg } from '../../src/net/protocol';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  APP_ID, MAX_MSG_CHARS, MAX_SEND_BYTES, PROTO, decodeMsg, encodeMsg, msgBytes, parseMsg, type NetMsg,
+} from '../../src/net/protocol';
 import { sanitizeName } from '../../src/core/text';
 import type { GameEvent, Look, MatchConfig, PlayerStats, Profile, PublicState } from '../../src/core/types';
 
@@ -90,6 +92,10 @@ function tampered<T>(m: T, mutate: (x: Record<string, any>) => void): unknown {
   return copy;
 }
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 const find = <K extends NetMsg['type']>(type: K): Extract<NetMsg, { type: K }> =>
   samples.find((m) => m.type === type) as Extract<NetMsg, { type: K }>;
 
@@ -99,8 +105,8 @@ describe('constants', () => {
     expect(MAX_MSG_CHARS).toBe(32 * 1024);
   });
 
-  it('senders keep to 16000 UTF-8 bytes, so every sendable message passes the receive cap', () => {
-    expect(MAX_SEND_BYTES).toBe(16000);
+  it('senders keep to 32000 UTF-8 bytes, so every sendable message passes the receive cap', () => {
+    expect(MAX_SEND_BYTES).toBe(32000);
     expect(MAX_SEND_BYTES).toBeLessThanOrEqual(MAX_MSG_CHARS);
   });
 });
@@ -124,13 +130,77 @@ describe('msgBytes', () => {
     ['🎾', 4],
     ['\uD83C', 6],
     ['"', 2],
-  ])('a name %j adds %i bytes (UTF-8 of its JSON, as PeerJS measures)', (name, bytes) => {
+  ])('a name %j adds %i bytes (UTF-8 of its JSON, as the data channel carries it)', (name, bytes) => {
     expect(msgBytes(hello(name)) - msgBytes(hello(''))).toBe(bytes);
   });
 
   it('matches the TextEncoder measure for every sample', () => {
     const utf8 = new TextEncoder();
     for (const m of samples) expect(msgBytes(m)).toBe(utf8.encode(JSON.stringify(m)).byteLength);
+  });
+});
+
+/** A hello whose JSON is exactly `bytes` UTF-8 bytes. */
+function helloOfBytes(bytes: number): NetMsg {
+  const m = { type: 'hello', proto: PROTO, app: APP_ID, name: '', look: noBand } satisfies NetMsg;
+  m.name = 'x'.repeat(bytes - msgBytes(m));
+  expect(msgBytes(m)).toBe(bytes);
+  return m;
+}
+
+describe('encodeMsg', () => {
+  it('is the JSON of the message', () => {
+    for (const m of samples) expect(encodeMsg(m)).toBe(JSON.stringify(m));
+  });
+
+  it(`sends a message of exactly MAX_SEND_BYTES (${MAX_SEND_BYTES}) bytes`, () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const m = helloOfBytes(MAX_SEND_BYTES);
+    expect(encodeMsg(m)).toBe(JSON.stringify(m));
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each([MAX_SEND_BYTES + 1, 40000])('refuses a %i-byte message with a "[bbt] frame too big" warning', (bytes) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(encodeMsg(helloOfBytes(bytes))).toBeNull();
+    expect(warn.mock.calls).toEqual([['[bbt] frame too big', bytes]]);
+  });
+
+  it('measures UTF-8 bytes, not characters', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const m: NetMsg = { type: 'hello', proto: PROTO, app: APP_ID, name: 'é'.repeat(16000), look: noBand };
+    expect(JSON.stringify(m).length).toBeLessThan(MAX_SEND_BYTES);
+    expect(encodeMsg(m)).toBeNull();
+    expect(warn.mock.calls).toEqual([['[bbt] frame too big', msgBytes(m)]]);
+  });
+});
+
+describe('decodeMsg', () => {
+  it('parses and validates a JSON string', () => {
+    for (const m of samples) expect(decodeMsg(JSON.stringify(m))).toEqual(parseMsg(wire(m)));
+    expect(decodeMsg(JSON.stringify({ ...find('hello'), name: '<b>' }))).toEqual({ ...find('hello'), name: '?b?' });
+  });
+
+  it.each(['', 'garbage', '[object Object]', '{"type":"leave"', 'null', '42', '"leave"', '{"type":"hello"}', '{"type":"nope"}'])(
+    'drops the string %j',
+    (data) => {
+      expect(decodeMsg(data)).toBeNull();
+    },
+  );
+
+  it.each([
+    ['an object', { type: 'leave' }],
+    ['an ArrayBuffer', new TextEncoder().encode('{"type":"leave"}').buffer],
+    ['a number', 7],
+    ['null', null],
+    ['undefined', undefined],
+  ])('drops %s (only strings are wire messages)', (_label, data) => {
+    expect(decodeMsg(data)).toBeNull();
+  });
+
+  it(`drops a string whose JSON is over MAX_MSG_CHARS (${MAX_MSG_CHARS})`, () => {
+    const m = { type: 'hello', proto: PROTO, app: APP_ID, name: 'x'.repeat(MAX_MSG_CHARS), look: noBand };
+    expect(decodeMsg(JSON.stringify(m))).toBeNull();
   });
 });
 
