@@ -44,10 +44,11 @@ export class TransportListeners {
   private held: NetMsg[] = [];
   private heldClose: string | null = null;
 
-  /** Adds a message listener; the first one is handed the held messages at once. */
+  /** Adds a message listener; the first one is handed the held messages at once (until dropHeld). */
   onMessage(cb: (m: NetMsg) => void): void {
     this.messageCbs.push(cb);
-    if (this.messageCbs.length === 1) for (const m of this.held.splice(0)) cb(m);
+    if (this.messageCbs.length > 1) return;
+    while (this.held.length > 0) cb(this.held.shift()!);
   }
 
   /** Adds a close listener; the first one is told at once if the close already happened. */

@@ -240,6 +240,20 @@ describe('loopbackPair listeners added late', () => {
     b.onMessage((m) => got.push(m));
     expect(got).toEqual([]);
   });
+
+  it('stops handing over held messages once the listener closes the transport', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    a.send({ type: 'hello', proto: 2, app: 'bbtennis', name: 'Old', look: { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 } });
+    a.send({ type: 'ready', on: true });
+    s.advance(50);
+    const got: string[] = [];
+    b.onMessage((m) => {
+      got.push(m.type);
+      if (m.type === 'hello') b.close();
+    });
+    expect(got).toEqual(['hello']);
+  });
 });
 
 describe('loopbackPair bufferedAmount', () => {

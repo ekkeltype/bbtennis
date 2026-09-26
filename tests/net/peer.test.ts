@@ -1,7 +1,7 @@
 import { util } from 'peerjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { seedRng, uniform } from '../../src/core/rng';
-import { VirtualScheduler } from '../../src/game/clock';
+import { VirtualScheduler, type Scheduler } from '../../src/game/clock';
 import { ALPHABET } from '../../src/net/codes';
 import {
   CLOSE_FLUSH_MS, DEFAULT_ICE_SERVERS, HOST_CODE_TRIES, JOIN_TIMEOUT_MS, NetError, RECONNECT_DELAY_MS, SLOW_STATUS_MS,
@@ -428,7 +428,7 @@ describe('hostGame', () => {
     expect(reasons).toEqual([]);
   });
 
-  it('close() flushes guests, then destroys the peer and stops reconnecting', async () => {
+  it(`close() closes guests and destroys the peer after ${CLOSE_FLUSH_MS} ms, and stops reconnecting`, async () => {
     const { peer, s, handle, arrive } = await openHost();
     handle.onGuest(() => {});
     const conn = arrive();
@@ -667,6 +667,27 @@ describe('cancellation', () => {
     expect(await settled).toMatchObject({ kind: 'cancelled' });
     load();
     await tick();
+    expect(peers).toHaveLength(1);
+    expect(peers[0]!.destroyed).toBe(true);
+  });
+
+  it.each([
+    ['hostGame', (opts: PeerEnv) => hostGame(opts)],
+    ['joinGame', (opts: PeerEnv) => joinGame('K7TQM', opts)],
+  ] as const)('%s notices an abort that came while it was still setting up its timers', async (_name, start) => {
+    const { peers, s, opts } = fakeNet();
+    const controller = new AbortController();
+    const abortingScheduler: Scheduler = {
+      now: () => s.now(),
+      every: (ms, fn) => s.every(ms, fn),
+      after: (ms, fn) => {
+        controller.abort();
+        return s.after(ms, fn);
+      },
+    };
+    const settled = start({ ...opts, scheduler: abortingScheduler, signal: controller.signal }).catch((e: unknown) => e);
+    await tick();
+    expect(await settled).toMatchObject({ kind: 'cancelled' });
     expect(peers).toHaveLength(1);
     expect(peers[0]!.destroyed).toBe(true);
   });

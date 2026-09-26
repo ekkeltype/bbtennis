@@ -217,6 +217,7 @@ function brokerOpen(peer: PeerLike, s: Scheduler, signal: AbortSignal | undefine
     const abort = (): void => finish({ type: 'cancelled', message: CANCELLED });
     const cancelTimeout = s.after(JOIN_TIMEOUT_MS, () => finish({ type: 'timeout', message: `no answer from the broker in ${JOIN_TIMEOUT_MS} ms` }));
     signal?.addEventListener('abort', abort);
+    if (signal?.aborted) abort();
     peer.on('open', () => finish(null));
     peer.on('error', (err) => finish(err));
   });
@@ -332,6 +333,7 @@ export async function joinGame(code: string, opts: PeerEnv = {}): Promise<Transp
       fail(brokerReached ? 'nat' : 'broker', `not connected after ${JOIN_TIMEOUT_MS} ms`);
     });
     d.signal?.addEventListener('abort', abort);
+    if (d.signal?.aborted) abort();
     peer.on('error', (err) => fail(errorKind(err.type), err.message));
     peer.on('open', () => {
       brokerReached = true;
