@@ -15,8 +15,11 @@ import { applyLetter, createPrompt, isComplete, wordCps, wpmOf } from './typing'
 import { type ReturnDeadline, returnDeadlines, returnStrike } from './turnReturn';
 import { type ServeDeadline, serveClockτ, serveDeadlines, serveStrike } from './turnServe';
 
+/** `Omit` applied to each member of a union on its own, keeping the union discriminated. */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
 /** A GameEvent without its (turn, τ) stamp. */
-type EventBody = GameEvent extends infer E ? (E extends GameEvent ? Omit<E, 'turn' | 'τ'> : never) : never;
+type EventBody = DistributiveOmit<GameEvent, 'turn' | 'τ'>;
 
 type Deadline = ServeDeadline | ReturnDeadline;
 
