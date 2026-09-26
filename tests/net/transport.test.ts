@@ -199,6 +199,49 @@ describe('loopbackPair delivery', () => {
   });
 });
 
+describe('loopbackPair listeners added late', () => {
+  it('holds messages that arrive before the first listener and hands them to it in order', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    a.send({ type: 'ping', id: 1 });
+    a.send({ type: 'ping', id: 2 });
+    s.advance(50);
+    const first: NetMsg[] = [];
+    const second: NetMsg[] = [];
+    b.onMessage((m) => first.push(m));
+    expect(first).toEqual([{ type: 'ping', id: 1 }, { type: 'ping', id: 2 }]);
+    b.onMessage((m) => second.push(m));
+    a.send({ type: 'ping', id: 3 });
+    s.advance(10);
+    expect(first.map((m) => m.type === 'ping' && m.id)).toEqual([1, 2, 3]);
+    expect(second).toEqual([{ type: 'ping', id: 3 }]);
+  });
+
+  it('reports a remote close to the first close listener added after it, after the held messages', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    a.send({ type: 'leave' });
+    a.close();
+    s.advance(50);
+    const log: string[] = [];
+    b.onMessage((m) => log.push(m.type));
+    b.onClose((r) => log.push(`close:${r}`));
+    b.onClose((r) => log.push(`late:${r}`));
+    expect(log).toEqual(['leave', 'close:closed']);
+  });
+
+  it('drops held messages on a local close', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    a.send({ type: 'ping', id: 1 });
+    s.advance(50);
+    b.close();
+    const got: NetMsg[] = [];
+    b.onMessage((m) => got.push(m));
+    expect(got).toEqual([]);
+  });
+});
+
 describe('loopbackPair bufferedAmount', () => {
   const bytes = (m: NetMsg): number => utf8.encode(JSON.stringify(m)).byteLength;
 

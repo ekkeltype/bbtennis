@@ -2,8 +2,8 @@ import { RealScheduler, type Scheduler } from '../game/clock';
 import { genCode, normalizeCode } from './codes';
 import { NetError, errorKind, type NetErrorKind } from './netErrors';
 import { peerOptions, type BrokerOptions, type PeerEnvVars } from './peerConfig';
-import { decodeMsg, encodeMsg, type NetMsg } from './protocol';
-import { REMOTE_CLOSED, type Transport } from './transport';
+import { decodeMsg, encodeMsg } from './protocol';
+import { REMOTE_CLOSED, TransportListeners, type Transport } from './transport';
 
 export { NetError, errorKind, errorText, type NetErrorKind } from './netErrors';
 export { DEFAULT_ICE_SERVERS, peerOptions, type BrokerOptions, type PeerEnvVars } from './peerConfig';
@@ -77,7 +77,10 @@ export interface PeerEnv {
 export interface HostHandle {
   /** The 5-character game code guests type. */
   code: string;
-  /** Sets the listener for guests whose connection is open; guests that arrived earlier are handed over at once. */
+  /**
+   * Sets the listener for guests whose connection is open; guests that arrived earlier and are still
+   * connected are handed over at once. A guest's messages are held until its transport has a listener.
+   */
   onGuest(cb: (t: Transport) => void): void;
   /** Closes every guest transport (letting sent messages arrive first) and releases the code. */
   close(): void;
@@ -130,19 +133,18 @@ async function newPeer(d: Deps, id: string | null): Promise<PeerLike> {
  */
 function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transport {
   let open = true;
-  const messageCbs: ((m: NetMsg) => void)[] = [];
-  const closeCbs: ((reason: string) => void)[] = [];
+  const listeners = new TransportListeners();
   const lost = (reason: string): void => {
     if (!open) return;
     open = false;
     conn.close();
     onEnd();
-    for (const cb of closeCbs) cb(reason);
+    listeners.close(reason);
   };
   conn.on('data', (data) => {
     if (!open) return;
     const msg = decodeMsg(data);
-    if (msg) for (const cb of messageCbs) cb(msg);
+    if (msg) listeners.message(msg);
   });
   conn.on('close', () => lost(REMOTE_CLOSED));
   conn.on('error', (err) => lost(err.type));
@@ -152,14 +154,15 @@ function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transpo
       if (json !== null && open) conn.send(json);
     },
     onMessage(cb) {
-      messageCbs.push(cb);
+      listeners.onMessage(cb);
     },
     onClose(cb) {
-      closeCbs.push(cb);
+      listeners.onClose(cb);
     },
     close() {
       if (!open) return;
       open = false;
+      listeners.dropHeld();
       s.after(CLOSE_FLUSH_MS, () => {
         conn.close();
         onEnd();
@@ -207,6 +210,7 @@ class PeerHost implements HostHandle {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.unclaimed.length = 0;
     this.cancelReconnect?.();
     if (this.guests.size === 0) {
       this.peer.destroy();
@@ -223,6 +227,8 @@ class PeerHost implements HostHandle {
     }
     const t = connTransport(conn, this.s, () => {
       this.guests.delete(t);
+      const i = this.unclaimed.indexOf(t);
+      if (i >= 0) this.unclaimed.splice(i, 1);
       this.reconnectLater();
     });
     this.guests.add(t);

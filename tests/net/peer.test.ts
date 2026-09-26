@@ -247,6 +247,78 @@ describe('hostGame', () => {
     expect(guests).toHaveLength(1);
   });
 
+  it("a late onGuest and onMessage still receive the guest's hello", async () => {
+    const { handle, arrive } = await openHost();
+    const conn = arrive();
+    conn.emit('open');
+    conn.emit('data', JSON.stringify(HELLO));
+    conn.emit('data', '{"type":"ready","on":true}');
+    let transport: Transport | null = null;
+    handle.onGuest((t) => (transport = t));
+    conn.emit('data', '{"type":"ping","id":1}');
+    const first: NetMsg[] = [];
+    const second: NetMsg[] = [];
+    transport!.onMessage((m) => first.push(m));
+    transport!.onMessage((m) => second.push(m));
+    conn.emit('data', '{"type":"ping","id":2}');
+    expect(first).toEqual([HELLO, { type: 'ready', on: true }, { type: 'ping', id: 1 }, { type: 'ping', id: 2 }]);
+    expect(second).toEqual([{ type: 'ping', id: 2 }]);
+  });
+
+  it('reports a close that came before the first onClose listener once one is added', async () => {
+    const { handle, arrive } = await openHost();
+    const transports: Transport[] = [];
+    handle.onGuest((t) => transports.push(t));
+    const conn = arrive();
+    conn.emit('open');
+    conn.emit('data', '{"type":"leave"}');
+    conn.emit('close');
+    const log: string[] = [];
+    transports[0]!.onMessage((m) => log.push(m.type));
+    transports[0]!.onClose((r) => log.push(`close:${r}`));
+    transports[0]!.onClose((r) => log.push(`late:${r}`));
+    expect(log).toEqual(['leave', 'close:closed']);
+  });
+
+  it('drops held messages on a local close', async () => {
+    const { handle, arrive } = await openHost();
+    let transport: Transport | null = null;
+    handle.onGuest((t) => (transport = t));
+    const conn = arrive();
+    conn.emit('open');
+    conn.emit('data', '{"type":"leave"}');
+    transport!.close();
+    const got: NetMsg[] = [];
+    transport!.onMessage((m) => got.push(m));
+    expect(got).toEqual([]);
+  });
+
+  it('never hands over a guest whose connection closed or failed before onGuest', async () => {
+    const { handle, arrive } = await openHost();
+    const [closed, failed, alive] = [arrive(), arrive(), arrive()];
+    for (const c of [closed, failed, alive]) c.emit('open');
+    closed.emit('data', JSON.stringify(HELLO));
+    closed.emit('close');
+    failed.emit('error', peerError('negotiation-failed'));
+    const guests: Transport[] = [];
+    handle.onGuest((t) => guests.push(t));
+    expect(guests).toHaveLength(1);
+    const got: NetMsg[] = [];
+    guests[0]!.onMessage((m) => got.push(m));
+    alive.emit('data', '{"type":"ping","id":7}');
+    expect(got).toEqual([{ type: 'ping', id: 7 }]);
+  });
+
+  it('hands over no guest after close()', async () => {
+    const { handle, arrive } = await openHost();
+    const conn = arrive();
+    conn.emit('open');
+    handle.close();
+    const guests: Transport[] = [];
+    handle.onGuest((t) => guests.push(t));
+    expect(guests).toEqual([]);
+  });
+
   it('guest transport validates incoming data and sends through the connection', async () => {
     const { handle, arrive } = await openHost();
     let transport: import('../../src/net/transport').Transport | null = null;

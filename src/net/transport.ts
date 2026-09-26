@@ -9,11 +9,17 @@ export interface Transport {
    * (see msgBytes) is dropped with a `[bbt] frame too big` warning, and the channel stays open.
    */
   send(msg: NetMsg): void;
-  /** Adds a listener for incoming messages; messages that fail `parseMsg` are dropped. */
+  /**
+   * Adds a listener for incoming messages; messages that fail `parseMsg` are dropped. Messages that
+   * arrive before the first listener is added are held and handed to it when it is added.
+   */
   onMessage(cb: (m: NetMsg) => void): void;
-  /** Adds a listener for the remote side closing or the connection failing; not called after a local `close()`. */
+  /**
+   * Adds a listener for the remote side closing or the connection failing; not called after a local
+   * `close()`. A close that happens before the first listener is added is reported to it when it is added.
+   */
   onClose(cb: (reason: string) => void): void;
-  /** Closes the channel after the messages already sent; idempotent. */
+  /** Closes the channel after the messages already sent; idempotent. Held messages are dropped. */
   close(): void;
   /**
    * Bytes sent that have not left yet: the data channel's send queue for PeerJS; for the loopback,
@@ -28,6 +34,48 @@ export interface LoopbackOptions { latencyMs: number; jitterMs: number; seed: nu
 /** Reason reported by `onClose` when the other side closed the channel. */
 export const REMOTE_CLOSED = 'closed';
 
+/**
+ * The message and close listeners of a transport. Until the first listener of each kind is added,
+ * incoming messages and the close reason are held for it, so a listener added late misses nothing.
+ */
+export class TransportListeners {
+  private readonly messageCbs: ((m: NetMsg) => void)[] = [];
+  private readonly closeCbs: ((reason: string) => void)[] = [];
+  private held: NetMsg[] = [];
+  private heldClose: string | null = null;
+
+  /** Adds a message listener; the first one is handed the held messages at once. */
+  onMessage(cb: (m: NetMsg) => void): void {
+    this.messageCbs.push(cb);
+    if (this.messageCbs.length === 1) for (const m of this.held.splice(0)) cb(m);
+  }
+
+  /** Adds a close listener; the first one is told at once if the close already happened. */
+  onClose(cb: (reason: string) => void): void {
+    this.closeCbs.push(cb);
+    const reason = this.heldClose;
+    this.heldClose = null;
+    if (reason !== null) cb(reason);
+  }
+
+  /** Hands an incoming message to the listeners, or holds it until there is one. */
+  message(m: NetMsg): void {
+    if (this.messageCbs.length === 0) this.held.push(m);
+    else for (const cb of this.messageCbs) cb(m);
+  }
+
+  /** Reports the remote close or a failure to the listeners, or holds it until there is one. */
+  close(reason: string): void {
+    if (this.closeCbs.length === 0) this.heldClose = reason;
+    else for (const cb of this.closeCbs) cb(reason);
+  }
+
+  /** Drops the held messages; after a local close nothing more is delivered. */
+  dropHeld(): void {
+    this.held = [];
+  }
+}
+
 type Packet = { json: string; bytes: number } | 'close';
 
 const utf8 = new TextEncoder();
@@ -36,8 +84,7 @@ const utf8 = new TextEncoder();
 class LoopbackEnd implements Transport {
   peer: LoopbackEnd | null = null;
   private closed = false;
-  private readonly messageCbs: ((m: NetMsg) => void)[] = [];
-  private readonly closeCbs: ((reason: string) => void)[] = [];
+  private readonly listeners = new TransportListeners();
   /** Packets travelling towards this end, in send order, and the bytes of their messages. */
   private readonly inbound: Packet[] = [];
   private inboundBytes = 0;
@@ -55,16 +102,17 @@ class LoopbackEnd implements Transport {
   }
 
   onMessage(cb: (m: NetMsg) => void): void {
-    this.messageCbs.push(cb);
+    this.listeners.onMessage(cb);
   }
 
   onClose(cb: (reason: string) => void): void {
-    this.closeCbs.push(cb);
+    this.listeners.onClose(cb);
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.listeners.dropHeld();
     this.peer?.enqueue('close');
   }
 
@@ -86,11 +134,11 @@ class LoopbackEnd implements Transport {
     if (this.closed) return;
     if (p === 'close') {
       this.closed = true;
-      for (const cb of this.closeCbs) cb(REMOTE_CLOSED);
+      this.listeners.close(REMOTE_CLOSED);
       return;
     }
     const msg = decodeMsg(p.json);
-    if (msg) for (const cb of this.messageCbs) cb(msg);
+    if (msg) this.listeners.message(msg);
   }
 }
 
