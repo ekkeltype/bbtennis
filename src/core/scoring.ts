@@ -38,6 +38,7 @@ export function createScore(format: FormatId, deuceRule: DeuceRule, firstServer:
     format,
     deuceRule,
     setGames: [],
+    setTiebreaks: [],
     games: [0, 0],
     points: [0, 0],
     inTiebreak: tiebreakDue(format, [0, 0]),
@@ -68,10 +69,23 @@ function setWinsMatch(s: ScoreState, p: PlayerId): boolean {
   return s.setsWon[p] + 1 >= setsToWinMatch(s.format);
 }
 
+/** `points` after one more point for `p`, as a new pair. */
+function pointsWith(points: [number, number], p: PlayerId): [number, number] {
+  const out: [number, number] = [points[0], points[1]];
+  out[p] += 1;
+  return out;
+}
+
+/** The tiebreak points of each completed set, aligned with `setGames` (null where none was recorded). */
+function tiebreaksOf(s: ScoreState): ([number, number] | null)[] {
+  return s.setGames.map((_, i) => s.setTiebreaks?.[i] ?? null);
+}
+
 /**
  * Scores one point for `winner`, mutating `s`. A finished game resets the points and passes the serve
- * (a tiebreak counts as one game); a finished set moves to `setGames` and resets the games. Once the
- * match is over this changes nothing and returns all nulls.
+ * (a tiebreak counts as one game); a finished set moves to `setGames`, with its tiebreak points (or
+ * null) to `setTiebreaks`, and resets the games. Once the match is over this changes nothing and
+ * returns all nulls.
  */
 export function awardPoint(s: ScoreState, winner: PlayerId): AwardResult {
   const result: AwardResult = { game: null, set: null, match: null };
@@ -81,12 +95,14 @@ export function awardPoint(s: ScoreState, winner: PlayerId): AwardResult {
     return result;
   }
   const wonSet = gameWinsSet(s, winner);
+  const tiebreak = s.inTiebreak ? pointsWith(s.points, winner) : null;
   result.game = winner;
   s.points = [0, 0];
   s.games[winner] += 1;
   s.gameServer = other(s.gameServer);
   if (wonSet) {
     result.set = winner;
+    s.setTiebreaks = [...tiebreaksOf(s), tiebreak];
     s.setGames.push(s.games);
     s.games = [0, 0];
     s.setsWon[winner] += 1;
@@ -122,6 +138,26 @@ export function pointsDisplay(s: ScoreState): [string, string] {
   if (s.inTiebreak) return [String(a), String(b)];
   if (a >= 3 && b >= 3 && a !== b) return a > b ? ['AD', ''] : ['', 'AD'];
   return [GAME_SCORE_SHOWN[scoreIndex(a)], GAME_SCORE_SHOWN[scoreIndex(b)]];
+}
+
+/** One set column of a score line: the number shown and the small superscript beside it (null = none). */
+export interface SetCell { value: number; sup: number | null }
+
+/**
+ * The completed sets as a score line shows them, one row per player (spec §3.6, §4.3): each set's
+ * games, with the tiebreak loser's points as a superscript beside the loser's games for a set decided
+ * in a tiebreak (7 over 6⁵); in the Tiebreak format, its tiebreak points (7 over 5) instead of 1–0.
+ */
+export function setLine(s: ScoreState): [SetCell[], SetCell[]] {
+  const tiebreaks = tiebreaksOf(s);
+  const row = (p: PlayerId): SetCell[] =>
+    s.setGames.map((games, i) => {
+      const tb = tiebreaks[i] ?? null;
+      if (tb === null) return { value: games[p], sup: null };
+      if (s.format === 'tiebreak') return { value: tb[p], sup: null };
+      return { value: games[p], sup: tb[p] < tb[other(p)] ? tb[p] : null };
+    });
+  return [row(0), row(1)];
 }
 
 /**

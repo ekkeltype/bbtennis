@@ -241,6 +241,7 @@ export interface ScoreState {
   format: FormatId;
   deuceRule: DeuceRule;
   setGames: [number, number][];   // completed sets
+  setTiebreaks?: ([number, number] | null)[]; // parallel to setGames: each set's tiebreak points or null (createScore sets it)
   games: [number, number];        // current set
   points: [number, number];       // current game or tiebreak points
   inTiebreak: boolean;

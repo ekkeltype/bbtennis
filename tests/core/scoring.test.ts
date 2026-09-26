@@ -7,6 +7,7 @@ import {
   gamesToWinSet,
   pointsDisplay,
   serveSide,
+  setLine,
   situation,
   umpireCall,
   type AwardResult,
@@ -46,6 +47,7 @@ describe('createScore', () => {
       format: 'short',
       deuceRule: 'advantage',
       setGames: [],
+      setTiebreaks: [],
       games: [0, 0],
       points: [0, 0],
       inTiebreak: false,
@@ -181,6 +183,7 @@ describe('sets', () => {
     expect(play(s, '00')).toStrictEqual(NO_CHANGE);
     expect(awardPoint(s, 0)).toStrictEqual({ game: 0, set: 0, match: null });
     expect(s.setGames).toStrictEqual([[5, 4]]);
+    expect(s.setTiebreaks).toStrictEqual([[7, 0]]);
     expect(s.inTiebreak).toBe(false);
   });
 
@@ -206,6 +209,7 @@ describe('sets', () => {
     expect(s.inTiebreak).toBe(true);
     expect(winGame(s, 1)).toStrictEqual({ game: 1, set: 1, match: 1 });
     expect(s.setGames).toStrictEqual([[6, 7]]);
+    expect(s.setTiebreaks).toStrictEqual([[0, 7]]);
   });
 });
 
@@ -273,6 +277,7 @@ describe('match end', () => {
     expect(s.winner).toBe(1);
     expect(s.setsWon).toStrictEqual([1, 2]);
     expect(s.setGames).toStrictEqual([[0, 4], [4, 0], [0, 4]]);
+    expect(s.setTiebreaks).toStrictEqual([null, null, null]);
   });
 
   it('a single short set is the whole match', () => {
@@ -289,7 +294,9 @@ describe('match end', () => {
     expect(s.winner).toBe(0);
     expect(s.setsWon).toStrictEqual([1, 0]);
     expect(s.setGames).toStrictEqual([[1, 0]]);
+    expect(s.setTiebreaks).toStrictEqual([[7, 5]]);
     expect(s.inTiebreak).toBe(false);
+    expect(JSON.parse(JSON.stringify(s))).toStrictEqual(s);
   });
 
   it('the tiebreak format needs two clear points: 8-7 plays on, 9-7 ends it', () => {
@@ -334,6 +341,54 @@ describe('pointsDisplay', () => {
     const s = createScore('tiebreak', 'advantage', 0);
     play(s, '00100');
     expect(pointsDisplay(s)).toStrictEqual(['4', '1']);
+  });
+});
+
+describe('setLine', () => {
+  it('shows nothing before a set is complete', () => {
+    const s = createScore('bo3', 'advantage', 0);
+    playGames(s, '010');
+    expect(setLine(s)).toStrictEqual([[], []]);
+    expect(setLine(createScore('tiebreak', 'advantage', 0))).toStrictEqual([[], []]);
+  });
+
+  it("shows each completed set's games, and the tiebreak loser's points as a superscript on their games", () => {
+    const s = createScore('bo3', 'advantage', 0);
+    playGames(s, '0000');
+    playGames(s, '10101010');
+    play(s, '11111000000111');
+    expect(s.setGames).toStrictEqual([[4, 0], [4, 5]]);
+    expect(s.setTiebreaks).toStrictEqual([null, [6, 8]]);
+    expect(setLine(s)).toStrictEqual([
+      [{ value: 4, sup: null }, { value: 4, sup: 6 }],
+      [{ value: 0, sup: null }, { value: 5, sup: null }],
+    ]);
+  });
+
+  it('shows a full set won 7-6 in a 7-5 tiebreak as 7 over 6 with a superscript 5', () => {
+    const s = createScore('full', 'advantage', 1);
+    playGames(s, '010101010101');
+    play(s, '01010101010' + '0');
+    expect(setLine(s)).toStrictEqual([[{ value: 7, sup: null }], [{ value: 6, sup: 5 }]]);
+  });
+
+  it('shows the Tiebreak format by its final tiebreak points instead of a 1-0 set', () => {
+    const s = createScore('tiebreak', 'advantage', 0);
+    play(s, '0101010101011');
+    play(s, '1111');
+    expect(s.winner).toBe(1);
+    expect(setLine(s)).toStrictEqual([[{ value: 6, sup: null }], [{ value: 8, sup: null }]]);
+  });
+
+  it('shows plain games for sets without a recorded tiebreak (a score built without setTiebreaks)', () => {
+    const s: ScoreState = { ...createScore('bo3', 'advantage', 0), setGames: [[4, 2], [5, 4]], setsWon: [2, 0], winner: 0 };
+    delete s.setTiebreaks;
+    expect(setLine(s)).toStrictEqual([
+      [{ value: 4, sup: null }, { value: 5, sup: null }],
+      [{ value: 2, sup: null }, { value: 4, sup: null }],
+    ]);
+    const tb: ScoreState = { ...createScore('tiebreak', 'advantage', 0), setGames: [[1, 0]], setTiebreaks: [], setsWon: [1, 0], winner: 0 };
+    expect(setLine(tb)).toStrictEqual([[{ value: 1, sup: null }], [{ value: 0, sup: null }]]);
   });
 });
 
@@ -528,6 +583,17 @@ describe('random matches (property)', () => {
     return (hi === n && lo <= n - 2) || (hi === n + 1 && (lo === n - 1 || lo === n));
   }
 
+  /** Independent statement of a set decided by a tiebreak: the Tiebreak format's one set, else n+1 to n games. */
+  function legalTiebreakSet(format: FormatId, [a, b]: [number, number]): boolean {
+    if (format === 'tiebreak') return true;
+    return Math.max(a, b) === GAMES[format] + 1 && Math.min(a, b) === GAMES[format];
+  }
+
+  /** Independent statement of a final tiebreak score, `w` points to the set winner, `l` to the loser: 7 to at most 5, or won by exactly 2 beyond. */
+  function legalTiebreak(w: number, l: number): boolean {
+    return (w === 7 && l <= 5) || (w > 7 && w - l === 2);
+  }
+
   /** Independent statement of when a game ends: `w` and `l` are the scores after the point. */
   function gameShouldEnd(tiebreak: boolean, rule: DeuceRule, w: number, l: number): boolean {
     if (tiebreak) return w >= 7 && w - l >= 2;
@@ -586,6 +652,14 @@ describe('random matches (property)', () => {
       if (!s.setGames.every((g) => legalSet(format, g))) {
         problems.push(`${where}: illegal set ${JSON.stringify(s.setGames)}`);
       }
+      const tiebreaks = s.setTiebreaks ?? [];
+      if (tiebreaks.length !== s.setGames.length) problems.push(`${where}: ${tiebreaks.length} tiebreaks for ${s.setGames.length} sets`);
+      s.setGames.forEach((g, i) => {
+        const tb = tiebreaks[i] ?? null;
+        const setWinner = g[0] > g[1] ? 0 : 1;
+        if ((tb !== null) !== legalTiebreakSet(format, g)) problems.push(`${where}: set ${i} tiebreak ${JSON.stringify(tb)} for ${g.join('-')}`);
+        if (tb !== null && !legalTiebreak(tb[setWinner], tb[other(setWinner)])) problems.push(`${where}: illegal tiebreak ${tb.join('-')}`);
+      });
       const setsTakenByWinner = s.setGames.filter(([a, b]) => (a > b ? 0 : 1) === winner).length;
       if (setsTakenByWinner !== s.setsWon[winner]) problems.push(`${where}: setGames disagree with setsWon`);
       if (situation(s) !== null) problems.push(`${where}: situation after the match`);
