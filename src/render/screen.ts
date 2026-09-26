@@ -39,19 +39,16 @@ export function computeScale(innerW: number, innerH: number, dpr: number, mode: 
   };
 }
 
-/** Either kind of 2D context a layer may draw with. */
-export type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-
 /** An offscreen drawing surface: its canvas (a `drawImage` source) and 2D context. */
-export interface Layer { canvas: HTMLCanvasElement | OffscreenCanvas; g: Ctx2D }
+export interface Layer { canvas: HTMLCanvasElement | OffscreenCanvas; g: CanvasRenderingContext2D }
 
 /**
  * A `w`×`h` offscreen layer with image smoothing off: a detached `<canvas>` where the DOM exists,
- * otherwise an `OffscreenCanvas`.
+ * otherwise an `OffscreenCanvas` (whose context offers the same drawing calls, typed as the DOM one).
  */
 export function createLayer(w: number, h: number): Layer {
   let canvas: HTMLCanvasElement | OffscreenCanvas;
-  let g: Ctx2D | null;
+  let g: CanvasRenderingContext2D | null;
   if (typeof document !== 'undefined') {
     canvas = document.createElement('canvas');
     canvas.width = w;
@@ -59,7 +56,7 @@ export function createLayer(w: number, h: number): Layer {
     g = canvas.getContext('2d');
   } else {
     canvas = new OffscreenCanvas(w, h);
-    g = canvas.getContext('2d');
+    g = canvas.getContext('2d') as unknown as CanvasRenderingContext2D | null;
   }
   if (!g) throw new Error('2D canvas context unavailable');
   g.imageSmoothingEnabled = false;
