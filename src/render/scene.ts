@@ -6,6 +6,7 @@ import { drawText, textWidth } from './font';
 import { OUTLINE, PAL, SURFACE_PAL } from './palette';
 import { H, W, netScreenY, project, scaleAt, unprojectGround } from './projection';
 import { cachedLayer, createLayer, layersPerEnd, type Layer } from './screen';
+import { paintChairShadow } from './umpire';
 
 export { drawUmpire } from './umpire';
 
@@ -280,7 +281,7 @@ export function drawBackdrop(ctx: CanvasRenderingContext2D, surface: Surface, s:
 }
 
 // ---------------------------------------------------------------------------------------------
-// Net: posts, tape, 50 % checker mesh, centre strap and a dithered shadow on the court.
+// Net: posts, tape, 50 % checker mesh, centre strap and its shadow on the court; the umpire chair's shadow.
 
 /** Screen rows 108–139 hold the net layer (post caps to shadow). */
 const NET_TOP = 108;
@@ -320,6 +321,7 @@ function paintNet(surface: Surface, end: PlayerId): Layer {
     put(PAL.boardGreen, x, postTop, 2, foot - postTop + 1);
     put(PAL.silver, x - 1, postTop - 1, 3, 1);
   }
+  paintChairShadow(g, surface, -NET_TOP);
   return layer;
 }
 
@@ -328,7 +330,8 @@ const netLayer = layersPerEnd(paintNet);
 /**
  * Paints the net across the court for `viewer`: posts, white tape following the sag from 1.07 m
  * at the posts to 0.914 m at the centre strap, a 50 % checker-dithered mesh and its shadow on the
- * court. Cached per (surface, viewer end).
+ * court, plus the ground shadow of the umpire's chair beside the post (the chair itself is
+ * `drawUmpire`'s, painted over it). Cached per (surface, viewer end).
  */
 export function drawNet(ctx: CanvasRenderingContext2D, surface: Surface, viewer: PlayerId | 'spectator'): void {
   ctx.drawImage(netLayer(surface, viewer).canvas, 0, NET_TOP);
