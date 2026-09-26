@@ -208,7 +208,8 @@ side parity uses the tiebreak point count.
 | Short set (default) | first to 4 games, win by 2, tiebreak at 4–4 |
 | Full set | first to 6 games, win by 2, tiebreak at 6–6 |
 | Best of 3 | best of three short sets; ends as soon as a player wins 2 sets; no match tiebreak |
-"MATCH POINT" / "SET POINT" / "BREAK POINT" banners show in PRE_SERVE when applicable.
+"MATCH POINT" / "SET POINT" / "BREAK POINT" / "GOLDEN POINT" (40–40 under the golden-point rule)
+banners show in PRE_SERVE when applicable.
 
 ### 3.7 Coin toss
 INTRO: the umpire flips a coin (1.5 s spin above the net), then "<NAME> TO SERVE" (1.0 s). No call,
