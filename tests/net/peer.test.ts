@@ -820,7 +820,7 @@ describe('cancellation', () => {
     expect(conn.closes).toEqual([undefined]);
   });
 
-  it('joinGame aborted in the same turn as the connection opens rejects and closes that transport', async () => {
+  it('joinGame aborted in the same turn as the connection opens rejects and hard-closes that connection at once', async () => {
     const controller = new AbortController();
     const { s, peer, settled } = await startJoin('K7TQM', controller.signal);
     peer.emit('open', 'guest-id');
@@ -828,9 +828,10 @@ describe('cancellation', () => {
     conn.emit('open');
     controller.abort();
     expect(await settled).toMatchObject({ e: { kind: 'cancelled' } });
-    s.advance(CLOSE_FLUSH_MS);
     expect(conn.closes).toEqual([undefined]);
     expect(peer.destroyed).toBe(true);
+    s.advance(CLOSE_FLUSH_MS * 2);
+    expect(conn.closes).toEqual([undefined]);
   });
 
   it('aborting after hostGame or joinGame resolved changes nothing', async () => {

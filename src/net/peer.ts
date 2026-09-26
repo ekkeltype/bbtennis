@@ -154,21 +154,37 @@ function newPeer(d: Deps, id: string | null): Promise<PeerLike> {
   });
 }
 
+/** A PeerJS transport that can also be closed without waiting for sent messages to go out. */
+interface ConnTransport extends Transport {
+  /** Closes the connection at once (and runs `onEnd`); for a transport nothing has been sent on. */
+  closeNow(): void;
+}
+
 /**
  * Wraps an open raw DataConnection. Messages go out as JSON strings (encodeMsg) and incoming data
  * goes through decodeMsg; a remote close or connection error is reported once via onClose; close()
- * closes the connection after CLOSE_FLUSH_MS. PeerJS's `close({ flush: true })` is not used: in raw
- * mode its close marker reaches the other side as the string "[object Object]" and closes nothing.
- * `onEnd` runs once when the connection is finished either way.
+ * closes the connection after CLOSE_FLUSH_MS and closeNow() at once. PeerJS's `close({ flush: true })`
+ * is not used: in raw mode its close marker reaches the other side as the string "[object Object]"
+ * and closes nothing. `onEnd` runs once when the connection is finished either way.
  */
-function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transport {
+function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): ConnTransport {
   let open = true;
   const listeners = new TransportListeners();
+  const end = (): void => {
+    conn.close();
+    onEnd();
+  };
+  /** Marks the transport closed by this side; false if it was already closed. */
+  const closeLocally = (): boolean => {
+    if (!open) return false;
+    open = false;
+    listeners.dropHeld();
+    return true;
+  };
   const lost = (reason: string): void => {
     if (!open) return;
     open = false;
-    conn.close();
-    onEnd();
+    end();
     listeners.close(reason);
   };
   conn.on('data', (data) => {
@@ -191,13 +207,10 @@ function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transpo
       listeners.onClose(cb);
     },
     close() {
-      if (!open) return;
-      open = false;
-      listeners.dropHeld();
-      s.after(CLOSE_FLUSH_MS, () => {
-        conn.close();
-        onEnd();
-      });
+      if (closeLocally()) s.after(CLOSE_FLUSH_MS, end);
+    },
+    closeNow() {
+      if (closeLocally()) end();
     },
     get bufferedAmount() {
       return conn.dataChannel?.bufferedAmount ?? 0;
@@ -316,7 +329,7 @@ export async function joinGame(code: string, opts: PeerEnv = {}): Promise<Transp
   if (normalized === null) throw new NetError('notFound', `malformed code ${JSON.stringify(code)}`);
   const d = deps(opts);
   const peer = await newPeer(d, null);
-  const transport = await new Promise<Transport>((resolve, reject) => {
+  const transport = await new Promise<ConnTransport>((resolve, reject) => {
     let brokerReached = false;
     let settled = false;
     const settle = (): boolean => {
@@ -352,7 +365,7 @@ export async function joinGame(code: string, opts: PeerEnv = {}): Promise<Transp
     });
   });
   if (d.signal?.aborted) {
-    transport.close();
+    transport.closeNow();
     throw new NetError('cancelled', CANCELLED);
   }
   return transport;
