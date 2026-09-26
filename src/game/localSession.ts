@@ -5,6 +5,7 @@ import { TUNING } from '../core/tuning';
 import type { KeyClass } from '../core/typing';
 import type { GameEvent, MatchConfig, MatchState, PlayerId, PlayerInfo, TurnState, ViewModel } from '../core/types';
 import type { Scheduler } from './clock';
+import { WaitTag } from './onlineLink';
 import type { Session } from './session';
 import type { TrainingScript } from './training';
 
@@ -16,9 +17,6 @@ const MAX_CATCH_UP_MS = 250;
 /** The resume countdown: 3-2-1 over 1.5 s (spec §4.6). */
 const COUNTDOWN_MS = 1500;
 const COUNTDOWN_STEPS = 3;
-/** The WAIT tag after an off-turn letter: shown 300 ms, at most once per second (spec §3.1). */
-const WAIT_MS = 300;
-const WAIT_EVERY_MS = 1000;
 /** Guard against a turn chain that never catches up in one step (turns last far longer than a frame). */
 const MAX_TURNS_PER_STEP = 16;
 
@@ -61,8 +59,7 @@ export class LocalSession implements Session {
   private countdownFrom: number | null = null;
   /** Events not yet handed to a view. */
   private pending: GameEvent[] = [];
-  private waitUntil: number | null = null;
-  private lastWaitAt: number | null = null;
+  private readonly wait = new WaitTag();
   /** The human's first choice prompt of the current point (for the first-letter hint). */
   private firstChoice: { point: number; prompt: number } | null = null;
   private lessonIndex = 0;
@@ -185,7 +182,7 @@ export class LocalSession implements Session {
     const τ = t - this.turnStartLocal;
     if (k.kind === 'letter') {
       if (owner === human) this.absorb(this.engine.input(human, k.letter, τ));
-      else if (owner !== null) this.showWait(now);
+      else if (owner !== null) this.wait.show(now);
     } else if (k.kind === 'toss' && owner === human && this.engine.state.turn?.data.kind === 'serve') {
       this.absorb(this.engine.input(human, 'toss', τ));
     }
@@ -247,12 +244,6 @@ export class LocalSession implements Session {
     if (this.firstChoice?.point !== point) this.firstChoice = { point, prompt };
   }
 
-  private showWait(now: number): void {
-    if (this.lastWaitAt !== null && now - this.lastWaitAt < WAIT_EVERY_MS) return;
-    this.lastWaitAt = now;
-    this.waitUntil = now + WAIT_MS;
-  }
-
   private buildView(now: number): ViewModel {
     const state = this.engine.state;
     const events = redactEvents(this.pending, state, this.viewer);
@@ -269,7 +260,7 @@ export class LocalSession implements Session {
         paused: this.paused && !counting,
         countdown: counting ? this.countdown(now) : null,
         coach: null,
-        wait: this.waitUntil !== null && now < this.waitUntil,
+        wait: this.wait.on(now),
         unstable: false,
         hintSpace: hints && this.hintSpace(),
         hintFirstLetter: hints && this.hintFirstLetter(),
