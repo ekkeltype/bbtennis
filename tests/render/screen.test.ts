@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Screen, computeScale, type ScaleInfo } from '../../src/render/screen';
+import type { PlayerId, Surface } from '../../src/core/types';
+import { Screen, cachedLayer, computeScale, layersPerEnd, type Layer, type ScaleInfo } from '../../src/render/screen';
 
 /** Device-pixel values must be whole numbers (within float noise). */
 function expectWhole(v: number): void {
@@ -115,6 +116,48 @@ describe('computeScale (spec §4.1)', () => {
         }
       }
     }
+  });
+});
+
+describe('offscreen layer caches', () => {
+  const fakeLayer = (): Layer => ({ canvas: document.createElement('canvas'), g: {} as CanvasRenderingContext2D });
+
+  it('cachedLayer paints each key once and returns the cached layer afterwards', () => {
+    const cache = new Map<string, Layer>();
+    const paint = vi.fn(fakeLayer);
+    const a = cachedLayer(cache, 'a', paint);
+    expect(cachedLayer(cache, 'a', paint)).toBe(a);
+    expect(paint).toHaveBeenCalledTimes(1);
+    expect(cachedLayer(cache, 'b', paint)).not.toBe(a);
+    expect(paint).toHaveBeenCalledTimes(2);
+    expect(cache.get('a')).toBe(a);
+  });
+
+  it('layersPerEnd paints once per (surface, viewer end), the spectator sharing end 0', () => {
+    const painted: [Surface, PlayerId][] = [];
+    const layerFor = layersPerEnd((surface, end) => {
+      painted.push([surface, end]);
+      return fakeLayer();
+    });
+    const hard0 = layerFor('hard', 0);
+    expect(layerFor('hard', 'spectator')).toBe(hard0);
+    expect(layerFor('hard', 0)).toBe(hard0);
+    const hard1 = layerFor('hard', 1);
+    expect(hard1).not.toBe(hard0);
+    expect(layerFor('hard', 1)).toBe(hard1);
+    const clay0 = layerFor('clay', 'spectator');
+    expect(clay0).not.toBe(hard0);
+    expect(painted).toEqual([
+      ['hard', 0],
+      ['hard', 1],
+      ['clay', 0],
+    ]);
+  });
+
+  it('gives each layersPerEnd lookup its own cache', () => {
+    const courts = layersPerEnd(fakeLayer);
+    const nets = layersPerEnd(fakeLayer);
+    expect(nets('grass', 1)).not.toBe(courts('grass', 1));
   });
 });
 

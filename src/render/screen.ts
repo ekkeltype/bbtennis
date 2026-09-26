@@ -1,4 +1,5 @@
-import { H, W } from './projection';
+import type { PlayerId, Surface } from '../core/types';
+import { H, W, viewerEnd } from './projection';
 
 /**
  * How the 480×270 buffer maps onto the window (spec §4.1). `k` is the whole device-pixel scale
@@ -61,6 +62,27 @@ export function createLayer(w: number, h: number): Layer {
   if (!g) throw new Error('2D canvas context unavailable');
   g.imageSmoothingEnabled = false;
   return { canvas, g };
+}
+
+/** The layer stored in `cache` under `key`, painted by `paint` and stored on first use. */
+export function cachedLayer<K>(cache: Map<K, Layer>, key: K, paint: () => Layer): Layer {
+  let layer = cache.get(key);
+  if (!layer) cache.set(key, (layer = paint()));
+  return layer;
+}
+
+/**
+ * A lookup of static layers painted by `paint` once per (surface, viewer end), each lookup with its
+ * own cache; `'spectator'` shares end 0's layer.
+ */
+export function layersPerEnd(
+  paint: (surface: Surface, end: PlayerId) => Layer,
+): (surface: Surface, viewer: PlayerId | 'spectator') => Layer {
+  const cache = new Map<string, Layer>();
+  return (surface, viewer) => {
+    const end = viewerEnd(viewer);
+    return cachedLayer(cache, `${surface}:${end}`, () => paint(surface, end));
+  };
 }
 
 function context2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {

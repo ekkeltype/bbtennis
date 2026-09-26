@@ -13,9 +13,14 @@ const DEPTH = 320;
 const CENTER_X = W / 2;
 const LENGTH = 2 * COURT.halfLength;
 
-/** −1 when `viewer` sees the court rotated 180° (end 1), else +1; spectators watch from end 0. */
+/** The court end `viewer` watches from; spectators share end 0's view. */
+export function viewerEnd(viewer: PlayerId | 'spectator'): PlayerId {
+  return viewer === 1 ? 1 : 0;
+}
+
+/** −1 when `viewer` sees the court rotated 180° (end 1), else +1. */
 function turn(viewer: PlayerId | 'spectator'): 1 | -1 {
-  return viewer === 1 ? -1 : 1;
+  return viewerEnd(viewer) === 1 ? -1 : 1;
 }
 
 function depth(viewY: number): number {

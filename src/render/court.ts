@@ -3,7 +3,7 @@ import type { PlayerId, Surface } from '../core/types';
 import { hex } from './color';
 import { PAL, SURFACE_PAL } from './palette';
 import { H, W, project, unprojectGround } from './projection';
-import { createLayer, type Layer } from './screen';
+import { createLayer, layersPerEnd, type Layer } from './screen';
 
 /**
  * The stadium floor the court layer paints (screen space, the same for every viewer): rows from
@@ -12,14 +12,16 @@ import { createLayer, type Layer } from './screen';
  */
 export const FLOOR = { top: 70, edge: 160 } as const;
 
-type Rgb = readonly [number, number, number];
+/** 0–255 red, green and blue channels of a palette colour. */
+export type Rgb = readonly [number, number, number];
 /** Colour of the floor pixel (sx, sy), which shows world ground point (x, y) (metres, viewer-rotated). */
 type Shader = (x: number, y: number, sx: number, sy: number) => Rgb;
 
 const { doublesHalfWidth: DX, singlesHalfWidth: SX, halfLength: HL, serviceLine: SL } = COURT;
 
 const rgbCache = new Map<string, Rgb>();
-function rgb(c: string): Rgb {
+/** Channels of the `#RRGGBB` palette colour `c`, parsed once and memoised for the per-pixel painters. */
+export function rgb(c: string): Rgb {
   let v = rgbCache.get(c);
   if (!v) rgbCache.set(c, (v = hex(c)));
   return v;
@@ -33,8 +35,8 @@ function hash(a: number, b: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-/** True where the 2×2 checker (50 % dither) is on. */
-const checker = (sx: number, sy: number): boolean => ((sx + sy) & 1) === 0;
+/** True where the 2×2 checker (50 % dither) is on at screen pixel (sx, sy). */
+export const checker = (sx: number, sy: number): boolean => ((sx + sy) & 1) === 0;
 
 /** Screen-space speckle: `lo` or `hi` on a small share of pixels, `mid` elsewhere. */
 function speckle(ramp: readonly string[], sx: number, sy: number, share: number): Rgb {
@@ -194,7 +196,7 @@ function paintCourt(surface: Surface, end: PlayerId): Layer {
   return layer;
 }
 
-const cache = new Map<string, Layer>();
+const courtLayer = layersPerEnd(paintCourt);
 
 /**
  * Paints the stadium floor for `surface` as `viewer` sees it: surround, court surface texture and
@@ -202,9 +204,5 @@ const cache = new Map<string, Layer>();
  * later calls are a single blit. Rows above `FLOOR.top` and the side stands stay untouched.
  */
 export function drawCourt(ctx: CanvasRenderingContext2D, surface: Surface, viewer: PlayerId | 'spectator'): void {
-  const end: PlayerId = viewer === 1 ? 1 : 0;
-  const key = `${surface}:${end}`;
-  let layer = cache.get(key);
-  if (!layer) cache.set(key, (layer = paintCourt(surface, end)));
-  ctx.drawImage(layer.canvas, 0, 0);
+  ctx.drawImage(courtLayer(surface, viewer).canvas, 0, 0);
 }

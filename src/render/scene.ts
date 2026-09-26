@@ -1,12 +1,11 @@
 import { COURT, netHeightAt } from '../core/court';
 import { intBelow, seedRng, uniform } from '../core/rng';
 import type { PlayerId, RngState, Surface } from '../core/types';
-import { hex } from './color';
-import { FLOOR } from './court';
+import { FLOOR, checker, rgb } from './court';
 import { drawText, textWidth } from './font';
 import { OUTLINE, PAL, SURFACE_PAL } from './palette';
 import { H, W, netScreenY, project, scaleAt, unprojectGround } from './projection';
-import { createLayer, type Layer } from './screen';
+import { cachedLayer, createLayer, layersPerEnd, type Layer } from './screen';
 
 /**
  * Animated scene inputs: `crowdExcite` 0–1 (the share of the crowd cheering), `umpireLook` where the
@@ -14,15 +13,6 @@ import { createLayer, type Layer } from './screen';
  * `t` the animation clock in milliseconds.
  */
 export interface SceneState { crowdExcite: number; umpireLook: -1 | 0 | 1; t: number }
-
-type Rgb = readonly [number, number, number];
-
-const rgbCache = new Map<string, Rgb>();
-function rgb(c: string): Rgb {
-  let v = rgbCache.get(c);
-  if (!v) rgbCache.set(c, (v = hex(c)));
-  return v;
-}
 
 /** RGBA packed for a little-endian Uint32Array view of ImageData. */
 function packed(c: string): number {
@@ -33,6 +23,24 @@ function packed(c: string): number {
 const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 /** Ordered-dither threshold in [0, 1) for pixel (x, y). */
 const bayer = (x: number, y: number): number => (BAYER4[(y & 3) * 4 + (x & 3)]! + 0.5) / 16;
+
+/** Paints pixel-art `rows` with its top-left at (x0, y0): one pixel per character in `legend`'s colour; '.' is clear. */
+function paintGrid(
+  g: CanvasRenderingContext2D,
+  rows: readonly string[],
+  legend: Record<string, string>,
+  x0: number,
+  y0: number,
+): void {
+  rows.forEach((row, r) => {
+    for (let c = 0; c < row.length; c++) {
+      const ch = row[c]!;
+      if (ch === '.') continue;
+      g.fillStyle = legend[ch]!;
+      g.fillRect(x0 + c, y0 + r, 1, 1);
+    }
+  });
+}
 
 // ---------------------------------------------------------------------------------------------
 // Stadium geometry (screen space; the stadium never rotates). Side stands, walls and aisles are
@@ -412,18 +420,11 @@ function paintLanterns(): Layer {
   const layer = createLayer(W, H);
   const { g } = layer;
   const [, paper, red, glow] = SURFACE_PAL.dojo.accent;
-  const colors: Record<string, string> = { o: OUTLINE, r: red!, c: paper!, g: glow! };
+  const legend: Record<string, string> = { o: OUTLINE, r: red!, c: paper!, g: glow! };
   const hang = (x: number, drop: number): void => {
     g.fillStyle = OUTLINE;
     g.fillRect(x + 3, 0, 1, drop);
-    LANTERN.forEach((row, r) => {
-      for (let c = 0; c < row.length; c++) {
-        const ch = row[c]!;
-        if (ch === '.') continue;
-        g.fillStyle = colors[ch]!;
-        g.fillRect(x + c, drop + r, 1, 1);
-      }
-    });
+    paintGrid(g, LANTERN, legend, x, drop);
   };
   for (let i = 0; i < 8; i++) hang(69 + i * 48, 1 + (i % 2) * 2);
   // Down the side stands, each lantern hanging just above the stands' rim.
@@ -445,9 +446,7 @@ let lanterns: Layer | null = null;
  * 100 ms of `s.t`, bobbing when idle and raising arms for the `s.crowdExcite` share of fans.
  */
 export function drawBackdrop(ctx: CanvasRenderingContext2D, surface: Surface, s: SceneState): void {
-  let base = bases.get(surface);
-  if (!base) bases.set(surface, (base = paintBase(surface)));
-  ctx.drawImage(base.canvas, 0, 0);
+  ctx.drawImage(cachedLayer(bases, surface, () => paintBase(surface)).canvas, 0, 0);
   ctx.drawImage(crowdLayer(s).canvas, 0, 0);
   if (surface === 'dojo') ctx.drawImage((lanterns ??= paintLanterns()).canvas, 0, 0);
 }
@@ -478,13 +477,13 @@ function paintNet(surface: Surface, end: PlayerId): Layer {
     put(PAL.silver, x, top + 1);
     for (let y = top + 2; y <= foot; y++) {
       if (x === strap) put(PAL.mist, x, y);
-      else if (((x + y) & 1) === 0) put(OUTLINE, x, y);
+      else if (checker(x, y)) put(OUTLINE, x, y);
     }
     // Shadow on the ground in front of the net: the surface's darkest shade, solid then 50 %.
     const ramp = Math.abs(wx) <= COURT.doublesHalfWidth ? SURFACE_PAL[surface].court : SURFACE_PAL[surface].surround;
     const shade = ramp[ramp.length - 1]!;
     put(shade, x, foot + 1);
-    if (((x + foot) & 1) === 1) put(shade, x, foot + 2);
+    if (!checker(x, foot)) put(shade, x, foot + 2);
   }
   const postTop = Math.floor(netScreenY() - COURT.netPostH * px);
   for (const x of [left, right]) {
@@ -496,7 +495,7 @@ function paintNet(surface: Surface, end: PlayerId): Layer {
   return layer;
 }
 
-const nets = new Map<string, Layer>();
+const netLayer = layersPerEnd(paintNet);
 
 /**
  * Paints the net across the court for `viewer`: posts, white tape following the sag from 1.07 m
@@ -504,11 +503,7 @@ const nets = new Map<string, Layer>();
  * court. Cached per (surface, viewer end).
  */
 export function drawNet(ctx: CanvasRenderingContext2D, surface: Surface, viewer: PlayerId | 'spectator'): void {
-  const end: PlayerId = viewer === 1 ? 1 : 0;
-  const key = `${surface}:${end}`;
-  let net = nets.get(key);
-  if (!net) nets.set(key, (net = paintNet(surface, end)));
-  ctx.drawImage(net.canvas, 0, NET_TOP);
+  ctx.drawImage(netLayer(surface, viewer).canvas, 0, NET_TOP);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -597,28 +592,14 @@ const UMPIRE_X = 7.9;
 /** Column of `CHAIR` that stands on `UMPIRE_X`. */
 const CHAIR_ANCHOR = 12;
 
-function paintGrid(g: CanvasRenderingContext2D, rows: string[], x0: number, y0: number): void {
-  rows.forEach((row, r) => {
-    for (let c = 0; c < row.length; c++) {
-      const ch = row[c]!;
-      if (ch === '.') continue;
-      g.fillStyle = UMPIRE_COLORS[ch]!;
-      g.fillRect(x0 + c, y0 + r, 1, 1);
-    }
-  });
+function paintUmpire(look: -1 | 0 | 1): Layer {
+  const layer = createLayer(CHAIR[0]!.length, CHAIR.length);
+  paintGrid(layer.g, CHAIR, UMPIRE_COLORS, 0, 0);
+  paintGrid(layer.g, HEADS[look], UMPIRE_COLORS, HEAD_AT.x, HEAD_AT.y);
+  return layer;
 }
 
 const umpires = new Map<-1 | 0 | 1, Layer>();
-
-function umpireFrame(look: -1 | 0 | 1): Layer {
-  let layer = umpires.get(look);
-  if (layer) return layer;
-  layer = createLayer(CHAIR[0]!.length, CHAIR.length);
-  paintGrid(layer.g, CHAIR, 0, 0);
-  paintGrid(layer.g, HEADS[look], HEAD_AT.x, HEAD_AT.y);
-  umpires.set(look, layer);
-  return layer;
-}
 
 /**
  * Paints the umpire on the high chair beside the screen-right net post (the stadium does not rotate
@@ -626,7 +607,7 @@ function umpireFrame(look: -1 | 0 | 1): Layer {
  */
 export function drawUmpire(ctx: CanvasRenderingContext2D, s: SceneState): void {
   const look: -1 | 0 | 1 = s.umpireLook === -1 || s.umpireLook === 1 ? s.umpireLook : 0;
-  const frame = umpireFrame(look);
+  const frame = cachedLayer(umpires, look, () => paintUmpire(look));
   const foot = project({ x: UMPIRE_X, y: 0, z: 0 }, 0);
   ctx.drawImage(frame.canvas, Math.floor(foot.x) - CHAIR_ANCHOR, Math.floor(foot.y) - CHAIR.length + 1);
 }

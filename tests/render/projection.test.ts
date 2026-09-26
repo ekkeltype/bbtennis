@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { COURT } from '../../src/core/court';
 import type { PlayerId, Vec3 } from '../../src/core/types';
 import { FLOOR } from '../../src/render/court';
-import { H, W, netScreenY, project, scaleAt, unprojectGround } from '../../src/render/projection';
+import { H, W, netScreenY, project, scaleAt, unprojectGround, viewerEnd } from '../../src/render/projection';
 
 const VIEWERS: (PlayerId | 'spectator')[] = [0, 1, 'spectator'];
 const { doublesHalfWidth: DX, halfLength: HL } = COURT;
@@ -10,6 +10,14 @@ const { doublesHalfWidth: DX, halfLength: HL } = COURT;
 describe('buffer size', () => {
   it('is 480×270', () => {
     expect([W, H]).toEqual([480, 270]);
+  });
+});
+
+describe('viewerEnd', () => {
+  it('maps each viewer to the court end it watches from; the spectator watches from end 0', () => {
+    expect(viewerEnd(0)).toBe(0);
+    expect(viewerEnd(1)).toBe(1);
+    expect(viewerEnd('spectator')).toBe(0);
   });
 });
 
