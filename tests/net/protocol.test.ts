@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  APP_ID, MAX_MSG_CHARS, MAX_SEND_BYTES, PROTO, decodeMsg, encodeMsg, msgBytes, parseMsg, type NetMsg,
+  APP_ID, MAX_MSG_CHARS, MAX_SEND_BYTES, PROTO, decodeMsg, encodeMsg, encodeWithBytes, msgBytes, parseMsg, type NetMsg,
 } from '../../src/net/protocol';
 import { sanitizeName } from '../../src/core/text';
 import type { GameEvent, Look, MatchConfig, PlayerStats, Profile, PublicState } from '../../src/core/types';
@@ -192,6 +192,20 @@ describe('encodeMsg', () => {
     expect(JSON.stringify(m).length).toBeLessThan(MAX_SEND_BYTES);
     expect(encodeMsg(m)).toBeNull();
     expect(warn.mock.calls).toEqual([['[bbt] frame too big', msgBytes(m)]]);
+  });
+});
+
+describe('encodeWithBytes', () => {
+  it('is the JSON of the message with its size in UTF-8 bytes', () => {
+    for (const m of [...samples, frameOfBytes(MAX_SEND_BYTES, '🎾')]) {
+      expect(encodeWithBytes(m)).toEqual({ json: JSON.stringify(m), bytes: msgBytes(m) });
+    }
+  });
+
+  it('refuses an oversized message with the same warning as encodeMsg', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(encodeWithBytes(frameOfBytes(MAX_SEND_BYTES + 1, 'é'))).toBeNull();
+    expect(warn.mock.calls).toEqual([['[bbt] frame too big', MAX_SEND_BYTES + 1]]);
   });
 });
 

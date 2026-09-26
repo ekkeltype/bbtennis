@@ -227,13 +227,21 @@ function parseSized(raw: unknown): NetMsg | null {
   return isRec(raw) ? parseFields(raw) : null;
 }
 
-/** The wire form of `msg` (its JSON), or null with a `[bbt] frame too big` warning when it is over MAX_SEND_BYTES. */
-export function encodeMsg(msg: NetMsg): string | null {
+/** A message in wire form: its JSON and the UTF-8 byte length of that JSON. */
+export interface EncodedMsg { json: string; bytes: number }
+
+/** The wire form of `msg` with its size, or null with a `[bbt] frame too big` warning when it is over MAX_SEND_BYTES. */
+export function encodeWithBytes(msg: NetMsg): EncodedMsg | null {
   const json = JSON.stringify(msg);
   const bytes = jsonBytes(json);
-  if (bytes <= MAX_SEND_BYTES) return json;
+  if (bytes <= MAX_SEND_BYTES) return { json, bytes };
   console.warn('[bbt] frame too big', bytes);
   return null;
+}
+
+/** The wire form of `msg` (its JSON), or null with a `[bbt] frame too big` warning when it is over MAX_SEND_BYTES. */
+export function encodeMsg(msg: NetMsg): string | null {
+  return encodeWithBytes(msg)?.json ?? null;
 }
 
 /**

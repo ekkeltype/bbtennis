@@ -199,6 +199,39 @@ describe('loopbackPair delivery', () => {
   });
 });
 
+describe('loopbackPair encoding work', () => {
+  it('measures the UTF-8 size of a message once per send', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const got: NetMsg[] = [];
+    b.onMessage((m) => got.push(m));
+    const encode = vi.spyOn(TextEncoder.prototype, 'encode');
+    a.send({ type: 'ping', id: 1 });
+    const encodes = encode.mock.calls.length;
+    encode.mockRestore();
+    s.advance(10);
+    expect(encodes).toBe(1);
+    expect(got).toEqual([{ type: 'ping', id: 1 }]);
+  });
+
+  it.each(['locally', 'by the other end'])('a send on an end closed %s encodes nothing, even an oversized one', (how) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    if (how === 'locally') a.close();
+    else b.close();
+    s.advance(10);
+    const big = helloOfBytes(MAX_SEND_BYTES + 1);
+    const stringify = vi.spyOn(JSON, 'stringify');
+    a.send(big);
+    const stringifies = stringify.mock.calls.length;
+    stringify.mockRestore();
+    expect(stringifies).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    expect(a.bufferedAmount).toBe(0);
+  });
+});
+
 describe('loopbackPair listeners added late', () => {
   it('holds messages that arrive before the first listener and hands them to it in order', () => {
     const s = new VirtualScheduler();

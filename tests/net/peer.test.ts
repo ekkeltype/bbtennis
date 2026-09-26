@@ -491,6 +491,21 @@ describe('PeerJS transport message size', () => {
       expect(reasons).toEqual([]);
     },
   );
+
+  it.each(['close()', 'a remote close'])('a send after %s encodes nothing, even an oversized one', async (how) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { conn, transport } = await openGuest();
+    if (how === 'close()') transport.close();
+    else conn.emit('close');
+    const big = helloOfBytes(MAX_SEND_BYTES + 1);
+    const stringify = vi.spyOn(JSON, 'stringify');
+    transport.send(big);
+    const stringifies = stringify.mock.calls.length;
+    stringify.mockRestore();
+    expect(stringifies).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    expect(conn.sent).toEqual([]);
+  });
 });
 
 describe('PeerJS unavailable', () => {

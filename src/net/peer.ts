@@ -180,8 +180,9 @@ function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transpo
   conn.on('error', (err) => lost(err.type));
   return {
     send(msg) {
+      if (!open) return;
       const json = encodeMsg(msg);
-      if (json !== null && open) conn.send(json);
+      if (json !== null) conn.send(json);
     },
     onMessage(cb) {
       listeners.onMessage(cb);

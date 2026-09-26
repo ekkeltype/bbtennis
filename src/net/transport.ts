@@ -1,6 +1,6 @@
 import { seedRng, uniform } from '../core/rng';
 import type { Scheduler } from '../game/clock';
-import { decodeMsg, encodeMsg, type NetMsg } from './protocol';
+import { decodeMsg, encodeWithBytes, type EncodedMsg, type NetMsg } from './protocol';
 
 /** A reliable, ordered message channel to the other player (spec §5.3). */
 export interface Transport {
@@ -77,9 +77,7 @@ export class TransportListeners {
   }
 }
 
-type Packet = { json: string; bytes: number } | 'close';
-
-const utf8 = new TextEncoder();
+type Packet = EncodedMsg | 'close';
 
 /** One end of a loopback pair; `peer` is the other end. */
 class LoopbackEnd implements Transport {
@@ -98,8 +96,9 @@ class LoopbackEnd implements Transport {
   }
 
   send(msg: NetMsg): void {
-    const json = encodeMsg(msg);
-    if (json !== null && !this.closed) this.peer?.enqueue({ json, bytes: utf8.encode(json).byteLength });
+    if (this.closed) return;
+    const encoded = encodeWithBytes(msg);
+    if (encoded) this.peer?.enqueue(encoded);
   }
 
   onMessage(cb: (m: NetMsg) => void): void {
