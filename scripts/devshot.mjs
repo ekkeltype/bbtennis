@@ -8,7 +8,9 @@
  *
  * Starts a Vite dev server on a free port, opens http://localhost:<port>/<pagePath> in the local
  * Chrome via playwright-core, screenshots the selector's element (or the full page) and prints the
- * PNG path. Page console errors go to stderr. Exit codes: 0 ok, 1 failure/timeout, 2 bad usage.
+ * PNG path. Page console errors go to stderr; a page-load or __shotReady timeout also prints the
+ * whole page console transcript, and a failed launch prints the errors of both launch routes.
+ * Exit codes: 0 ok, 1 failure/timeout, 2 bad usage.
  */
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -46,10 +48,18 @@ function parseArgs(argv) {
 }
 
 async function launchChrome() {
+  let channelErr;
   try {
     return await chromium.launch({ channel: 'chrome' });
-  } catch {
+  } catch (err) {
+    channelErr = err;
+  }
+  try {
     return await chromium.launch({ executablePath: CHROME_PATH });
+  } catch (pathErr) {
+    throw new Error(
+      `could not launch Chrome.\n--- via channel 'chrome':\n${channelErr.message}\n--- via executablePath ${CHROME_PATH}:\n${pathErr.message}`,
+    );
   }
 }
 
@@ -84,7 +94,19 @@ async function shoot(args) {
       console.error(line);
     });
 
-    const response = await page.goto(url, { timeout: args.timeout });
+    const timedOut = (what) => {
+      console.error(`devshot: timed out after ${args.timeout} ms ${what}`);
+      console.error(consoleLines.length ? consoleLines.join('\n') : '(no page console output)');
+      return 1;
+    };
+
+    let response;
+    try {
+      response = await page.goto(url, { timeout: args.timeout });
+    } catch (err) {
+      if (!(err instanceof errors.TimeoutError)) throw err;
+      return timedOut(`loading ${url}`);
+    }
     if (response && !response.ok()) {
       console.error(`devshot: HTTP ${response.status()} for ${url}`);
       return 1;
@@ -93,9 +115,7 @@ async function shoot(args) {
       await page.waitForFunction(() => window.__shotReady === true, null, { timeout: args.timeout });
     } catch (err) {
       if (!(err instanceof errors.TimeoutError)) throw err;
-      console.error(`devshot: timed out after ${args.timeout} ms waiting for window.__shotReady on ${url}`);
-      console.error(consoleLines.length ? consoleLines.join('\n') : '(no page console output)');
-      return 1;
+      return timedOut(`waiting for window.__shotReady on ${url}`);
     }
 
     await mkdir(dirname(args.out), { recursive: true });
