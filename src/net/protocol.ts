@@ -246,7 +246,8 @@ export function encodeMsg(msg: NetMsg): string | null {
 
 /**
  * A received wire message: a JSON string of at most MAX_SEND_BYTES characters (checked before it is
- * parsed; no sendable message is longer) that passes parseMsg. Anything else is null.
+ * parsed; no sendable message is longer) whose value passes parseMsg's field checks. The string's
+ * length is its size, so the value is not measured again. Anything else is null.
  */
 export function decodeMsg(data: unknown): NetMsg | null {
   if (typeof data !== 'string' || data.length > MAX_SEND_BYTES) return null;

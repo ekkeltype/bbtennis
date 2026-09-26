@@ -59,7 +59,7 @@ export class TransportListeners {
   private overflowed = false;
   private heldClose: string | null = null;
 
-  /** Adds a message listener; the first one is handed the held messages at once (until dropHeld), then the held close goes out. */
+  /** Adds a message listener; the first one gets the held messages at once (until dropHeld), then the held close. */
   onMessage(cb: (m: NetMsg) => void): void {
     this.messageCbs.push(cb);
     if (this.messageCbs.length > 1) return;
