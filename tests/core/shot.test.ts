@@ -53,13 +53,13 @@ describe('speedFactor', () => {
   });
 
   it('clamps to [0.80, 1.30]', () => {
-    expect(speedFactor(0)).toBeCloseTo(0.8, 12);
-    expect(speedFactor(20)).toBeCloseTo(1.3, 12);
+    expect(speedFactor(-10)).toBeCloseTo(0.8, 12); // unclamped 0.55
+    expect(speedFactor(40)).toBeCloseTo(1.3, 12); // unclamped 1.80
   });
 });
 
 describe('contactFactor', () => {
-  const a = 3000; // toss apex at Relaxed pace (2.0 s × 1.5)
+  const a = TUNING.tossApexMs * PACE_MULT.relaxed; // toss apex at Relaxed pace
 
   it('is 1.0 up to and including the apex', () => {
     expect(contactFactor(0, a)).toBe(1);
@@ -88,9 +88,9 @@ describe('strikeV', () => {
   });
 
   it('multiplies a stretch shot by 0.9 after the clamp, without re-clamping', () => {
-    expect(strikeV(20, { stretch: true })).toBeCloseTo(1.17, 12);
-    expect(strikeV(0, { stretch: true })).toBeCloseTo(0.72, 12);
-    expect(strikeV(0, { stretch: false })).toBeCloseTo(0.8, 12);
+    expect(strikeV(40, { stretch: true })).toBeCloseTo(1.17, 12);
+    expect(strikeV(-10, { stretch: true })).toBeCloseTo(0.72, 12);
+    expect(strikeV(-10, { stretch: false })).toBeCloseTo(0.8, 12);
   });
 });
 

@@ -11,7 +11,7 @@ function pressureFactor(n: number): number {
   return f;
 }
 
-/** Speed factor for a word typed at `cps`: clamp(0.85 + 0.05·(cps − 3), 0.80, 1.30) (spec §3.4). */
+/** Speed factor for a word typed at `cps`: clamp(0.875 + 0.025·(cps − 3), 0.80, 1.30) (spec §3.4; constants in TUNING.speed). */
 export function speedFactor(cps: number): number {
   const { base, perCps, cpsRef, min, max } = TUNING.speed;
   return clamp(base + perCps * (cps - cpsRef), min, max);
