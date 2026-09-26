@@ -1,3 +1,4 @@
+import { setLine } from '../../core/scoring';
 import { BELT_COLOR, RAMPS } from '../../render/palette';
 import { button, panel, swatch } from '../controls';
 import type { ResultsParams, UiContext } from '../context';
@@ -7,16 +8,23 @@ import { headline, setScores, statRows } from '../summary';
 
 type MatchResults = Extract<ResultsParams, { kind: 'cpu' | 'online' }>;
 
-/** The score line: one row per player with the games of each set (or the points of a tiebreak). */
+/**
+ * The score line, as the scoreboard shows it: one row per player with the games of each set (or the
+ * points of a tiebreak), and a set won in a tiebreak carries the loser's tiebreak points as a superscript.
+ */
 function scoreTable(p: MatchResults): HTMLElement {
   const { head, rows } = setScores(p.result);
+  const sups = setLine(p.result.score).map((cells) => cells.map((c) => c.sup));
   const winner = p.result.winner;
   const line = (i: 0 | 1): HTMLElement =>
     h(
       'tr',
       { class: winner === i ? 'won' : '' },
       h('th', {}, p.result.players[i].name.toUpperCase()),
-      ...rows[i].map((n) => h('td', {}, String(n))),
+      ...rows[i].map((n, k) => {
+        const sup = sups[i]?.[k] ?? null;
+        return h('td', {}, String(n), sup === null ? null : h('sup', {}, String(sup)));
+      }),
     );
   return h('table', { class: 'score' }, h('thead', {}, h('tr', {}, h('th', {}), ...head.map((t) => h('th', {}, t)))), h('tbody', {}, line(0), line(1)));
 }

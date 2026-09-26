@@ -275,6 +275,30 @@ describe('results', () => {
     expect(ctx.quitMatch).toHaveBeenCalledOnce();
   });
 
+  it("shows the scoreboard's score line: games per set with the tiebreak loser's points as a superscript", () => {
+    const ctx = fakeContext();
+    router.register('results', resultsScreen(ctx));
+    /** Each score-table row as [number, superscript or null] per cell. */
+    const line = (): [string, string | null][][] =>
+      [...root.querySelectorAll('.score tbody tr')].map((tr) =>
+        [...tr.querySelectorAll('td')].map((td) => [td.firstChild?.textContent ?? '', td.querySelector('sup')?.textContent ?? null]),
+      );
+    const sets = finished();
+    sets.config = { ...sets.config, format: 'bo3' };
+    sets.score = { ...sets.score, format: 'bo3', setGames: [[4, 2], [4, 5], [5, 4]], setTiebreaks: [null, [5, 7], [7, 3]], setsWon: [2, 1], winner: 0 };
+    router.go('results', { kind: 'cpu', result: sets, viewer: 0, newBelt: null, canRematch: true });
+    expect([...root.querySelectorAll('.score thead th')].map((th) => th.textContent)).toEqual(['', 'SET 1', 'SET 2', 'SET 3']);
+    expect(line()).toEqual([
+      [['4', null], ['4', '5'], ['5', null]],
+      [['2', null], ['5', null], ['4', '3']],
+    ]);
+    const tiebreak = finished();
+    tiebreak.score = { ...tiebreak.score, setGames: [[1, 0]], setTiebreaks: [[7, 5]], inTiebreak: false, setsWon: [1, 0], winner: 0 };
+    tiebreak.stats = [{ ...tiebreak.stats[0], pointsWon: 7 }, { ...tiebreak.stats[1], pointsWon: 5 }];
+    router.go('results', { kind: 'cpu', result: tiebreak, viewer: 0, newBelt: null, canRematch: true });
+    expect(line()).toEqual([[['7', null]], [['5', null]]]);
+  });
+
   it('online Rematch asks the opponent and then waits', () => {
     const ctx = fakeContext();
     router.register('results', resultsScreen(ctx));
