@@ -95,7 +95,7 @@ Keys from a player who is not the active typist are always dropped: never errors
    above the server; small tier-coded target markers appear in the service box. **In every mode
    the serve words and markers are visible only to a local human server** (§4.2 describes what the
    opponent sees). Attract mode shows everything.
-3. Toss timeline: `a = 2.0 s × pace` (apex), tooLow = `2a`. Ball height
+3. Toss timeline: `a = 1.93 s × pace` (apex; tuned by the balance simulation), tooLow = `2a`. Ball height
    `z(t) = 1.8 + 1.4·(1 − ((t − a)/a)²)`.
 4. Outcomes:
    - Word completed at `t ≤ 2a` → strike at t. **Contact factor** = 1.0 if `t ≤ a`, falling
@@ -150,11 +150,12 @@ CPU toss delay, reaction/key intervals, call/banner durations, lag compensation,
 - **Typing speed** for a completed word of n letters (n ≥ 3):
   `cps = (n − 1) / max(0.05 s, tLast − tFirst)`, tFirst = first correct key (the lock key for a
   choice), tLast = final correct key; wrong-key/correction time inside the word is included.
-- **Speed factor** `v = clamp(0.85 + 0.05·(cps − 3), 0.80, 1.30)`, clamped once; then serves ×
+- **Speed factor** `v = clamp(0.875 + 0.025·(cps − 3), 0.80, 1.30)` (tuned by the balance
+  simulation; a playtest knob), clamped once; then serves ×
   contact factor, stretch shots × 0.9 (no re-clamp).
 - **Flight to contact**:
   `T = pace × (2.2 s + 0.10 s × len(chaseWord)) / v × place[d] × 0.85^⌊n/2⌋`
-  plus `(0.5 s + 0.5 s × pace)` when the chased shot is a serve (reading allowance: the receiver
+  plus `(0.25 s + 0.75 s × pace)` when the chased shot is a serve (reading allowance: the receiver
   has never seen a serve word).
   - `place` = easy 1.00, medium 0.85, hard 0.70 for rally shots; 1.00 for all serve tiers.
   - `n` = number of rally strikes after the serve before the chased one (return of serve n = 0,
@@ -387,6 +388,7 @@ never in attract mode or before the start gate.
 
 ### 4.5 Keyboard rules
 During a match, `keydown` is handled on `window` in the capture phase:
+- F1–F12 are never captured or prevented (browser reload, fullscreen and dev tools keep working).
 - Ignored (no effect, no error): `event.repeat`; `isComposing` or key ∈ {Process, Dead,
   Unidentified}; any Ctrl/Meta/Alt combination; keys with `key.length !== 1` except Space;
   every non-letter printable key; any key while a DOM text input is focused or a menu is open.
@@ -596,7 +598,8 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
   per-word variation, error rate 7 % @ 25 → 1.5 % @ 120 WPM, reaction 0.9 → 0.4 s, chase reaction
   0.25 s, "hardest option that fits" policy). For each preset at its reference WPM (Relaxed 30,
   Normal 50, Fast 70, Lightning 90), equal players: median rally 3–6 shots, p90 ≤ 12, no point > 40
-  shots; aces 5–15 %; double faults 1–6 %; server wins 55–65 %; ≤ 35 s per point. Always-easy,
+  shots; aces ≤ 15 % (between equal players aces are rare by design; a ≥ 5 % floor proved
+  unreachable under the rules); double faults 1–6 %; server wins 55–65 %; ≤ 35 s per point. Always-easy,
   always-hard and never-hard each win ≤ 53 % of points vs adaptive. CPU aggression 0.8 vs 0.2 at
   equal speed wins ≥ 50 %. At Normal: CPU levels ≥ 2 apart — higher wins ≥ 90 % of short sets;
   adjacent — higher wins ≥ 65 %. Constants in `tuning.ts` may be retuned to meet these; the spec's
