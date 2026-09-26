@@ -113,34 +113,63 @@ describe('layoutChoice', () => {
 });
 
 describe('layoutServeNear', () => {
-  const HEAD_XS = [0, 4, 20, 240, 460, 476, 480];
+  const HEAD_XS = [0, 4, 20, 100, 239.5, 240, 240.5, 380, 460, 476, 480];
 
-  it('stacks easy, medium, hard top to bottom with 2 px gaps, bottom 4 px above the head', () => {
-    const boxes = layoutServeNear([5, 9, 14], 240, 200);
+  it('stacks easy, medium, hard top to bottom with 3 px gaps, bottom level with the head top', () => {
+    const boxes = layoutServeNear([5, 9, 14], 200, 200);
     expect(boxes.map((b) => b.option)).toEqual([0, 1, 2]);
-    expect(boxes.map((b) => b.y)).toEqual([144, 162, 180]);
-    expect(boxes[2]!.y + boxes[2]!.h).toBe(200 - 4);
+    expect(boxes.map((b) => b.h)).toEqual([16, 16, 16]);
+    expect(boxes.map((b) => b.y)).toEqual([146, 165, 184]);
+    expect(boxes[2]!.y + boxes[2]!.h).toBe(200);
   });
 
-  it('left-aligns the stack and centres its widest plate over the head', () => {
-    const boxes = layoutServeNear([4, 7, 12], 240, 200);
-    const widest = plateWidth(12);
-    expect(boxes.map((b) => b.x)).toEqual([240 - (widest - 1) / 2, 240 - (widest - 1) / 2, 240 - (widest - 1) / 2]);
+  it('puts the stack right of a head left of centre, inner edges 8 px from the head', () => {
+    const boxes = layoutServeNear([4, 7, 12], 200, 200);
+    expect(boxes.map((b) => b.x)).toEqual([208, 208, 208]);
+    expect(boxes.map((b) => b.w)).toEqual([4, 7, 12].map((n) => plateWidth(n)));
   });
 
-  it('keeps every stack on screen for heads near both edges', () => {
+  it('puts the stack left of a head right of centre, right edges 8 px from the head', () => {
+    const boxes = layoutServeNear([4, 7, 12], 300, 200);
+    expect(boxes.map((b) => b.x + b.w)).toEqual([292, 292, 292]);
+  });
+
+  it('rounds a fractional head outwards so the gap to the head stays ≥ 8 px', () => {
+    expect(layoutServeNear([5], 199.5, 200)[0]!.x).toBe(208);
+    const left = layoutServeNear([5], 300.5, 200)[0]!;
+    expect(left.x + left.w).toBe(292);
+  });
+
+  it('keeps the toss column (head x ± 6) clear, toward the screen centre, for heads near both edges', () => {
     const bad = TRIPLES.flatMap((lens) =>
       HEAD_XS.flatMap((hx) =>
-        problems(layoutServeNear(lens, hx, 200)).map((p) => `${lens.join('/')} head ${hx}: ${p}`),
+        [200, 60].flatMap((hy) => {
+          const boxes = layoutServeNear(lens, hx, hy);
+          const id = `${lens.join('/')} head ${hx},${hy}`;
+          const out = problems(boxes).map((p) => `${id}: ${p}`);
+          for (const b of boxes) {
+            const right = b.x >= hx + 8;
+            if (!right && b.x + b.w > hx - 8) out.push(`${id}: option ${b.option} within 8 px of the head`);
+            if (hx < 240 && !right) out.push(`${id}: option ${b.option} left of a head left of centre`);
+            if (hx > 240 && right) out.push(`${id}: option ${b.option} right of a head right of centre`);
+          }
+          return out;
+        }),
       ),
     );
     expect(bad).toEqual([]);
   });
 
   it('pushes the stack below the HUD band when the head is high on screen', () => {
-    const boxes = layoutServeNear([5, 9, 14], 240, 40);
+    const boxes = layoutServeNear([5, 9, 14], 200, 40);
     expect(problems(boxes)).toEqual([]);
     expect(boxes[0]!.y).toBe(22);
+  });
+
+  it('keeps the stack above the bottom of the plate area when the head is low on screen', () => {
+    const boxes = layoutServeNear([5, 9, 14], 200, 300);
+    expect(problems(boxes)).toEqual([]);
+    expect(boxes[2]!.y + boxes[2]!.h).toBe(266);
   });
 
   it('rejects an empty stack', () => {
@@ -149,27 +178,60 @@ describe('layoutServeNear', () => {
 });
 
 describe('layoutServeFar', () => {
-  it('lays easy, medium, hard left to right in the far band, centred on the server', () => {
+  const SERVER_XS = [0, 4, 30, 100, 180, 239.5, 240, 240.5, 300, 380, 450, 476, 480];
+
+  it('splits easy, medium, hard around a 12 px gap centred on the server, 4 px apart otherwise', () => {
     const boxes = layoutServeFar([5, 9, 14], 240);
     expect(boxes.map((b) => b.option)).toEqual([0, 1, 2]);
     expect(boxes.map((b) => b.y)).toEqual([22, 22, 22]);
-    expect(boxes[1]!.x).toBeGreaterThan(boxes[0]!.x + boxes[0]!.w);
-    expect(boxes[2]!.x).toBeGreaterThan(boxes[1]!.x + boxes[1]!.w);
-    const left = boxes[0]!.x;
-    const right = boxes[2]!.x + boxes[2]!.w;
-    expect(Math.abs((left + right) / 2 - 240)).toBeLessThanOrEqual(0.5);
+    expect(boxes.map((b) => b.h)).toEqual([16, 16, 16]);
+    expect(boxes.map((b) => b.w)).toEqual([41, 65, 95]);
+    // 41 + 4 + 65 = 110 px left of the gap and 95 right of it balance the row best.
+    expect(boxes.map((b) => b.x)).toEqual([124, 169, 246]);
   });
 
-  it('clamps the row to x 4–476 for servers near both edges', () => {
+  it('chooses the split that centres the row best, here one plate left of the gap', () => {
+    // The easy + medium pair (110 px) no longer fits left of a gap at x 94, so easy goes alone.
+    expect(layoutServeFar([5, 9, 14], 100).map((b) => b.x)).toEqual([53, 106, 175]);
+  });
+
+  it('puts the whole row on one side of the gap for a server near an edge', () => {
+    expect(layoutServeFar([5, 9, 14], 30).map((b) => b.x)).toEqual([36, 81, 150]);
+    expect(layoutServeFar([5, 9, 14], 450).map((b) => b.x)).toEqual([235, 280, 349]);
+  });
+
+  it('keeps the toss gap clear, easy to hard left to right, on screen for servers near both edges', () => {
     const bad = TRIPLES.flatMap((lens) =>
-      [0, 30, 240, 450, 480].flatMap((sx) =>
-        problems(layoutServeFar(lens, sx)).map((p) => `${lens.join('/')} server ${sx}: ${p}`),
-      ),
+      SERVER_XS.flatMap((sx) => {
+        const boxes = layoutServeFar(lens, sx);
+        const id = `${lens.join('/')} server ${sx}`;
+        const out = problems(boxes).map((p) => `${id}: ${p}`);
+        for (const b of boxes) {
+          if (b.y !== 22) out.push(`${id}: option ${b.option} outside the far band`);
+          if (b.x + b.w > sx - 6 && b.x < sx + 6) out.push(`${id}: option ${b.option} in the toss gap`);
+        }
+        boxes.slice(1).forEach((b, i) => {
+          if (b.x < boxes[i]!.x + boxes[i]!.w + 4) out.push(`${id}: option ${b.option} not 4+ px right of ${i}`);
+        });
+        return out;
+      }),
     );
     expect(bad).toEqual([]);
-    expect(layoutServeFar([5, 9, 14], 0)[0]!.x).toBe(4);
-    const row = layoutServeFar([5, 9, 14], 480);
-    expect(row[2]!.x + row[2]!.w).toBe(476);
+  });
+
+  it('rounds a fractional server outwards so the gap stays ≥ 12 px', () => {
+    const boxes = layoutServeFar([5, 9, 14], 240.5);
+    expect(boxes[1]!.x + boxes[1]!.w).toBe(234);
+    expect(boxes[2]!.x).toBe(247);
+  });
+
+  it('clamps the row to x 4–476 for a server off either side of the screen', () => {
+    const left = layoutServeFar([5, 9, 14], -50);
+    expect(problems(left)).toEqual([]);
+    expect(left.map((b) => b.x)).toEqual([4, 49, 118]);
+    const right = layoutServeFar([5, 9, 14], 530);
+    expect(problems(right)).toEqual([]);
+    expect(right[2]!.x + right[2]!.w).toBe(476);
   });
 
   it('rejects an empty row', () => {

@@ -9,12 +9,21 @@ export const BANDS: { hud: [0, 21]; far: [22, 38] } = { hud: [0, 21], far: [22, 
 
 /** Area every plate must stay inside (spec §4.2): x 4–476, y 22–266. */
 const AREA = { left: 4, right: 476, top: BANDS.far[0], bottom: 266 };
+const CENTRE_X = (AREA.left + AREA.right) / 2;
 const PLATE_H = 16;
 const SLOT_X = { left: 90, centre: 240, right: 390 };
 const HEAD_GAP = 4;
 const NEAR_BAND_GAP = 6;
-const STACK_GAP = 2;
+/** Gap between serve-stack plates: 3 px, so a pixel of court shows between two 1 px halos. */
+const STACK_GAP = 3;
 const ROW_GAP = 4;
+/**
+ * The tossed ball rises straight above the server's feet, through the column head x ± 6 px (R34):
+ * a near serve stack keeps its inner edge ≥ 8 px from the head, the far serve row leaves ≥ 6 px
+ * clear on each side of the server's x.
+ */
+const TOSS_CLEAR_NEAR = 8;
+const TOSS_CLEAR_FAR = 6;
 
 /** Left x that puts a `w`-wide box's centre column on `cx`, kept inside x 4–476. */
 function centredX(cx: number, w: number): number {
@@ -55,40 +64,67 @@ export function layoutChoice(lens: number[], targetsScreenX: number[], band: 'fa
 }
 
 /**
- * Serve plates of the near server (spec §4.2): a vertical stack, easy on top, 2 px gaps, its bottom
- * 4 px above the head top (`headX`, `headY`). The plates share one left edge, placed so the widest
- * is centred over the head; the stack is kept inside x 4–476 and below the HUD band. Throws on an
- * empty `lens`.
+ * Serve plates of the near server (spec §4.2, R34): a vertical stack, easy on top, 3 px gaps, beside
+ * the head (top at `headX`, `headY`) on the side toward the screen centre, which always has the more
+ * room; at exactly the centre it goes right. The plates share their inner edge, ≥ 8 px from `headX`
+ * so the toss column stays clear, and the stack's bottom is level with the head top. Kept inside
+ * x 4–476 and y 22–266. Throws on an empty `lens`.
  */
 export function layoutServeNear(lens: number[], headX: number, headY: number): PlateBox[] {
   if (lens.length === 0) throw new Error('layoutServeNear needs at least one word length');
-  const widest = Math.max(...lens.map((len) => plateWidth(len)));
-  const x = centredX(headX, widest);
   const stackH = lens.length * PLATE_H + (lens.length - 1) * STACK_GAP;
-  const top = aboveHead(headY, stackH);
-  return lens.map((len, option) => ({
-    x,
-    y: top + option * (PLATE_H + STACK_GAP),
-    w: plateWidth(len),
-    h: PLATE_H,
-    option,
-  }));
+  const top = clamp(Math.round(headY) - stackH, AREA.top, AREA.bottom - stackH);
+  const right = headX <= CENTRE_X;
+  const inner = right ? Math.ceil(headX + TOSS_CLEAR_NEAR) : Math.floor(headX - TOSS_CLEAR_NEAR);
+  return lens.map((len, option) => {
+    const w = plateWidth(len);
+    return {
+      x: clamp(right ? inner : inner - w, AREA.left, AREA.right - w),
+      y: top + option * (PLATE_H + STACK_GAP),
+      w,
+      h: PLATE_H,
+      option,
+    };
+  });
+}
+
+/** Width of plates `widths` laid side by side `ROW_GAP` px apart (0 for none). */
+function rowWidth(widths: number[]): number {
+  return widths.length === 0 ? 0 : widths.reduce((sum, w) => sum + w, 0) + (widths.length - 1) * ROW_GAP;
 }
 
 /**
- * Serve plates of the far server (spec §4.2): one row in the far prompt band, easy on the left,
- * 4 px gaps, centred on the server's screen x and clamped to x 4–476. Throws on an empty `lens`.
+ * Serve plates of the far server (spec §4.2, R34): one row in the far prompt band, easy to hard left
+ * to right, 4 px apart except for a gap over the server: the row splits so the plates before the
+ * split end ≥ 6 px left of `serverX` and the rest start ≥ 6 px right of it, keeping the toss column
+ * clear. Of the splits that fit x 4–476, the one whose two sides are closest in width wins (the row
+ * best centred on the server); when none fits (a server off screen), the one needing the smallest
+ * shift is moved inside x 4–476. Throws on an empty `lens`.
  */
 export function layoutServeFar(lens: number[], serverX: number): PlateBox[] {
   if (lens.length === 0) throw new Error('layoutServeFar needs at least one word length');
   const widths = lens.map((len) => plateWidth(len));
-  const rowW = widths.reduce((sum, w) => sum + w, 0) + (lens.length - 1) * ROW_GAP;
-  let x = centredX(serverX, rowW);
-  return widths.map((w, option) => {
-    const box = { x, y: BANDS.far[0], w, h: PLATE_H, option };
-    x += w + ROW_GAP;
-    return box;
-  });
+  const gapLeft = Math.floor(serverX - TOSS_CLEAR_FAR);
+  const gapRight = Math.ceil(serverX + TOSS_CLEAR_FAR);
+  let best = { xs: [] as number[], dx: Infinity, imbalance: Infinity };
+  for (let split = 0; split <= widths.length; split++) {
+    const leftW = rowWidth(widths.slice(0, split));
+    const xs: number[] = [];
+    let x = gapLeft - leftW;
+    widths.forEach((w, i) => {
+      if (i === split) x = gapRight;
+      xs.push(x);
+      x += w + ROW_GAP;
+    });
+    const lo = xs[0]!;
+    const rowW = xs.at(-1)! + widths.at(-1)! - lo;
+    const dx = clamp(lo, AREA.left, AREA.right - rowW) - lo;
+    const imbalance = Math.abs(leftW - rowWidth(widths.slice(split)));
+    const shift = Math.abs(dx);
+    const bestShift = Math.abs(best.dx);
+    if (shift < bestShift || (shift === bestShift && imbalance < best.imbalance)) best = { xs, dx, imbalance };
+  }
+  return best.xs.map((x, option) => ({ x: x + best.dx, y: BANDS.far[0], w: widths[option]!, h: PLATE_H, option }));
 }
 
 /**
