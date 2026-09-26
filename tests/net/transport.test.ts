@@ -132,13 +132,6 @@ describe('loopbackPair delivery', () => {
     expect(got).toEqual([{ type: 'clock', turn: 3, τ: 50 }]);
   });
 
-  it('reports nothing buffered locally', () => {
-    const s = new VirtualScheduler();
-    const [a] = loopbackPair(s, { latencyMs: 400, jitterMs: 0, seed: 1 });
-    for (let i = 0; i < 100; i++) a.send({ type: 'ping', id: i });
-    expect(a.bufferedAmount).toBe(0);
-  });
-
   it(`delivers a message of exactly MAX_SEND_BYTES (${MAX_SEND_BYTES}) UTF-8 bytes`, () => {
     const s = new VirtualScheduler();
     const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
@@ -203,6 +196,65 @@ describe('loopbackPair delivery', () => {
     { latencyMs: 0, jitterMs: Number.POSITIVE_INFINITY },
   ])('rejects a bad latency model %j', (opts) => {
     expect(() => loopbackPair(new VirtualScheduler(), { ...opts, seed: 1 })).toThrow(RangeError);
+  });
+});
+
+describe('loopbackPair bufferedAmount', () => {
+  const bytes = (m: NetMsg): number => utf8.encode(JSON.stringify(m)).byteLength;
+
+  it('is the UTF-8 bytes of the JSON of the messages still in flight, falling as each arrives', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 100, jitterMs: 0, seed: 1 });
+    const m0: NetMsg = { type: 'ping', id: 0 };
+    const m1: NetMsg = { type: 'hello', proto: 1, app: 'bbtennis', name: 'Zoë🎾', look: { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 } };
+    const m2: NetMsg = { type: 'clock', turn: 2, τ: 1500.25 };
+    expect(a.bufferedAmount).toBe(0);
+    a.send(m0);
+    s.advance(10);
+    a.send(m1);
+    s.advance(10);
+    a.send(m2);
+    expect(bytes(m1)).toBeGreaterThan(JSON.stringify(m1).length);
+    expect(a.bufferedAmount).toBe(bytes(m0) + bytes(m1) + bytes(m2));
+    expect(b.bufferedAmount).toBe(0);
+    s.advance(80);
+    expect(a.bufferedAmount).toBe(bytes(m1) + bytes(m2));
+    s.advance(10);
+    expect(a.bufferedAmount).toBe(bytes(m2));
+    s.advance(10);
+    expect(a.bufferedAmount).toBe(0);
+  });
+
+  it('tracks each direction on its own sending end', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 50, jitterMs: 20, seed: 3 });
+    for (let id = 0; id < 5; id++) a.send({ type: 'ping', id });
+    b.send({ type: 'pong', id: 1 });
+    expect(a.bufferedAmount).toBe(5 * bytes({ type: 'ping', id: 0 }));
+    expect(b.bufferedAmount).toBe(bytes({ type: 'pong', id: 1 }));
+    s.advance(70);
+    expect([a.bufferedAmount, b.bufferedAmount]).toEqual([0, 0]);
+  });
+
+  it('does not count a message dropped as too big', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = new VirtualScheduler();
+    const [a] = loopbackPair(s, { latencyMs: 50, jitterMs: 0, seed: 1 });
+    a.send(helloOfBytes(MAX_SEND_BYTES + 1));
+    expect(a.bufferedAmount).toBe(0);
+    a.send(helloOfBytes(MAX_SEND_BYTES));
+    expect(a.bufferedAmount).toBe(MAX_SEND_BYTES);
+  });
+
+  it('keeps counting messages sent before a close until they arrive, even at a closed receiver', () => {
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 50, jitterMs: 0, seed: 1 });
+    a.send({ type: 'leave' });
+    a.close();
+    b.close();
+    expect(a.bufferedAmount).toBe(bytes({ type: 'leave' }));
+    s.advance(50);
+    expect(a.bufferedAmount).toBe(0);
   });
 });
 

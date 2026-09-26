@@ -15,7 +15,10 @@ export interface Transport {
   onClose(cb: (reason: string) => void): void;
   /** Closes the channel after the messages already sent; idempotent. */
   close(): void;
-  /** Bytes queued locally that have not been handed to the network yet. */
+  /**
+   * Bytes sent that have not left yet: the data channel's send queue for PeerJS; for the loopback,
+   * the UTF-8 bytes of the JSON of this end's messages still in flight.
+   */
   readonly bufferedAmount: number;
 }
 
@@ -25,24 +28,30 @@ export interface LoopbackOptions { latencyMs: number; jitterMs: number; seed: nu
 /** Reason reported by `onClose` when the other side closed the channel. */
 export const REMOTE_CLOSED = 'closed';
 
-type Packet = { json: string } | 'close';
+type Packet = { json: string; bytes: number } | 'close';
+
+const utf8 = new TextEncoder();
 
 /** One end of a loopback pair; `peer` is the other end. */
 class LoopbackEnd implements Transport {
   peer: LoopbackEnd | null = null;
-  readonly bufferedAmount = 0;
   private closed = false;
   private readonly messageCbs: ((m: NetMsg) => void)[] = [];
   private readonly closeCbs: ((reason: string) => void)[] = [];
-  /** Packets travelling towards this end, in send order. */
+  /** Packets travelling towards this end, in send order, and the bytes of their messages. */
   private readonly inbound: Packet[] = [];
+  private inboundBytes = 0;
   private lastDue = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly s: Scheduler, private readonly delay: () => number) {}
 
+  get bufferedAmount(): number {
+    return this.peer?.inboundBytes ?? 0;
+  }
+
   send(msg: NetMsg): void {
     const json = encodeMsg(msg);
-    if (json !== null && !this.closed) this.peer?.enqueue({ json });
+    if (json !== null && !this.closed) this.peer?.enqueue({ json, bytes: utf8.encode(json).byteLength });
   }
 
   onMessage(cb: (m: NetMsg) => void): void {
@@ -65,13 +74,16 @@ class LoopbackEnd implements Transport {
     const due = Math.max(now + this.delay(), this.lastDue);
     this.lastDue = due;
     this.inbound.push(p);
+    if (p !== 'close') this.inboundBytes += p.bytes;
     this.s.after(due - now, () => this.deliverNext());
   }
 
   /** Delivers the oldest packet in flight, so order holds whatever order the timers fire in. */
   private deliverNext(): void {
     const p = this.inbound.shift();
-    if (p === undefined || this.closed) return;
+    if (p === undefined) return;
+    if (p !== 'close') this.inboundBytes -= p.bytes;
+    if (this.closed) return;
     if (p === 'close') {
       this.closed = true;
       for (const cb of this.closeCbs) cb(REMOTE_CLOSED);
