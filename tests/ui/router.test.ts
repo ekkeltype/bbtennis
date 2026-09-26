@@ -31,6 +31,11 @@ function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   return e;
 }
 
+/** Dispatches a bubbling pointer event of `type` at client position (x, y) on `target`. */
+function pointer(type: 'pointerover' | 'pointermove', target: Element, x: number, y: number, init: PointerEventInit = {}): void {
+  target.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y, ...init }));
+}
+
 const shown = (): string | undefined => root.querySelector<HTMLElement>('[data-screen]')?.dataset['screen'];
 const focused = (): string | null | undefined => document.activeElement?.textContent;
 
@@ -249,9 +254,10 @@ describe('Router keys', () => {
     arrow.tabIndex = -1;
     row.append(arrow);
     el.append(row);
-    el.querySelectorAll('button')[2]!.dispatchEvent(new Event('pointerover', { bubbles: true }));
+    const b2 = el.querySelectorAll('button')[2]!;
+    pointer('pointermove', b2, 10, 10, { movementX: 4 });
     expect(focused()).toBe('b2');
-    arrow.dispatchEvent(new Event('pointerover', { bubbles: true }));
+    pointer('pointerover', arrow, 10, 40);
     expect(document.activeElement).toBe(row);
   });
 
@@ -260,11 +266,112 @@ describe('Router keys', () => {
     const input = document.createElement('input');
     el.prepend(input);
     input.focus();
-    el.querySelectorAll('button')[1]!.dispatchEvent(new Event('pointerover', { bubbles: true }));
+    const b1 = el.querySelectorAll('button')[1]!;
+    pointer('pointermove', b1, 10, 10, { movementX: 4 });
+    pointer('pointerover', b1, 10, 10);
     expect(document.activeElement).toBe(input);
     input.blur();
-    el.querySelectorAll('button')[1]!.dispatchEvent(new Event('pointerover', { bubbles: true }));
+    pointer('pointerover', b1, 10, 10);
     expect(focused()).toBe('b1');
+  });
+});
+
+describe('Router hover needs a pointer that has moved since the screen appeared', () => {
+  const button = (label: string): HTMLButtonElement => [...root.querySelectorAll('button')].find((b) => b.textContent === label)!;
+
+  beforeEach(() => {
+    router.register('a', screen('a', 3).factory);
+    router.register('b', screen('b', 3).factory);
+  });
+
+  it("a pointerover under a pointer that has not moved (the new screen laid out under it) keeps the screen's own focus", () => {
+    router.go('b');
+    pointer('pointerover', button('b2'), 50, 50);
+    expect(focused()).toBe('b0');
+  });
+
+  it('a real move focuses the stop under the pointer, and hover goes on working from then on', () => {
+    router.go('b');
+    pointer('pointermove', button('b2'), 50, 50, { movementX: 3, movementY: 1 });
+    expect(focused()).toBe('b2');
+    pointer('pointerover', button('b1'), 50, 30);
+    expect(focused()).toBe('b1');
+  });
+
+  it('every new screen starts over: its first pointerover waits for a move', () => {
+    router.go('a');
+    pointer('pointermove', button('a1'), 50, 50, { movementX: 3 });
+    expect(focused()).toBe('a1');
+    router.go('b');
+    pointer('pointerover', button('b1'), 50, 50);
+    expect(focused()).toBe('b0');
+  });
+
+  it('a pointermove at the position it last had (a move the browser makes up after a layout change) is no movement', () => {
+    router.go('a');
+    pointer('pointermove', button('a1'), 50, 50, { movementX: 3 });
+    router.go('b');
+    pointer('pointermove', button('b1'), 50, 50);
+    pointer('pointerover', button('b1'), 50, 50);
+    expect(focused()).toBe('b0');
+    pointer('pointermove', button('b1'), 51, 50, { movementX: 1 });
+    expect(focused()).toBe('b1');
+  });
+
+  it("the page's first pointermove counts as a move only when it reports a movement", () => {
+    router.go('b');
+    pointer('pointermove', button('b2'), 50, 50);
+    expect(focused()).toBe('b0');
+    pointer('pointermove', button('b2'), 50, 52);
+    expect(focused()).toBe('b2');
+  });
+
+  it('stops listening to the pointer after dispose', () => {
+    router.go('b');
+    router.dispose();
+    pointer('pointermove', button('b2'), 50, 50, { movementX: 3 });
+    pointer('pointerover', button('b2'), 50, 50);
+    expect(focused()).toBe('b0');
+  });
+});
+
+describe('Router keys (continued)', () => {
+  beforeEach(() => {
+    router.register('a', screen('a', 3).factory);
+    router.register('b', screen('b', 3).factory);
+    router.go('a');
+    router.go('b');
+  });
+
+  it.each([' ', 'PageUp', 'PageDown', 'Home', 'End'])(
+    'swallows %j when the focus is off the screen (a click on a bare panel left it on the game root), so an embedding page never scrolls',
+    (key) => {
+      const app = document.createElement('div');
+      app.tabIndex = -1;
+      document.body.append(app);
+      app.focus();
+      expect(press(key).defaultPrevented).toBe(true);
+      app.blur();
+      expect(press(key).defaultPrevented).toBe(true);
+      expect(router.current).toBe('b');
+    },
+  );
+
+  it('leaves Space to a focused button and Space, Home and End to a focused text field', () => {
+    expect(focused()).toBe('b0');
+    expect(press(' ').defaultPrevented).toBe(false);
+    const input = document.createElement('input');
+    root.querySelector('[data-screen="b"]')!.prepend(input);
+    input.focus();
+    for (const key of [' ', 'Home', 'End']) expect(press(key).defaultPrevented).toBe(false);
+  });
+
+  it('swallows the page-scrolling keys a focused row did not use', () => {
+    const row = document.createElement('div');
+    row.tabIndex = 0;
+    root.querySelector('[data-screen="b"]')!.append(row);
+    row.focus();
+    for (const key of ['PageDown', 'End', ' ']) expect(press(key).defaultPrevented).toBe(true);
   });
 
   it('stops handling keys after dispose', () => {
