@@ -21,9 +21,9 @@ const sameLook = (a: Look, b: Look): boolean => LOOK_KEYS.every((k) => a[k] === 
 
 /**
  * Draws the match (spec §4.1–§4.3) into the screen's 480×270 buffer and presents it. Layers:
- * backdrop → court → net → shadows → players/ball and ground rings (depth-sorted) → effects (shaken
- * together on an ACE/WINNER) → leaders and markers → plates → HUD → banners. Players wear the looks given to `setLooks`, else their
- * own from the match state.
+ * backdrop → court → net → shadows → leaders (R42) → players/ball and ground rings (depth-sorted) →
+ * effects (all shaken together on an ACE/WINNER) → plates and markers → HUD → banners. Players wear
+ * the looks given to `setLooks`, else their own from the match state.
  */
 export class Renderer {
   private readonly screen: Screen;
@@ -70,7 +70,7 @@ export class Renderer {
       g.translate(shake.x, shake.y);
     }
     const sheets = this.sheetsFor(looks);
-    drawWorld(g, f, { poses, ball, rings: prompts.rings, sheets, effects: this.effects, clockMs: this.clockMs });
+    drawWorld(g, f, { poses, ball, rings: prompts.rings, leaders: prompts.leaders, sheets, effects: this.effects, clockMs: this.clockMs });
     g.restore();
     drawPrompts(g, prompts);
     this.hud.draw(g, f, prefs);

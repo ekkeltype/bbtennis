@@ -15,7 +15,7 @@ import { drawText, textWidth } from './font';
 import { beltColor } from './hud';
 import { layoutChoice, layoutServeFar, layoutServeNear, layoutSingle, type PlateBox } from './layout';
 import { OUTLINE, PAL } from './palette';
-import { drawLeader, drawPlate, drawTimingBar, type PlateDraw, type PlateStyle } from './plates';
+import { drawPlate, drawTimingBar, type PlateDraw, type PlateStyle } from './plates';
 import type { PlayerPose } from './players';
 import { createLayer, type Layer } from './screen';
 import { CELL, type View } from './sprites/animations';
@@ -46,7 +46,7 @@ export function headHeight(look: Look, view: View): number {
 
 /** A ground ring at screen (x, y); `alpha` 0–1. The world pass draws it, depth-sorted with the players (R33). */
 export interface RingMark { tier: Tier; x: number; y: number; alpha: number }
-/** A leader from a plate's bottom edge to its ring centre. */
+/** A leader from a plate's bottom edge to its ring centre; the world pass draws it under the players (R42). */
 export interface LeaderMark { from: { x: number; y: number }; to: { x: number; y: number }; tier: Tier; alpha: number }
 /** The local typist's timing bar: remaining share `frac`, checker in the grace window. */
 export interface BarMark { x: number; y: number; w: number; frac: number; grace: boolean }
@@ -80,6 +80,11 @@ export interface PromptOptions {
 
 /** How long unlocked options take to fade out after a lock. */
 const OPTION_FADE_MS = 200;
+/**
+ * How long a completed chase plate takes to fade out, and with it the opponent's revealed serve plate
+ * (the same word), so neither meets the choice row that appears at once (R42: within 150 ms).
+ */
+const CHASE_FADE_MS = 100;
 /** Gap between a plate's bottom and its timing bar. */
 const BAR_GAP = 2;
 /** The reveal flip: 4 steps of 50 ms, the revealed plate then holds until 700 ms and fades by 900 ms. */
@@ -204,6 +209,11 @@ function fadeOf(c: Ctx, count: number, i: number): number {
   return c.s.plates[c.s.plates.length - count + i]?.faded ?? 0;
 }
 
+/** Share 0–1 of a `CHASE_FADE_MS` fade at τ that started at `from` (0 while `from` is null). */
+function chaseFade(τ: number, from: number | null): number {
+  return from === null ? 0 : clamp((τ - from) / CHASE_FADE_MS, 0, 1);
+}
+
 function barUnder(boxes: PlateBox[], frac: number, grace: boolean): BarMark {
   const x = Math.min(...boxes.map((b) => b.x));
   const right = Math.max(...boxes.map((b) => b.x + b.w));
@@ -244,7 +254,10 @@ function contactShare(v: TurnView, d: ReturnTurnData, fromSim: number): { frac: 
   return { frac: (T + grace - v.simτ) / Math.max(1, grace), grace: true };
 }
 
+/** The chase plate, fading out once its word is complete; the local typist's timing bar and pop until then. */
 function chasePlate(c: Ctx, d: ReturnTurnData, chase: PromptView, style: PlateStyle): void {
+  const faded = chaseFade(c.f.τ, chase.completedAt);
+  if (faded >= 1) return;
   const owner = d.owner;
   const head = headAt(c, owner, c.o.turnStart[owner]);
   const scale = c.o.prefs.largeWords ? 2 : 1;
@@ -256,6 +269,7 @@ function chasePlate(c: Ctx, d: ReturnTurnData, chase: PromptView, style: PlateSt
     plate(c, box, opt, style, {
       typed: chase.typed,
       locked: true,
+      faded,
       lastWrongAgeMs: chase.lastWrongAt === null ? null : c.f.τ - chase.lastWrongAt,
       isNextCursor: local,
       nameChip: chip?.name ?? null,
@@ -263,7 +277,7 @@ function chasePlate(c: Ctx, d: ReturnTurnData, chase: PromptView, style: PlateSt
       scale,
     }),
   );
-  if (!local) return;
+  if (!local || chase.completedAt !== null) return;
   const share = contactShare(c.v, d, 0);
   c.s.bar = barUnder([box], share.frac, share.grace);
   if (c.o.pop) c.s.pops.push(box);
@@ -299,8 +313,8 @@ function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: Plat
 
 /**
  * The opponent's hidden serve plate turning over as the return turn begins (spec §4.2): a 4-step
- * flip to the struck word (the chase word), which then holds and fades. Only for a viewer who saw
- * the serve words hidden.
+ * flip to the struck word (the chase word), which then holds and fades, or fades at once when the
+ * chase word is complete (R42). Only for a viewer who saw the serve words hidden.
  */
 function revealServe(c: Ctx, d: ReturnTurnData): void {
   const last = c.f.last?.turn;
@@ -310,6 +324,9 @@ function revealServe(c: Ctx, d: ReturnTurnData): void {
   const τ = c.f.τ;
   if (c.f.local === null || c.f.local === server || !prompt || τ >= REVEAL_HOLD_MS + REVEAL_FADE_MS) return;
   if (!prompt.options.some((o) => o.hidden)) return;
+  const chaseDone = c.v.prompts.find((p) => p.kind === 'chase')?.completedAt ?? null;
+  const ending = chaseFade(τ, chaseDone);
+  if (ending >= 1) return;
   const option = last.outcome.strike.option;
   const lens = prompt.options.map((o) => o.len);
   const head = headAt(c, server, c.o.turnStart[server]);
@@ -319,12 +336,12 @@ function revealServe(c: Ctx, d: ReturnTurnData): void {
   const chip = chipOf(c, server, 'remote');
   const common: Partial<PlateDraw> = { typed: word.len, locked: true, nameChip: chip?.name ?? null, oppColor: chip?.color ?? null };
   const revealed = plate(c, box, word, 'remote', common);
-  if (τ < FLIP_STEP_MS * FLIP_STEPS) {
+  if (τ < FLIP_STEP_MS * FLIP_STEPS && chaseDone === null) {
     const back: WordOption = { word: '', len: word.len, tier: word.tier, hidden: true };
     c.s.flip = { hidden: plate(c, box, back, 'hiddenRemote', common), revealed, step: Math.floor(τ / FLIP_STEP_MS) };
     return;
   }
-  c.s.plates.push({ ...revealed, faded: clamp((τ - REVEAL_HOLD_MS) / REVEAL_FADE_MS, 0, 1) });
+  c.s.plates.push({ ...revealed, faded: Math.max(ending, clamp((τ - REVEAL_HOLD_MS) / REVEAL_FADE_MS, 0, 1)) });
 }
 
 function returnPrompts(c: Ctx, d: ReturnTurnData): void {
@@ -333,7 +350,7 @@ function returnPrompts(c: Ctx, d: ReturnTurnData): void {
   if (v.outcome) return;
   const [chase, choice] = v.prompts;
   const style = styleFor(c.f, d.owner, chase?.options ?? []);
-  if (chase && v.phase === 'chase') chasePlate(c, d, chase, style);
+  if (chase) chasePlate(c, d, chase, style);
   if (choice && (v.phase === 'choice' || v.phase === 'queued')) choicePlates(c, d, choice, style);
 }
 
@@ -356,9 +373,9 @@ function playerTags(c: Ctx): void {
 /**
  * What the prompt layer shows this frame (spec §4.2), or nothing while paused or counting down:
  * serve words (local-active stack, the opponent's hidden plates, spectators' remote plates) with
- * their box markers; the chase plate above the owner's turn-start head; the choice row in the band of
- * the targeted half with rings and leaders; the local timing bar; the serve reveal flip; the border
- * pop; the WAIT tag, SPACE keycap and first-letter hint.
+ * their box markers; the chase plate above the owner's turn-start head (fading out once complete);
+ * the choice row in the band of the targeted half with rings and leaders; the local timing bar; the
+ * serve reveal flip; the border pop; the WAIT tag, SPACE keycap and first-letter hint.
  */
 export function promptScene(f: WorldFrame, poses: readonly [PlayerPose, PlayerPose], o: PromptOptions): PromptScene {
   const s: PromptScene = { plates: [], rings: [], leaders: [], bar: null, flip: null, pops: [], tags: [] };
@@ -417,20 +434,17 @@ function drawTags(ctx: CanvasRenderingContext2D, tags: TagMark[]): void {
 
 const PLATE_FILL = PAL.night;
 
+/** Plate draw order: fading plates at the bottom, then unlocked options, the locked word on top. */
+const plateLayer = (p: PlateDraw): number => (p.faded > 0 ? 0 : p.locked ? 2 : 1);
+
 /**
- * Draws the prompt layer over the world: leaders, plates (faded and unlocked first, locked last), the
- * timing bar, the reveal flip, the 2-frame white border pop and the tags. The ground rings are not
- * drawn here: `drawWorld` depth-sorts them with the players (R33).
+ * Draws the prompt layer over the world: plates (fading ones first, then unlocked options, the locked
+ * word last), the timing bar, the reveal flip, the 2-frame white border pop and the tags. The ground
+ * rings and leaders are not drawn here: `drawWorld` depth-sorts the rings with the players and draws
+ * the leaders under them (R33, R42).
  */
 export function drawPrompts(ctx: CanvasRenderingContext2D, s: PromptScene): void {
-  ctx.save();
-  for (const l of s.leaders) {
-    ctx.globalAlpha = l.alpha;
-    if (l.alpha > 0) drawLeader(ctx, l.from, l.to, l.tier);
-  }
-  ctx.restore();
-  for (const p of s.plates) if (!p.locked) drawPlate(ctx, p);
-  for (const p of s.plates) if (p.locked) drawPlate(ctx, p);
+  for (const p of [...s.plates].sort((a, b) => plateLayer(a) - plateLayer(b))) drawPlate(ctx, p);
   if (s.bar) drawTimingBar(ctx, s.bar.x, s.bar.y, s.bar.w, s.bar.frac, s.bar.grace);
   if (s.flip) drawFlip(ctx, s.flip);
   for (const b of s.pops) {

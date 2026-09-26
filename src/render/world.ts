@@ -4,10 +4,10 @@ import { drawBall, drawBallShadow, type BallView } from './ball';
 import { checker, drawCourt } from './court';
 import type { Effects } from './effects';
 import { OUTLINE, PAL } from './palette';
-import { drawTierRing } from './plates';
+import { drawLeader, drawTierRing } from './plates';
 import type { PlayerPose } from './players';
 import { netScreenY, project, viewerEnd } from './projection';
-import type { RingMark } from './prompts';
+import type { LeaderMark, RingMark } from './prompts';
 import { drawBackdrop, drawNet, drawUmpire, type SceneState } from './scene';
 import { drawPlayer, type SpriteSheet } from './sprites/sheet';
 
@@ -67,16 +67,19 @@ export function groundAt(f: WorldFrame, p: Vec2): { x: number; y: number } {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Scene and actors: backdrop → court → net → shadows → players/ball and ground rings → effects (spec §4.1).
+// Scene and actors: backdrop → court → net → shadows → leaders → players/ball and ground rings → effects
+// (spec §4.1, R33, R42).
 
 /**
  * What `drawWorld` paints on top of the scene: poses, ball, the prompt layer's ground rings (depth-sorted
- * with the players, R33), the players' sheets, effects and the scene clock.
+ * with the players, R33) and leaders (under the players, R42), the players' sheets, effects and the
+ * scene clock.
  */
 export interface WorldActors {
   poses: readonly [PlayerPose, PlayerPose];
   ball: BallView | null;
   rings: readonly RingMark[];
+  leaders: readonly LeaderMark[];
   sheets: readonly [SpriteSheet, SpriteSheet];
   effects: Effects;
   clockMs: number;
@@ -140,6 +143,17 @@ function drawRing(ctx: CanvasRenderingContext2D, r: RingMark): void {
   ctx.restore();
 }
 
+/** The choice leaders at their opacity; fully faded ones are skipped. */
+function drawLeaders(ctx: CanvasRenderingContext2D, leaders: readonly LeaderMark[]): void {
+  for (const l of leaders) {
+    if (l.alpha <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = l.alpha;
+    drawLeader(ctx, l.from, l.to, l.tier);
+    ctx.restore();
+  }
+}
+
 /**
  * Players, the ball and the ground rings, far to near by their ground row (spec §4.1, R33): a player
  * whose feet are nearer the camera than a ring occludes it. A held ball goes on its holder.
@@ -165,7 +179,8 @@ function drawActors(ctx: CanvasRenderingContext2D, f: WorldFrame, a: WorldActors
 
 /**
  * Paints the world layers (spec §4.1): stadium, court, net and the umpire's chair, then shadows (clay
- * marks, the local player's pulsing ring, player and ball shadows), the players, the ball and the
+ * marks, the local player's pulsing ring, player and ball shadows), the choice leaders (above the net,
+ * under the players so a player occludes a leader crossing them, R42), the players, the ball and the
  * ground rings depth-sorted far to near, and the effects.
  */
 export function drawWorld(ctx: CanvasRenderingContext2D, f: WorldFrame, a: WorldActors): void {
@@ -185,6 +200,7 @@ export function drawWorld(ctx: CanvasRenderingContext2D, f: WorldFrame, a: World
   }
   for (const p of a.poses) drawShadow(ctx, groundAt(f, p.feet));
   if (a.ball) drawBallShadow(ctx, a.ball, viewer);
+  drawLeaders(ctx, a.leaders);
   drawActors(ctx, f, a);
   a.effects.draw(ctx, viewer);
 }

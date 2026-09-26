@@ -16,7 +16,7 @@ import type {
 import { textWidth } from '../../src/render/font';
 import { beltColor } from '../../src/render/hud';
 import { BANDS, layoutServeNear } from '../../src/render/layout';
-import { TIER_COLOR } from '../../src/render/palette';
+import type { PlateDraw } from '../../src/render/plates';
 import { PlayerAnimator, type PlayerPose } from '../../src/render/players';
 import { project } from '../../src/render/projection';
 import { drawPrompts, headHeight, promptScene, type PromptScene } from '../../src/render/prompts';
@@ -237,6 +237,40 @@ describe('promptScene', () => {
     expect(locked.bar).toMatchObject({ x: box.x, w: box.w });
   });
 
+  it('fades the unchosen options with their rings and leaders out fully within 200 ms of the lock', () => {
+    const t = createTurn(returnData());
+    startTurn(t);
+    typeWord(t, 'ball', 100);
+    turnInput(t, 'v', 600);
+    turnClock(t, 800);
+    for (const τ of [800, 1000]) {
+      const s = scene(view(matchState(t), τ, 1));
+      const shown = s.plates.filter((p) => p.faded < 1).map((p) => p.opt.word);
+      expect(shown, `τ ${τ}`).toEqual(['volley']);
+      expect(s.rings.filter((r) => r.alpha > 0)).toHaveLength(1);
+      expect(s.leaders.filter((l) => l.alpha > 0)).toHaveLength(1);
+      expect(s.rings.every((r) => r.alpha === 0 || r.alpha === 1)).toBe(true);
+    }
+  });
+
+  it('fades the completed chase plate out within 100 ms, its timing bar moving to the choice row', () => {
+    const t = createTurn(returnData());
+    startTurn(t);
+    const done = typeWord(t, 'ball', 100);
+    turnClock(t, done + 100);
+    const chaseAt = (τ: number): { chase: PlateDraw | undefined; s: PromptScene } => {
+      const s = scene(view(matchState(t), τ, 1));
+      return { chase: s.plates.find((p) => p.opt.word === 'ball' && p.faded < 1), s };
+    };
+    expect(chaseAt(done - 50).chase).toMatchObject({ typed: 3, faded: 0 });
+    const fading = chaseAt(done + 50);
+    expect(fading.chase).toMatchObject({ typed: 4, faded: 0.5, style: 'localActive' });
+    const row = fading.s.plates.filter((p) => CHOICE.includes(p.opt.word)).map((p) => p.box);
+    expect(row).toHaveLength(3);
+    expect(fading.s.bar).toMatchObject({ x: Math.min(...row.map((b) => b.x)) });
+    expect(chaseAt(done + 100).chase).toBeUndefined();
+  });
+
   it('puts the choice in the near band when the targets are on the viewer\'s half', () => {
     const t = createTurn(returnData());
     startTurn(t);
@@ -277,6 +311,17 @@ describe('promptScene', () => {
     expect(after.flip).toBeNull();
     expect(after.plates.map((p) => [p.opt.word, p.style])).toContainEqual(['ball', 'remote']);
     expect(scene(view(matchState(ret, serve), 0, 'spectator')).flip).toBeNull();
+  });
+
+  it('ends the revealed serve plate within 100 ms of the chase word, so it never meets the choice row', () => {
+    const { serve, ret } = servedBall();
+    const done = typeWord(ret, 'ball', 100);
+    turnClock(ret, done + 100);
+    const revealed = (τ: number): PlateDraw | undefined =>
+      scene(view(matchState(ret, redactServe(serve)), τ, 1)).plates.find((p) => p.style === 'remote' && p.faded < 1);
+    expect(revealed(done - 50)).toMatchObject({ opt: { word: 'ball' }, faded: 0, nameChip: 'Alex' });
+    expect(revealed(done + 50)).toMatchObject({ opt: { word: 'ball' }, faded: 0.5 });
+    expect(revealed(done + 100)).toBeUndefined();
   });
 
   it('labels the first choice row "type a first letter" under the row, clear of the far player', () => {
@@ -346,17 +391,35 @@ function recordingContext(): { ctx: CanvasRenderingContext2D; rects: { x: number
 describe('drawPrompts', () => {
   const empty = (): PromptScene => ({ plates: [], rings: [], leaders: [], bar: null, flip: null, pops: [], tags: [] });
 
-  it('leaves the ground rings to the depth-sorted world pass and keeps the leaders on top (R33)', () => {
+  it('leaves the ground rings and the leaders to the world pass, which draws them under the players (R33, R42)', () => {
     const ring = { tier: 'hard' as const, x: 200, y: 180, alpha: 1 };
-    const { ctx, rects } = recordingContext();
-    drawPrompts(ctx, { ...empty(), rings: [ring] });
-    expect(rects).toEqual([]);
     const leader = { from: { x: 150, y: 150 }, to: { x: ring.x, y: ring.y }, tier: ring.tier, alpha: 1 };
+    const { ctx, rects } = recordingContext();
     drawPrompts(ctx, { ...empty(), rings: [ring], leaders: [leader] });
-    const alone = recordingContext();
-    drawPrompts(alone.ctx, { ...empty(), leaders: [leader] });
-    expect(alone.rects.filter((r) => r.style === TIER_COLOR.hard).length).toBeGreaterThan(20);
-    // Exactly the leader's pixels: nothing of the ring.
-    expect(rects).toEqual(alone.rects);
+    expect(rects).toEqual([]);
+  });
+
+  it('draws fading plates first, under the unlocked options, and the locked word last', () => {
+    const plate = (x: number, locked: boolean, faded: number): PlateDraw => ({
+      box: { x, y: 40, w: 35, h: 16, option: 0 },
+      opt: { word: '', len: 4, tier: 'easy', hidden: true },
+      typed: 0,
+      locked,
+      faded,
+      style: 'hiddenRemote',
+      lastWrongAgeMs: null,
+      isNextCursor: false,
+      showInitialBlock: false,
+      nameChip: null,
+      oppColor: null,
+      scale: 1,
+      reduceEffects: false,
+    });
+    const { ctx, rects } = recordingContext();
+    drawPrompts(ctx, { ...empty(), plates: [plate(200, true, 0), plate(100, false, 0), plate(10, true, 0.5)] });
+    const first = (x: number): number => rects.findIndex((r) => r.x >= x && r.x < x + 35);
+    expect(first(10)).toBeGreaterThanOrEqual(0);
+    expect(first(10)).toBeLessThan(first(100));
+    expect(first(100)).toBeLessThan(first(200));
   });
 });

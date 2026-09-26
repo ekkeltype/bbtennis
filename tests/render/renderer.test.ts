@@ -22,7 +22,7 @@ import { Effects } from '../../src/render/effects';
 import { TIER_COLOR } from '../../src/render/palette';
 import { PlayerAnimator, type PlayerPose } from '../../src/render/players';
 import { project } from '../../src/render/projection';
-import type { RingMark } from '../../src/render/prompts';
+import type { LeaderMark, RingMark } from '../../src/render/prompts';
 import { PAUSE_ICON_RECT, Renderer } from '../../src/render/renderer';
 import type { Screen } from '../../src/render/screen';
 import type { SpriteSheet } from '../../src/render/sprites/sheet';
@@ -143,8 +143,8 @@ describe('drawWorld', () => {
   beforeEach(() => vi.stubGlobal('OffscreenCanvas', FakeCanvas));
   afterEach(() => vi.unstubAllGlobals());
 
-  /** Paints the world for viewer 0 with player 0 (near) and player 1 (far) standing at `feet` and `rings` on the ground. */
-  function paint(feet: [Vec2, Vec2], rings: RingMark[]): { ops: Op[]; sheets: [SpriteSheet, SpriteSheet] } {
+  /** Paints the world for viewer 0 with player 0 (near) and player 1 (far) standing at `feet`, `rings` on the ground and `leaders`. */
+  function paint(feet: [Vec2, Vec2], rings: RingMark[], leaders: LeaderMark[] = []): { ops: Op[]; sheets: [SpriteSheet, SpriteSheet] } {
     const t = createTurn(serveData());
     startTurn(t);
     turnClock(t, 2600);
@@ -153,7 +153,7 @@ describe('drawWorld', () => {
     const sheets: [SpriteSheet, SpriteSheet] = [sheet(), sheet()];
     const pose = (p: PlayerId): PlayerPose => ({ feet: feet[p], anim: 'idle', frame: 0, view: p === 0 ? 'near' : 'far', flip: false });
     const { ctx, ops } = opLog();
-    drawWorld(ctx, f, { poses: [pose(0), pose(1)], ball: null, rings, sheets, effects: new Effects(), clockMs: 0 });
+    drawWorld(ctx, f, { poses: [pose(0), pose(1)], ball: null, rings, leaders, sheets, effects: new Effects(), clockMs: 0 });
     return { ops, sheets };
   }
 
@@ -186,6 +186,25 @@ describe('drawWorld', () => {
     expect(firstRingPixel(ops, front)).toBeLessThan(nearSprite);
     expect(firstRingPixel(ops, front)).toBeGreaterThan(farSprite);
     expect(firstRingPixel(ops, behind)).toBeGreaterThan(nearSprite);
+  });
+
+  it('draws the leaders before the players, so a player standing on a leader occludes it (R42)', () => {
+    const near = serverSpot(0, 'deuce');
+    const far = receiverSpot(1, 'deuce');
+    const feet = project({ ...far, z: 0 }, 0);
+    // From the far prompt band straight down through the far player to a ring 3 m inside the baseline.
+    const ring = project({ x: far.x, y: far.y + 3, z: 0 }, 0);
+    const leader: LeaderMark = { from: { x: feet.x, y: 38 }, to: { x: ring.x, y: ring.y }, tier: 'easy', alpha: 1 };
+    const faded: LeaderMark = { ...leader, from: { x: feet.x + 60, y: 38 }, to: { x: ring.x + 60, y: ring.y }, alpha: 0 };
+    const { ops, sheets } = paint([near, far], [], [leader, faded]);
+    const leaderPixels = ops.filter((o) => o.name === 'fillRect' && o.style === TIER_COLOR.easy);
+    expect(leaderPixels.length).toBeGreaterThan(20);
+    // Only the shown leader: the faded one, 60 px to the right, is skipped.
+    const [left, right] = [Math.min(feet.x, ring.x) - 1, Math.max(feet.x, ring.x) + 1];
+    expect(leaderPixels.every((o) => Number(o.args[0]) >= left && Number(o.args[0]) <= right && o.alpha === 1)).toBe(true);
+    const lastLeaderPixel = ops.lastIndexOf(leaderPixels.at(-1)!);
+    expect(lastLeaderPixel).toBeLessThan(spriteOf(ops, sheets[1]));
+    expect(lastLeaderPixel).toBeLessThan(spriteOf(ops, sheets[0]));
   });
 
   it('skips fully faded rings and paints the others at their opacity', () => {
