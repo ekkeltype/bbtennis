@@ -26,6 +26,7 @@ Success criteria:
 | Stack | **TypeScript + Vite + Vitest**, static build. |
 | Modes | **vs CPU** and **online host/join** (+ Training, an onboarding mode vs a scripted CPU). No same-keyboard 2P. |
 | Hosting | One build works on GitHub Pages (auto-deploy) and itch.io (zip). Trade-offs in §8. |
+| Online timing | **Turn-based, no lag compensation.** Every turn is timed on the acting player's own machine, starting when the turn's state is on their screen. The passive player watches a slightly delayed playback, with the hand-off gap hidden by a subtle slow-motion as the ball leaves the racket (§5.3). |
 
 ### 1.2 Assumptions (ours, not in design.txt)
 - Exactly one player types at any moment; turns alternate.
@@ -60,7 +61,17 @@ Success criteria:
 - Nothing about positions/distances/surface affects outcomes; gameplay depends only on §3.4–3.6.
 - No position is ever more than 1.2 m behind a baseline or beyond |x| = 5.8.
 
-### 3.1 State machine
+### 3.1 Turns and state machine
+A **turn** is a span in which exactly one player (the **owner**) can act, and all of its times are
+measured on a single **turn clock τ** (ms, starting at 0) that belongs to the owner (§5.3):
+- **Serve turn** (owner = server): lead-in (INTRO coin toss, or the preceding FAULT_CALL /
+  POINT_CALL banner) → PRE_SERVE → TOSS (→ CATCH → PRE_SERVE …) until the serve is struck or a
+  fault is decided in the server's turn (ball dropped, time violation).
+- **Return turn** (owner = receiver): from the strike (τ = 0 when the ball leaves the opponent's
+  racket) until the receiver's own strike, the ball passing (miss), or an OUT/NET call.
+- The next turn begins, for its owner, at the end moment of the previous turn. Every deadline in
+  this spec (serve clock, tooLow, contact T, grace, call times) is expressed in the turn's τ.
+
 | State | Entry / behaviour | Exits |
 |---|---|---|
 | INTRO | Coin toss, 2.5 s, not skippable (§3.7). | → PRE_SERVE(serveNo=1) |
@@ -105,30 +116,30 @@ Keys from a player who is not the active typist are always dropped: never errors
      `(1.00, 5.40)` if hard is wide.
    World mapping for receiver sign `s_r` and side σ: `x = s_r·σ·a`, `y = −s_r·b`.
 
-### 3.3 Rally leg (after every strike at time t0)
+### 3.3 Return turn (τ = 0 when the ball leaves the striker's racket)
 1. Every strike — including one already resolved as OUT or NET — immediately starts the
    receiver's **CHASE** prompt (single prompt = the striker's exact word), so outcomes are never
    revealed early. For a serve, the chase word becomes visible to the receiver only at this moment.
 2. Typing the chase word moves the receiver: `feetTarget = lerp(start, inPosition,
    easeOutQuad(correctKeys/len))`; the sprite moves toward it at up to 7 m/s (§3.4 geometry).
 3. When the chase word completes, the **CHOICE** prompt appears (its words and targets were
-   pre-picked at t0): three words on the **opponent's half**, visible to both players with live
+   pre-picked with the return turn's start data): three words on the **opponent's half**, visible to both players with live
    typing progress (§4.2 layout). Targets are on the destination half, with `a` = lateral offset
    positive toward the destination player's right and `b` = distance from the net; world
    `x = s_dest·a`, `y = −s_dest·b`; `m = ±1` random:
    - easy `(0, 8.885)` (3.0 m inside the baseline)
    - medium `(m·2.865, 9.385)` (1.25 m inside the sideline, 2.5 m inside the baseline)
    - hard `(−m·3.615, 11.385)` (0.5 m inside the sideline and the baseline; opposite side to medium)
-4. The ball reaches the receiver's contact point at `t0 + T` (§3.4).
-   - Both words completed before `t0 + T` → **QUEUED**: the shot is resolved immediately
-     (§3.5) and published; its trajectory starts at `t0 + T` (the swing happens when the ball
-     arrives; no volleys, no early swings).
-   - Completed in `(t0 + T, t0 + T + grace]` → **stretch shot**, struck at completion time.
-   - Not completed by `t0 + T + grace` → the ball passes → point to the striker: **ACE** if the
+4. The ball reaches the receiver's contact point at `τ = T` (§3.4).
+   - Both words completed before `T` → **QUEUED**: the shot is resolved immediately (§3.5); the
+     strike (and the end of the turn) happens at `τ = T` when the ball arrives (no volleys, no
+     early swings).
+   - Completed in `(T, T + grace]` → **stretch shot**, struck at completion time.
+   - Not completed by `T + grace` → the ball passes → point to the striker: **ACE** if the
      chased shot was a serve and the chase word was never completed, otherwise **WINNER**.
 5. **OUT / NET timing**: a NET ball flies to the net plane and drops; the call ("NET", or "FAULT"
    on a serve) is made when it reaches the net plane. An OUT ball is called at its bounce
-   (`t0 + 0.6T`). At the call, the active prompt is cleared and the receiver's typing so far is
+   (`τ = 0.6T`). At the call, the active prompt is cleared and the receiver's typing so far is
    discarded (not counted in stats). A rally OUT/NET is a point to the receiver and an **error**
    for the striker.
 
@@ -225,7 +236,7 @@ Level WPMs: 25, 28, 31 · 35, 38, 41 · 45, 51, 58 · 65, 72, 81 · 90 · 105 ·
 - Reaction before the first key: full reaction for serve words, choice prompts and the chase of a
   serve; 0.5 × reaction for a rally chase word (it watched it being typed).
 - Choice: `est_i = reaction + len_i·I·(1 + err/(1 − err)) + err·len_i·0.225`. Option i is feasible if
-  `est_i ≤ (deadline − now) − 0.25 s` (deadline = t0 + T for returns, tooLow for serves). With
+  `est_i ≤ (deadline − now) − 0.25 s` (deadline = T for returns, tooLow for serves; both in turn clock τ). With
   probability = aggression choose the hardest feasible option, otherwise uniform among the other
   feasible options; if none are feasible choose easy. Second serve uses aggression × 0.4. The CPU
   never deliberately re-tosses.
@@ -331,7 +342,7 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
   - Serve plates: near server → vertical stack (easy, medium, hard top to bottom, 2 px gaps), bottom
     4 px above the head. Far server → horizontal row in the far band centred on the server's x,
     clamped to x 4–476.
-  - Chase plates appear 4 px above the owner's head where it stood at t0 (they don't follow).
+  - Chase plates appear 4 px above the owner's head where it stood when the turn began (they don't follow).
   - **Large words** option: 2× applies only to single prompts and to a locked word (redrawn at 2× in
     place, clamped to x 4–476). Unlocked options stay 1×.
   - Unit test: for all word lengths 3–14 and both target sides, no two plates intersect and every
@@ -377,7 +388,7 @@ During a match, `keydown` is handled on `window` in the capture phase:
 - Space: toss in PRE_SERVE (local human server); ignored otherwise.
 - `preventDefault()` on every handled or ignored non-Ctrl/Meta keydown (stops page scroll,
   Firefox quick-find on ' and /, and the Windows Alt menu); never on Ctrl/Meta combinations.
-- Timestamp = `event.timeStamp` converted to engine time.
+- Timestamp = `event.timeStamp` converted to the owner's turn clock τ (§5.2).
 - On match start and whenever a menu closes: blur `document.activeElement`, focus the game root
   (`tabindex=-1`), so Space never re-activates a button.
 - Esc, Tab or the pause icon open the in-match menu (in fullscreen, the first Esc exits fullscreen).
@@ -423,18 +434,28 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
                            │                                              ▲ read-only via redact()
                     render/ + audio/ (consume PublicState + events) ──────┘
                            │
-                        net/ (transport, protocol, clock sync)
+                        net/ (transport, protocol)
 ```
 - **core/** — no DOM, no timers, no `Math.random`, no `Date`. Modules: `rng`, `words`
   (lists + picker), `typing` (prompt, lock, strict cursor, slips, stats, key classification),
   `court` (geometry, in/out, targets), `trajectory`, `shot`, `scoring`, `cpu` (keystroke planner),
-  `engine` (match + point state machine), `redact`, `tuning` (all constants, with the balance
-  targets of §6 in comments), `types`.
-- **Engine API**: `input(player, key, tMs)` queues a timestamped input (key = letter or `toss`);
-  `advance(STEP)` processes queued inputs and deadlines in the step window in time order (an input
-  with `t ≤ deadline` is applied before that deadline). Engine time = `tick × 1000/60` from an
-  integer tick. `setComp(player, ms)` is a timestamped input. Emits typed events. Same config + seed
-  + input log ⇒ identical result (replayable).
+  `turn` (TurnRunner), `engine` (match orchestration), `redact`, `tuning` (all constants, with the
+  balance targets of §6 in comments), `types`.
+- **TurnRunner** (`core/turn`): a pure, self-contained simulator of one turn. It is created from
+  the turn's **start data**, which holds everything the turn needs, so it never touches the RNG:
+  owner, kind, prompt words (serve words plus one spare re-toss set; or chase word + pre-picked
+  choice words and targets), all deadlines in τ, and the **pre-drawn randomness** for the owner's
+  upcoming shot (r_net, zx, zy). It consumes `key(k, τ)` / `toss(τ)` inputs and `clock(τ)`
+  confirmations, applying inputs and deadlines in τ order (an input with τ ≤ deadline is applied
+  before that deadline). It reports typing progress and the outcome (strike {word, tier, slips,
+  cps, stretch, τ} → resolved shot via the pure `shot` module; or fault/catch/miss/call at τ).
+  The engine uses it for the active turn; an online guest runs its own copy for its own turns.
+- **Engine API**: `input(player, key, τ)` (key = letter or `toss`; dropped unless `player` owns the
+  current turn and τ ≥ the turn's latest τ) and `clock(player, τ)` (the owner confirms its turn
+  clock reached τ; deadlines ≤ τ are processed). A new turn's τ starts at the owner's first
+  `clock(owner, 0)`. The engine owns everything between turns: word picking, drawing a turn's
+  randomness, scoring, creating the next turn's start data. It emits events stamped with
+  `(turnId, τ)`. Same config + seed + input/clock log ⇒ identical result (replayable).
 - **State** is a plain JSON-safe object: only finite numbers, strings, booleans, null, arrays and
   plain objects (`null` for "no deadline"; no Infinity/NaN/undefined/Map/Set/Date/classes).
 - `redact(state, viewer)` → `PublicState` and `redactEvents(events, viewer)`: remove RNG state,
@@ -448,16 +469,27 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
   painters, player animator (pose derived from state), ball, effects, HUD, banners.
 - **audio/**: synth voices, event→sound mapping, crowd, speech, music.
 - **net/**: `Transport` interface with PeerJS and in-memory loopback (latency/jitter injectable)
-  implementations, `protocol` (types + guards), clock sync, code generation.
+  implementations, `protocol` (types + guards), code generation.
 - **ui/**: screens, settings/profile/career storage.
 
-### 5.2 Session loops
-- **LocalSession**: fixed-step catch-up capped at 250 ms; pauses on visibility hidden or window blur.
-- **HostSession**: `pump()` — while `engine.time + STEP ≤ H(now)` call `engine.advance(STEP)`,
-  `H = performance.now() − hostEpoch`; no catch-up cap. `pump()` runs from rAF, from a Worker
-  ticker created from a Blob URL (`setInterval(() => postMessage(0), 50)`) for the whole online
-  match, and on every incoming peer message before it is applied. Frames are sent from `pump()`,
-  never from the render loop.
+### 5.2 Session loops and turn clocks
+- A local owner's turn clock is `τ = performance.now() − turnStartLocal` (key inputs use
+  `event.timeStamp − turnStartLocal`). `Date.now()` is never used for game timing.
+- **Passive playback**: whenever the local viewer does not own the current turn (CPU turn, remote
+  turn), the renderer shows the turn at a **playback clock τ_play**. τ_play starts at 0 when the
+  turn begins on this machine and advances each frame at rate
+  `r = clamp(1 + (τ_c − margin − τ_play) / 500 ms, 0, 1.1)`, but never beyond τ_c, where τ_c is the
+  owner's latest confirmed τ and margin = 60 ms (0 for local CPU turns, where τ_c is simply the
+  local clock). Everything drawn at τ_play is therefore already known: no prediction, no jumps.
+  Remote typing events are shown when τ_play reaches their τ. The local owner's next turn begins
+  when τ_play reaches the previous turn's end.
+- **LocalSession** (vs CPU, training, attract): both players on one machine; CPU turns are
+  clocked from the local clock. Catch-up capped at 250 ms; pauses on visibility hidden or window
+  blur (the turn clock is frozen while paused).
+- **Online sessions**: the host's engine and both sides' clock confirmations are driven from rAF
+  and from a Worker ticker created from a Blob URL (`setInterval(() => postMessage(0), 50)`) for
+  the whole online match, so a hidden or throttled tab keeps confirming its clock and processing
+  messages. Incoming messages are applied immediately in their handler.
 - On returning from hidden/offscreen, a client applies the latest state and drops one-shot FX,
   audio and speech events more than 300 ms old.
 
@@ -471,49 +503,55 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
   `VITE_PEER_KEY`, `VITE_ICE_SERVERS` (JSON). On `unavailable-id` the host silently regenerates the
   code (≤ 5 tries). On peer `disconnected`: `peer.reconnect()` while in the lobby; ignored in a
   match.
-- **Roles**: host = player 0 at end 0; guest = player 1 at end 1. The host runs the only engine.
-  **The seed never leaves the host**; the guest uses a local RNG for cosmetics only.
+- **Roles**: host = player 0 at end 0; guest = player 1 at end 1. The host runs the only
+  **engine** (rules, RNG, word picking, scoring); **the seed never leaves the host**, and the guest
+  uses a local RNG for cosmetics only.
+- **Turn-based timing (no lag compensation, no clock sync)**: each turn is timed only on its
+  owner's machine (§3.1, §5.2). The owner's turn clock starts when the turn's start state is on the
+  owner's screen, i.e. when the owner's playback of the previous turn reaches its end. Latency never
+  shortens anyone's window, and hosting gives no timing advantage. Each client is trusted for its
+  own turn timing (acceptable among friends; inherent to server-less P2P).
+- **Guest-owned turns**: the host sends the turn's start data (§5.1 TurnRunner) as soon as the
+  previous turn ends. The guest runs the turn locally in its own TurnRunner: instant feedback,
+  its own deadlines, and its own strike resolved immediately (pure `shot` + the pre-drawn
+  randomness), so its ball leaves the racket with no network wait. It streams its inputs and clock
+  confirmations to the host, whose engine replays them through the same TurnRunner; the host never
+  judges a guest deadline with its own clock. Same inputs + same τ ⇒ same outcome on both machines.
+  If the host's result ever differs from the guest's local result, the host's wins (logged as a
+  desync; covered by tests so it doesn't happen).
+- **Host-owned turns**: the host's engine runs the turn from the host's local clock; the guest
+  watches the playback.
+- **Re-toss words**: serve start data holds the current serve words and one spare re-toss set.
+  When a CATCH consumes the spare, the host appends a new spare immediately. If a spare hasn't
+  arrived when the guest presses Space (only possible with > 4 s latency), the toss waits for it.
+- **Passive playback (the illusion)**: the non-owner sees the owner's turn at τ_play (§5.2), about
+  half a round trip behind. After the viewer's own strike, the opponent's first confirmation
+  arrives one round trip later, so τ_play starts at 0 and runs slower than real time until it
+  settles just behind the confirmed τ. The ball leaves the racket in a subtle slow-motion that
+  absorbs 50–200 ms over a 2–5 s flight. If confirmations stall, τ_play holds (ball frozen) and
+  after 1 s "Connection unstable…" is shown.
 - **Messages** (all validated by type guards in `net/protocol.ts`; unknown/invalid/> 32 KB dropped;
   names clamped to 12 font glyphs, others → `?`; look indices clamped; rendered only via bitmap
-  font or `textContent`; guest keys beyond 30/s ignored):
+  font or `textContent`; guest inputs beyond 30/s ignored):
   - `hello{proto, app, name, look}` → `welcome{proto, hostProfile, config}` or
     `reject{reason: 'version'|'full'|'in-match', proto, app}` (then close with flush / after 500 ms).
   - `lobby{config, ready: [host, guest]}` (host → guest on any change); `ready{on}` (guest).
   - `start{config, hostProfile, guestProfile}`.
-  - `key{seq, p, k, t}` (guest → host): per-match seq, promptId p, key k, t = `event.timeStamp +
-    clockOffset` (host clock).
-  - `frame{tick, t, ack, ev?, s?}` (host → guest): `s = redact(state, guest)` is the guest's only
-    state source; `ev = redactEvents(…)` is for one-shot presentation only. Sent after every step
-    that produced events (with `ev` and `s`), otherwise every 3rd step (`s` only, 20 Hz); `s`-only
-    frames are skipped while `bufferedAmount > 16 KB`. `ack` = highest guest seq processed.
-  - `ping{id, t}` / `pong{id, t, h}`; `rematch{want}`; `forfeit`; `leave`.
+  - `input{seq, turn, k, τ}` (guest → host, own turns only; k = letter | `toss`) and
+    `clock{turn, τ}` (guest → host every 50 ms during its own turn, and immediately at a deadline).
+  - `frame{turn, τ, ev?, s?}` (host → guest): `s = redact(state, guest)`; `ev = redactEvents(…)`
+    stamped with (turn, τ). During host-owned turns τ is the host's confirmed turn clock (sent every
+    50 ms and with every event); during guest-owned turns frames carry host-side updates (spare
+    re-toss words) and the host's echo of the guest's outcome. Frames without events are skipped
+    while `bufferedAmount > 16 KB`.
+  - `ping{id}` / `pong{id}` (every 2 s; RTT shown in the lobby and HUD corner); `rematch{want}`;
+    `forfeit`; `leave`.
   - `proto` is an integer checked in hello/welcome only; bumped on any change to protocol,
-    PublicState or key classification. Mismatch text: "Versions differ (host vA, you vB) — reload
-    with Ctrl+Shift+R".
-- **Pre-picked words**: serve words (+ markers) are picked on entering PRE_SERVE and on every
-  re-toss; choice words and targets at strike time t0. `redact` sends serve words only to the
-  server's client; choice words are public. On its own Space the guest starts the toss animation
-  and reveals its serve words immediately; it reveals its choice plates the moment it locally
-  completes the chase word.
-- **Prediction**: the host drops (silently) any guest key whose p is not the guest's active prompt.
-  The guest displays the latest frame state + its pending keys (seq > ack) re-applied through the
-  same `core/typing` functions. Clicks, error buzz and shake for the guest's own keys fire only on
-  the local keypress.
-- **Clock sync**: host clock `H = performance.now() − hostEpoch`. Both sides ping every 1 s (every
-  200 ms for the first 2 s); pongs are sent from the message handler. Guest: `rtt = now − t`,
-  `offset = h + rtt/2 − now`; keep the last 8 samples, use the lowest-rtt one; the render clock
-  slews ≤ 2 ms per frame, jumping only if the error exceeds 100 ms. `Date.now()` is never used for
-  game timing.
-- **Lag compensation**: `comp = min(median(host's last 8 RTT)/2 + 20 ms, 150 ms)` (host-measured
-  only). Guest key time `te = max(clamp(t, arrival − comp, arrival), previousGuestTe,
-  promptStartTime)`; te is used for everything (cps, lock, completion, toss start). A guest-owned
-  threshold D (tooLow, contact, contact + grace, serve clock) is met iff `te ≤ D + comp`; the host
-  resolves it only once `hostNow ≥ D + 2·comp`. The guest's timing bar shows `D + comp`.
-- **Rendering remote outcomes**: renderers evaluate the current trajectory at `min(now,
-  tContact)` until the state records the outcome; the ball holds at the contact point (after 1 s
-  without an outcome show "Connection unstable…"); then the new trajectory is evaluated at now,
-  easing any forward jump over 100 ms. A striker's own swing animation plays locally as soon as
-  its word completes.
+    PublicState, TurnRunner or key classification. Mismatch text: "Versions differ (host vA,
+    you vB) — reload with Ctrl+Shift+R".
+- **Secrecy**: `redact` sends serve words (and the spare set) and a turn's pre-drawn randomness only
+  to that turn's owner; choice words are public. Stale inputs (turn ≠ current turn) are dropped
+  silently.
 - **Heartbeat**: any message counts as liveness. 3 s silence → "Connection unstable…" banner (host
   keeps simulating); 8 s → end the match "Opponent disconnected" (not recorded). `pagehide` sends
   `leave`; `beforeunload` confirmation during an online match. conn `close`/`error` → immediate
@@ -553,10 +591,16 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
   equal speed wins ≥ 50 %. At Normal: CPU levels ≥ 2 apart — higher wins ≥ 90 % of short sets;
   adjacent — higher wins ≥ 65 %. Constants in `tuning.ts` may be retuned to meet these; the spec's
   numbers are the starting point.
-- **Net tests**: Host/Guest over the loopback transport with latency + jitter play a full
-  CPU-driven match; guest state converges to host; prediction/ack; redaction; suspend the host's
-  rAF for 5 s — guest still receives ≥ 15 frames/s and guest-owned deadlines resolve within 60 ms of
-  schedule.
+- **Net tests**: Host/Guest over the loopback transport play full matches driven by scripted
+  typists (CPU planners feeding each side's keyboard path):
+  - **Latency invariance**: the same seed and the same scripted typists (fixed per-turn timings)
+    give an identical point-by-point outcome at 0 ms, 150 ms and 400 ms one-way latency with jitter.
+  - The guest's local TurnRunner outcome equals the host's for every guest turn (no desyncs).
+  - Passive playback never runs ahead of the confirmed τ and never jumps backwards; after a strike
+    it settles within 1.5 s.
+  - Redaction: no serve word, spare set or pre-drawn randomness of the other player's turn ever
+    appears in a frame sent to the guest.
+  - Suspend the host's rAF for 5 s during a guest-owned turn: the turn still resolves on time.
 - **Art QA**: `tools/art.html` (dev-only Vite entry) renders at 4× on a checkerboard: every animation
   for 4 look presets (anchor crosshair, frame labels, onion-skin composite), the font atlas with
   "ball", "backhand", "counterpuncher", every plate state, each surface scene at 1× and 3×.
