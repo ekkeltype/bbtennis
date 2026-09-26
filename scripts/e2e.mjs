@@ -100,6 +100,15 @@ const canvasColours = (page) =>
     return seen.size;
   });
 
+/**
+ * The page's match state, `window.__bbt.view().pub`. A session's view is built by its frames, so it is
+ * null from the moment its play screen shows until the next animation frame: waits for that first.
+ */
+async function matchState(page) {
+  await page.waitForFunction(() => window.__bbt?.view() != null, null, { timeout: STEP_MS });
+  return page.evaluate(() => window.__bbt.view().pub);
+}
+
 /** Polls the page's match until `pred(snapshot)`; resolves to that snapshot. */
 async function waitSnap(page, pred, what, timeout = STEP_MS) {
   const deadline = Date.now() + timeout;
@@ -191,7 +200,7 @@ async function trainingScenario(env) {
       timeout: POINT_MS,
       what: 'the end of the first point (lesson 1)',
     });
-    const served = await page.evaluate(() => window.__bbt.view().pub.stats[0].wordsCompleted);
+    const served = (await matchState(page)).stats[0].wordsCompleted;
     ok(served >= 1, 'the trainee never completed a word');
   });
 }
@@ -205,10 +214,8 @@ async function matchScenario(env) {
     await visible(page, '.panel.setup');
     await click(page, 'START');
     await visible(page, '.screen.play.cpu');
-    const setup = await page.evaluate(() => {
-      const { config, players } = window.__bbt.view().pub;
-      return [config.format, config.pace, players[1].kind, players[1].cpuLevel];
-    });
+    const { config, players } = await matchState(page);
+    const setup = [config.format, config.pace, players[1].kind, players[1].cpuLevel];
     deepStrictEqual(setup, ['tiebreak', 'relaxed', 'cpu', 0], 'expected a White-belt Relaxed tiebreak');
 
     const moments = ['preServe', 'toss', 'chase', 'choice', 'pointCall'];
@@ -222,10 +229,8 @@ async function matchScenario(env) {
     await shot(page, '4-match-results');
     const missed = moments.filter((m) => !taken.has(m));
     deepStrictEqual(missed, [], 'match moments never seen');
-    const end = await page.evaluate(() => {
-      const pub = window.__bbt.view().pub;
-      return { status: pub.status, winner: pub.winner, won: pub.stats.map((s) => s.pointsWon) };
-    });
+    const pub = await matchState(page);
+    const end = { status: pub.status, winner: pub.winner, won: pub.stats.map((s) => s.pointsWon) };
     const [a, b] = end.won;
     ok(end.status === 'over' && end.winner !== null, `the match is not over: ${JSON.stringify(end)}`);
     ok(Math.max(a, b) >= 7 && Math.abs(a - b) >= 2, `not a finished tiebreak: points ${a}-${b}`);
