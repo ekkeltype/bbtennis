@@ -24,8 +24,14 @@ describe('genCode', () => {
     expect(genCode(() => 0.999999999)).toBe('99999');
   });
 
-  it('stays inside the alphabet even if rand returns exactly 1', () => {
-    expect(genCode(() => 1)).toBe('99999');
+  it.each([
+    [1, '99999'],
+    [-1, 'AAAAA'],
+    [Number.NaN, 'AAAAA'],
+    [Number.POSITIVE_INFINITY, '99999'],
+    [Number.NEGATIVE_INFINITY, 'AAAAA'],
+  ])('clamps rand() = %d into the alphabet (%s)', (r, code) => {
+    expect(genCode(() => r)).toBe(code);
   });
 
   it('uses every alphabet character given enough draws', () => {

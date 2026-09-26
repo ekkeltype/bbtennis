@@ -4,12 +4,15 @@ export const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 /** Length of a game code. */
 export const CODE_LENGTH = 5;
 
-/** A random game code of CODE_LENGTH characters from ALPHABET; `rand` returns uniforms in [0, 1). */
+/**
+ * A random game code of CODE_LENGTH characters from ALPHABET; `rand` returns uniforms in [0, 1).
+ * Out-of-range values are clamped to the first or last character, and NaN counts as 0.
+ */
 export function genCode(rand: () => number): string {
   let code = '';
   for (let i = 0; i < CODE_LENGTH; i++) {
-    const index = Math.min(ALPHABET.length - 1, Math.floor(rand() * ALPHABET.length));
-    code += ALPHABET[index];
+    const index = Math.floor(rand() * ALPHABET.length);
+    code += ALPHABET[Number.isNaN(index) ? 0 : Math.min(ALPHABET.length - 1, Math.max(0, index))];
   }
   return code;
 }
