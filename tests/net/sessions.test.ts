@@ -179,7 +179,7 @@ describe('online sessions: the guest\'s playback of host-owned turns', () => {
       if (report.maxGapMs > MAX_CONFIRMATION_GAP_MS) starved.push(where);
     }
     expect(unsettled, details.join('\n')).toEqual(KNOWN_UNSETTLED);
-    // The known defect's cause: there, and only there, confirmations stall for longer than a tick plus the jitter window.
+    // The listed matches' measured cause: there, and only there, confirmations stall for longer than a tick plus the jitter window.
     expect(starved).toEqual(KNOWN_UNSETTLED);
   }, SHORT_SETS_TIMEOUT + INVARIANCE_TIMEOUT);
 });
