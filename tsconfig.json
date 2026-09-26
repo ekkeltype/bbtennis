@@ -15,5 +15,5 @@
     "skipLibCheck": true
   },
   "include": ["src", "tests", "tools"],
-  "exclude": ["tools/scratch", "node_modules", "dist"]
+  "exclude": ["tests/scripts", "tools/scratch", "node_modules", "dist"]
 }

@@ -1,5 +1,4 @@
-/// <reference types="node" />
-// tsconfig.json limits global types to vite/client; this test drives a Node script and reads its zip.
+// Typechecked with Node types by tsconfig.node.json; this test drives a Node script and reads its zip.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

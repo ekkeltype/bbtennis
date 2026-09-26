@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["tests/scripts"],
+  // Replaces the base exclude list, which leaves tests/scripts out of the browser program.
+  "exclude": []
+}
