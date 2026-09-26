@@ -49,4 +49,9 @@ export class PlaybackClock {
   get τ(): number {
     return this.play;
   }
+
+  /** The owner's latest confirmed τ (0 before any). */
+  get confirmedτ(): number {
+    return this.confirmed;
+  }
 }

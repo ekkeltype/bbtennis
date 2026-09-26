@@ -19,10 +19,12 @@ import type { Transport } from '../net/transport';
 import type { Scheduler } from './clock';
 import { DisplayQueue, type DisplayEntry } from './displayQueue';
 import {
+  FreshEvents,
   KeyRate,
   OnlineLifecycle,
   onlineOverlay,
   Scoreboards,
+  StallWatch,
   WaitTag,
   type Departure,
   type EndReason,
@@ -99,6 +101,8 @@ export class GuestSession implements Session {
   private readonly link: PeerLink;
   private readonly wait = new WaitTag();
   private readonly boards = new Scoreboards();
+  private readonly fresh = new FreshEvents();
+  private readonly stall = new StallWatch();
   private queue: DisplayQueue;
   private rate = new KeyRate();
   /** The latest state from the host; the placeholder until the first one arrives. */
@@ -179,7 +183,7 @@ export class GuestSession implements Session {
     const r = own.runner;
     if (k.kind === 'toss') {
       if (r.data.kind !== 'serve') return;
-      if (r.phase === 'preServe' && r.data.wordSets[r.setIndex] === undefined) {
+      if (tossWaits(r, t - own.start)) {
         own.tossHeld = true;
         return;
       }
@@ -223,6 +227,8 @@ export class GuestSession implements Session {
     const now = this.scheduler.now();
     this.link.tick(now);
     this.step(now);
+    this.fresh.tick(this.queue, now);
+    this.stall.update(this.queue.front, this.link.rttMs, now);
     if (this.own !== null && !this.own.checked && this.life.playing) this.sendClock(this.own, now);
   }
 
@@ -255,13 +261,16 @@ export class GuestSession implements Session {
     own.sent = Math.max(own.sent, r.τ);
   }
 
-  /** A toss that waited for its word set is pressed now that the set has arrived, if the serve still waits in PRE_SERVE. */
+  /** A toss that waited for its word set is pressed now, if its turn still runs and the set has arrived (else it goes on waiting). */
   private releaseToss(own: OwnTurn): void {
-    const r = own.runner;
-    if (!own.tossHeld || r.data.kind !== 'serve' || r.data.wordSets[r.setIndex] === undefined) return;
-    own.tossHeld = false;
-    if (this.running() !== own || r.phase !== 'preServe') return;
+    if (!own.tossHeld) return;
+    if (this.running() !== own) {
+      own.tossHeld = false;
+      return;
+    }
     const now = this.scheduler.now();
+    if (tossWaits(own.runner, now - own.start)) return;
+    own.tossHeld = false;
     this.press(own, 'toss', now - own.start, now);
   }
 
@@ -422,8 +431,8 @@ export class GuestSession implements Session {
       viewer: GUEST,
       turnτ: this.queue.τ,
       liveTurn: live ? pub.turn : null,
-      events: this.queue.release(),
-      overlay: onlineOverlay(this.link, this.wait, now),
+      events: this.fresh.release(this.queue, now),
+      overlay: onlineOverlay(this.link, this.wait, now, this.stall.update(f, this.link.rttMs, now)),
     };
     this.lastView = vm;
     return vm;
@@ -495,6 +504,19 @@ function summary(o: TurnOutcome): OutcomeSummary {
     option: strike?.option ?? null,
     landing: strike === null ? null : { x: strike.shot.landing.x, y: strike.shot.landing.y },
   };
+}
+
+/**
+ * True when a toss at τ would find the serve in PRE_SERVE without its word set (the host's new spare
+ * has not arrived; spec §5.3: the toss waits for it). It is tried on a copy of the runner, so a catch
+ * that ends before τ counts even when no tick or frame has clocked the runner past it yet, and ties
+ * are decided as the runner (and the host's engine) will decide them.
+ */
+function tossWaits(runner: TurnState, τ: number): boolean {
+  if (runner.data.kind !== 'serve') return false;
+  const probe = copy(runner);
+  turnInput(probe, 'toss', τ);
+  return probe.phase === 'preServe' && probe.data.kind === 'serve' && probe.data.wordSets[probe.setIndex] === undefined;
 }
 
 /** Appends the serve word sets the host has added (after catches) that the local runner lacks. */

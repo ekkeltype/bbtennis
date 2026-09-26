@@ -1,5 +1,5 @@
 import { TUNING } from '../core/tuning';
-import type { MatchState, Overlay, PlayerId, PublicState } from '../core/types';
+import type { GameEvent, MatchState, Overlay, PlayerId, PublicState } from '../core/types';
 import type { NetMsg } from '../net/protocol';
 import { TransportListeners, type Transport } from '../net/transport';
 import type { Scheduler } from './clock';
@@ -26,6 +26,12 @@ const KEY_WINDOW_MS = 1000;
 /** The WAIT tag after an off-turn letter: shown 300 ms, at most once per second (spec §3.1). */
 const WAIT_MS = 300;
 const WAIT_EVERY_MS = 1000;
+/** Spec §5.2: back from a hidden or offscreen spell, one-shot events more than 300 ms old are dropped. */
+export const STALE_EVENT_MS = 300;
+/** Spec §5.3: playback held at the confirmed τ with no new confirmation for 1 s shows "Connection unstable…". */
+export const STALL_MS = 1000;
+/** The round trip assumed before the first pong has measured one (the most latency the game is tested with, rounded up). */
+const UNKNOWN_RTT_MS = 1000;
 
 /**
  * The link to the other player, shared by both online sessions (spec §5.3 heartbeat). It takes
@@ -192,14 +198,78 @@ export class WaitTag {
   }
 }
 
-/** The overlay of an online session: never paused, no hints; WAIT, "Connection unstable…" and the RTT. */
-export function onlineOverlay(link: PeerLink, wait: WaitTag, now: number): Overlay {
+/**
+ * The events a frame shows (spec §5.2). The display moves on without frames (the tick advances it in a
+ * hidden tab), so once more than 300 ms have passed since the last frame, the events the display passed
+ * more than 300 ms ago are dropped: on each tick of that spell, so none pile up, and in the first frame
+ * back. What they changed is in the view's state already; only their one-shot sounds, effects and calls
+ * are lost.
+ */
+export class FreshEvents {
+  private lastFrame: number | null = null;
+
+  /** The 50 ms tick at `now`: while frames have stopped, `queue` drops its stale events. */
+  tick(queue: DisplayQueue, now: number): void {
+    if (this.late(now)) queue.dropStale(STALE_EVENT_MS);
+  }
+
+  /** A frame at `now`: the events `queue` has reached, without the stale ones when frames had stopped. */
+  release(queue: DisplayQueue, now: number): GameEvent[] {
+    if (this.late(now)) queue.dropStale(STALE_EVENT_MS);
+    this.lastFrame = now;
+    return queue.release();
+  }
+
+  /** True when no frame has been drawn for more than 300 ms (false before the first). */
+  private late(now: number): boolean {
+    return this.lastFrame !== null && now - this.lastFrame > STALE_EVENT_MS;
+  }
+}
+
+/**
+ * Stalled confirmations (spec §5.3): a remote-owned turn on display that has not ended, whose playback
+ * has caught up with the owner's confirmed τ and holds there, is stalled once no new confirmation has
+ * come for 1 s. The second counts from the latest rise of the confirmed τ; for a turn with no
+ * confirmation yet, from one round trip after it became the front, as the owner's first confirmation
+ * cannot come sooner (the hand-off freeze of spec §5.3 is normal, not a stall). The watch follows the
+ * front on every tick as well as every frame, so it notes each rise within a tick, hidden tab or not.
+ */
+export class StallWatch {
+  private front: DisplayEntry | null = null;
+  private confirmed = 0;
+  private since = 0;
+
+  /** Follows the displayed `front` at `now`, given the latest round trip; returns whether it is stalled. */
+  update(front: DisplayEntry | null, rttMs: number | null, now: number): boolean {
+    const clock = front?.clock ?? null;
+    if (front === null || clock === null || front.endτ !== null) {
+      this.front = null;
+      return false;
+    }
+    if (front !== this.front) {
+      this.front = front;
+      this.confirmed = clock.confirmedτ;
+      const wait = this.confirmed > 0 ? 0 : rttMs ?? UNKNOWN_RTT_MS;
+      this.since = (front.startedAt ?? now) + wait;
+    } else if (clock.confirmedτ > this.confirmed) {
+      this.confirmed = clock.confirmedτ;
+      this.since = now;
+    }
+    return clock.τ >= this.confirmed && now - this.since >= STALL_MS;
+  }
+}
+
+/**
+ * The overlay of an online session: never paused, no hints; WAIT, the RTT, and "Connection unstable…"
+ * after 3 s of silence or while the display is `stalled` (StallWatch).
+ */
+export function onlineOverlay(link: PeerLink, wait: WaitTag, now: number, stalled: boolean): Overlay {
   return {
     paused: false,
     countdown: null,
     coach: null,
     wait: wait.on(now),
-    unstable: link.unstable(now),
+    unstable: link.unstable(now) || stalled,
     hintSpace: false,
     hintFirstLetter: false,
     focusLost: false,

@@ -9,10 +9,12 @@ import type { Scheduler } from './clock';
 import { DisplayQueue, type DisplayEntry } from './displayQueue';
 import { workerTicker } from './loop';
 import {
+  FreshEvents,
   KeyRate,
   OnlineLifecycle,
   onlineOverlay,
   Scoreboards,
+  StallWatch,
   WaitTag,
   type Departure,
   type EndReason,
@@ -86,6 +88,8 @@ export class HostSession implements Session {
   private readonly link: PeerLink;
   private readonly wait = new WaitTag();
   private readonly boards = new Scoreboards();
+  private readonly fresh = new FreshEvents();
+  private readonly stall = new StallWatch();
   private engine!: Engine;
   private queue!: DisplayQueue;
   private rate = new KeyRate();
@@ -230,6 +234,8 @@ export class HostSession implements Session {
     const now = this.scheduler.now();
     this.link.tick(now);
     this.step(now);
+    this.fresh.tick(this.queue, now);
+    this.stall.update(this.queue.front, this.link.rttMs, now);
     if (!this.life.playing || this.lastFrameAt >= now) return;
     const t = this.engine.state.turn;
     const clocking = t !== null && t.started && t.data.owner === HOST;
@@ -361,8 +367,8 @@ export class HostSession implements Session {
       viewer: HOST,
       turnτ: this.queue.τ,
       liveTurn: null,
-      events: redactEvents(this.queue.release(), state, HOST),
-      overlay: onlineOverlay(this.link, this.wait, now),
+      events: redactEvents(this.fresh.release(this.queue, now), state, HOST),
+      overlay: onlineOverlay(this.link, this.wait, now, this.stall.update(f, this.link.rttMs, now)),
     };
     this.lastView = vm;
     return vm;

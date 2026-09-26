@@ -8,7 +8,7 @@ import { VirtualScheduler } from '../../src/game/clock';
 import { DisplayQueue } from '../../src/game/displayQueue';
 import { GuestSession } from '../../src/game/guestSession';
 import { FrameFit, HostSession } from '../../src/game/hostSession';
-import { KeyRate, LobbyLink, OnlineLifecycle, Scoreboards, TransportSwitch } from '../../src/game/onlineLink';
+import { KeyRate, LobbyLink, OnlineLifecycle, Scoreboards, STALL_MS, TICK_MS, TransportSwitch } from '../../src/game/onlineLink';
 import type { Session } from '../../src/game/session';
 import { MAX_SEND_BYTES, msgBytes, type NetMsg } from '../../src/net/protocol';
 import { loopbackPair, type Transport } from '../../src/net/transport';
@@ -289,16 +289,21 @@ describe('online sessions: link', () => {
   });
 
   it('marks the link unstable after 3 s of silence and ends the match as a disconnect after 8 s', () => {
-    // The guest serves first, so it sends clocks every 50 ms until it goes silent.
-    const o = online({ seed: seedWhere(1) });
-    run(o, 1000);
+    // The host serves first and shows its own turn throughout (no stalled playback), so only the
+    // heartbeat can make the link unstable. The guest is heard only through pings and pongs.
+    const o = online({ seed: seedWhere(0), latencyMs: 80, jitterMs: 0 });
+    run(o, 3500);
     o.guestNet.mute = true;
-    run(o, 2900);
+    const lastHeard = o.guestNet.sentAt.at(-1)! + 80;
+    run(o, lastHeard + 2900 - o.s.now());
     expect(o.host.frame(FRAME).overlay.unstable).toBe(false);
     run(o, 300);
     expect(o.host.frame(FRAME).overlay.unstable).toBe(true);
+    expect(o.host.frame(FRAME).pub.turn?.data.owner).toBe(0);
     expect(o.host.over).toBe(false);
-    run(o, 5000);
+    run(o, lastHeard + 7900 - o.s.now());
+    expect(o.host.endReason).toBeNull();
+    run(o, 200);
     expect(o.host.endReason).toBe('disconnect');
     expect(o.host.over).toBe(true);
     expect(o.host.result?.status).toBe('playing');
@@ -683,6 +688,71 @@ describe('online sessions: frames', () => {
   });
 });
 
+describe('online sessions: stalled confirmations (spec §5.3)', () => {
+  /** Frames both sessions every FRAME ms for `ms`; the local time `side` first showed "Connection unstable…", or null. */
+  function unstableFrom(o: Online, side: 'host' | 'guest', ms: number): number | null {
+    const end = o.s.now() + ms;
+    let first: number | null = null;
+    while (o.s.now() < end) {
+      o.s.advance(Math.min(FRAME, end - o.s.now()));
+      const views = { host: o.host.frame(FRAME), guest: o.guest.frame(FRAME) };
+      if (first === null && views[side].overlay.unstable) first = o.s.now();
+    }
+    return first;
+  }
+
+  /** When the last of the first `n` messages `net` sent that `pick` matches arrived on the other side (a fixed one-way `latencyMs`). */
+  function lastArrival(net: Tap, n: number, latencyMs: number, pick: (m: NetMsg) => boolean): number {
+    let at = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < n; i++) if (pick(net.sent[i]!)) at = Math.max(at, net.sentAt[i]! + latencyMs);
+    return at;
+  }
+
+  it('the guest shows "Connection unstable…" 1 s after the host\'s confirmations stop while its playback of the host\'s turn holds, though pings still flow; it clears when they come again', () => {
+    const o = online({ seed: seedWhere(0), latencyMs: 80, jitterMs: 0 });
+    run(o, 3000);
+    const vm = o.guest.frame(FRAME);
+    expect(vm.pub.turn?.data.owner).toBe(0);
+    expect(vm.pub.turn?.ended).toBe(false);
+    expect(vm.overlay.unstable).toBe(false);
+    const isFrame = (m: NetMsg): boolean => m.type === 'frame';
+    const n = o.hostNet.sent.length;
+    o.hostNet.hold = isFrame;
+    const from = unstableFrom(o, 'guest', 2500);
+    const last = lastArrival(o.hostNet, n, 80, isFrame);
+    expect(from).not.toBeNull();
+    expect(from!).toBeGreaterThanOrEqual(last + STALL_MS);
+    expect(from!).toBeLessThanOrEqual(last + STALL_MS + 2 * FRAME);
+    // Not the 3 s heartbeat: the host kept pinging.
+    expect(o.hostNet.sent.slice(n).some((m) => m.type === 'ping')).toBe(true);
+    expect(o.host.frame(FRAME).overlay.unstable).toBe(false);
+    o.hostNet.release();
+    run(o, 300);
+    expect(o.guest.frame(FRAME).overlay.unstable).toBe(false);
+  });
+
+  it('the host shows it 1 s after the guest\'s clocks stop during the guest\'s turn, though the guest still answers pings', () => {
+    const o = online({ seed: seedWhere(1), latencyMs: 80, jitterMs: 0 });
+    run(o, 3000);
+    const vm = o.host.frame(FRAME);
+    expect(vm.pub.turn?.data.owner).toBe(1);
+    expect(vm.pub.turn?.ended).toBe(false);
+    expect(vm.overlay.unstable).toBe(false);
+    const isClock = (m: NetMsg): boolean => m.type === 'clock' || m.type === 'input';
+    const n = o.guestNet.sent.length;
+    o.guestNet.hold = isClock;
+    const from = unstableFrom(o, 'host', 2500);
+    const last = lastArrival(o.guestNet, n, 80, isClock);
+    expect(from).not.toBeNull();
+    expect(from!).toBeGreaterThanOrEqual(last + STALL_MS);
+    expect(from!).toBeLessThanOrEqual(last + STALL_MS + 2 * FRAME);
+    expect(o.guestNet.sent.slice(n).some((m) => m.type === 'pong')).toBe(true);
+    o.guestNet.release();
+    run(o, 300);
+    expect(o.host.frame(FRAME).overlay.unstable).toBe(false);
+  });
+});
+
 describe('online sessions: confirmation-only frames (spec §5.3)', () => {
   /** A state as the frame rule compares it: the turn clocks left out. */
   const clockless = (s: PublicState): string =>
@@ -871,6 +941,43 @@ describe('online sessions: a guest toss waits for its word set', () => {
     expect(tosses()).toBe(3);
     expect(o.guest.frame(FRAME).liveTurn?.phase).toBe('toss');
     // The host's engine applied the same three tosses at the same τ.
+    run(o, 300);
+    const tossτ = (t: TurnState | null | undefined): number[] => (t?.log ?? []).filter((e) => e.k === 'toss').map((e) => e.τ);
+    const mine = tossτ(o.guest.frame(FRAME).liveTurn);
+    expect(mine).toHaveLength(3);
+    expect(tossτ(o.host.frame(FRAME).pub.turn)).toEqual(mine);
+    expect(warn).not.toHaveBeenCalled();
+  }, 60000);
+
+  it('a toss pressed after the catch has ended but before a tick or frame moved the guest\'s runner out of it waits for the missing set too: both machines toss once, at the same τ', () => {
+    const o = online({ seed: seedWhere(1) });
+    guestTurnUntil(o, (t) => t.phase === 'preServe');
+    o.hostNet.hold = (m) => m.type === 'frame';
+    o.guest.key({ kind: 'toss' }, o.s.now());
+    guestTurnUntil(o, (t) => t.phase === 'preServe' && t.setIndex === 1);
+    o.guest.key({ kind: 'toss' }, o.s.now());
+    // The second toss is caught; the set after it is the host's new spare, which the held frames carry.
+    const caught = guestTurnUntil(o, (t) => t.phase === 'catch' && t.setIndex === 1);
+    const d = caught.data;
+    if (d.kind !== 'serve' || caught.catchAt === null) throw new Error('not a caught serve');
+    expect(d.wordSets).toHaveLength(2);
+    const start = o.s.now() - o.guest.frame(FRAME).turnτ;
+    const catchEnd = start + caught.catchAt + d.catchMs;
+    // Both sessions tick every 50 ms from 1000 (and each tick clocks the guest's runner): press between the
+    // catch's end and the next tick, with no frame in between, so the runner still says 'catch'.
+    const nextTick = 1000 + TICK_MS * (Math.floor((catchEnd - 1000) / TICK_MS) + 1);
+    expect(nextTick - catchEnd).toBeGreaterThan(1);
+    o.s.advance((catchEnd + nextTick) / 2 - o.s.now());
+    const tosses = (): number => o.guestNet.sent.filter((m) => m.type === 'input' && m.k === 'toss').length;
+    o.guest.key({ kind: 'toss' }, o.s.now());
+    expect(tosses()).toBe(2);
+    run(o, 300);
+    expect(o.guest.frame(FRAME).liveTurn?.phase).toBe('preServe');
+    expect(tosses()).toBe(2);
+    o.hostNet.release();
+    run(o, 300);
+    expect(tosses()).toBe(3);
+    expect(o.guest.frame(FRAME).liveTurn?.phase).toBe('toss');
     run(o, 300);
     const tossτ = (t: TurnState | null | undefined): number[] => (t?.log ?? []).filter((e) => e.k === 'toss').map((e) => e.τ);
     const mine = tossτ(o.guest.frame(FRAME).liveTurn);

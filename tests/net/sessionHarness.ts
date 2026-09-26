@@ -639,6 +639,8 @@ interface Side {
   /** False while the side's rAF is suspended: no frame() calls and no keys. */
   frames: boolean;
   frameCount: number;
+  /** Views that showed "Connection unstable…". */
+  unstableViews: number;
   /** Local time of the side's latest view. */
   viewAt: number;
 }
@@ -686,6 +688,7 @@ export class Rig {
       log: name === 'host' ? this.hostLog : this.guestLog,
       frames: true,
       frameCount: 0,
+      unstableViews: 0,
       viewAt: Number.NaN,
     });
     this.sides = [side('host', this.host, 0, opts.hostTypist), side('guest', this.guest, 1, opts.guestTypist)];
@@ -705,6 +708,11 @@ export class Rig {
   /** How many times a side's frame() has been called. */
   frameCount(name: SideName): number {
     return this.side(name).frameCount;
+  }
+
+  /** How many of a side's views showed "Connection unstable…". */
+  unstableViews(name: SideName): number {
+    return this.side(name).unstableViews;
   }
 
   /**
@@ -755,6 +763,7 @@ export class Rig {
       if (!side.frames) continue;
       const vm = side.session.frame(this.frameMs);
       side.frameCount++;
+      if (vm.overlay.unstable) side.unstableViews++;
       side.viewAt = this.s.now();
       side.log.observe(vm);
       if (side.name === 'host') this.secrets.observe(vm);

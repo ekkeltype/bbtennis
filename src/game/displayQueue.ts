@@ -27,7 +27,7 @@ export interface DisplayEntry {
  * Once an ended front has been shown to its endτ it pops (becoming `previous`) and the next entry
  * becomes the front at τ 0; until a next entry exists the front holds at endτ, so the ball never
  * jumps back. After `end()` the last turn leaves the front the same way, with no successor.
- * Events are held until the display reaches their (turn, τ).
+ * Events are held until the display reaches their (turn, τ); `dropStale` drops long-passed ones after a hidden spell.
  */
 export class DisplayQueue {
   private readonly queued: DisplayEntry[] = [];
@@ -145,9 +145,36 @@ export class DisplayQueue {
    * up to its displayed τ. The first event not yet reached holds back every later one.
    */
   release(): GameEvent[] {
+    return this.held.splice(0, this.reachedCount());
+  }
+
+  /**
+   * Drops the held events the display passed more than `maxAgeMs` of display time ago (spec §5.2, back
+   * from a hidden tab): a front event's age is the front's τ − its τ, the previous turn's is that turn's
+   * shown end − its τ + the front's τ (or + the time since the last turn was shown, after the end), and
+   * an older turn's is unbounded. Events the display has not reached stay held.
+   */
+  dropStale(maxAgeMs: number): void {
+    const n = this.reachedCount();
+    const fresh = this.held.slice(0, n).filter((e) => this.age(e) <= maxAgeMs);
+    this.held.splice(0, n, ...fresh);
+  }
+
+  /** How many held events, from the first, the display has reached. */
+  private reachedCount(): number {
     let n = 0;
     while (n < this.held.length && this.reached(this.held[n]!)) n++;
-    return this.held.splice(0, n);
+    return n;
+  }
+
+  /** How far (ms of display time) the display has moved past a reached event. */
+  private age(e: GameEvent): number {
+    const f = this.cur;
+    const p = this.prev;
+    if (f !== null && e.turn === f.turn.data.turnId) return f.τ - e.τ;
+    if (p === null || e.turn !== p.turn.data.turnId) return Number.POSITIVE_INFINITY;
+    const since = f !== null ? f.τ : this.last - (this.doneAt ?? this.last);
+    return p.τ - e.τ + since;
   }
 
   private reached(e: GameEvent): boolean {

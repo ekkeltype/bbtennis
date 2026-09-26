@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { GameEvent, PlayerId } from '../../src/core/types';
+import type { GameEvent, PlayerId, ViewModel } from '../../src/core/types';
 import { ONLINE_PLAYBACK } from '../../src/game/displayQueue';
 import { TICK_MS } from '../../src/game/onlineLink';
 import type { NetMsg } from '../../src/net/protocol';
@@ -207,6 +207,32 @@ describe('online sessions: the guest\'s playback of host-owned turns', () => {
   }, SHORT_SETS_TIMEOUT + INVARIANCE_TIMEOUT);
 });
 
+describe('online sessions: "Connection unstable…" (spec §5.3)', () => {
+  it('no view of either side in any full match shows it: the hand-off freeze of up to 2 × (400 + 30) ms before a turn\'s first confirmation is no stall', () => {
+    for (const run of allRuns()) {
+      const where = `seed ${run.seed} at ${run.latencyMs} ms`;
+      expect(run.rig.unstableViews('host'), where).toBe(0);
+      expect(run.rig.unstableViews('guest'), where).toBe(0);
+      expect(run.rig.frameCount('host'), where).toBeGreaterThan(1000);
+    }
+  }, SHORT_SETS_TIMEOUT + INVARIANCE_TIMEOUT);
+
+  it('at 600 ms one-way, where a hand-off freezes the ball for over 1 s before the first confirmation, neither side shows it: the stall second starts a round trip after the turn began', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const rig = new Rig({ config: TIEBREAK, seed: INVARIANCE_SEED, latencyMs: 600, jitterSeed: 9 });
+      rig.play({ limitMs: 45_000 });
+      expect(rig.host.view!.pub.turn!.data.turnId).toBeGreaterThanOrEqual(8);
+      expect(rig.unstableViews('host')).toBe(0);
+      expect(rig.unstableViews('guest')).toBe(0);
+      expect(rig.host.endReason).toBeNull();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  }, 60_000);
+});
+
 describe('online sessions: redaction', () => {
   it('no frame sent to the guest, bare confirmations included, contains the host\'s serve words (unless struck or public), spare sets or randoms', () => {
     for (const run of allRuns()) {
@@ -311,6 +337,56 @@ describe('online sessions: the host\'s rAF suspended for 5 s during a guest-owne
       rig.resume('host');
       rig.play({ limitMs: FRAME_MS, typists: false });
       expect(rig.host.view?.pub.turn?.data.turnId).toBeGreaterThan(id);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  }, 60_000);
+});
+
+describe('online sessions: a side hidden for 20 s (spec §5.2)', () => {
+  const HIDDEN_MS = 20_000;
+  /** Spec §5.2: back from hidden, one-shot events more than 300 ms old are dropped. */
+  const STALE_MS = 300;
+
+  /**
+   * How far (ms of display time) a view's display had moved past each of its events: the displayed
+   * turn's by its τ, the turn shown before it by its end plus the displayed τ, and any older turn's is
+   * taken as Infinity (a whole turn lies between).
+   */
+  function ages(vm: ViewModel): { e: GameEvent; age: number }[] {
+    const [f, p] = [vm.pub.turn, vm.pub.lastTurn];
+    return vm.events.map((e) => {
+      if (f !== null && e.turn === f.data.turnId) return { e, age: vm.turnτ - e.τ };
+      if (f !== null && p !== null && e.turn === p.data.turnId && p.outcome !== null) return { e, age: p.outcome.endτ - e.τ + vm.turnτ };
+      return { e, age: Number.POSITIVE_INFINITY };
+    });
+  }
+
+  it.each([['host', 0], ['guest', 1]] as const)('the %s\'s first frame back shows only the events its display passed in the last 300 ms, though the match went on meanwhile', (name, me) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const rig = new Rig({ config: TIEBREAK, seed: 5, latencyMs: 150, jitterSeed: 5 });
+      const session = rig[name];
+      // Hidden as the opponent is about to serve, so the match runs on without this side's keys.
+      rig.play({ limitMs: 60_000, stop: () => {
+        const t = session.view?.pub.turn;
+        return t !== null && t !== undefined && t.data.kind === 'serve' && t.data.owner !== me && !t.ended && rig.s.now() > 5000;
+      } });
+      const before = session.view!.pub.turn!.data.turnId;
+      rig.suspend(name);
+      rig.play({ limitMs: HIDDEN_MS });
+      rig.resume(name);
+      const back: ViewModel[] = [];
+      rig.play({ limitMs: 1000, typists: false, onFrame: (side, vm) => side === name && back.push(vm) });
+      expect(back.length).toBeGreaterThan(30);
+      // Confirmations flowed all along: coming back shows no "Connection unstable…".
+      expect(back.filter((v) => v.overlay.unstable)).toHaveLength(0);
+      const vm = back[0]!;
+      // The display moved on through several turns (each with its strikes, bounces, keys and calls).
+      expect(vm.pub.turn!.data.turnId).toBeGreaterThanOrEqual(before + 2);
+      expect(ages(vm).filter(({ age }) => !(age <= STALE_MS))).toEqual([]);
+      expect(session.endReason).toBeNull();
       expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
