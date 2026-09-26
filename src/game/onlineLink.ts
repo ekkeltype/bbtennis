@@ -416,19 +416,26 @@ const LOBBY_TICK_MS = 250;
 /**
  * The link to the other player in the lobby: a PeerLink (spec §5.3 heartbeat: pings, the round trip,
  * the other side leaving, closing or going silent) on a TransportSwitch's first channel, ticking every
- * 250 ms, until `handOver` gives the transport to the match. Its handlers take the other side's lobby
- * messages and hear once that it has gone.
+ * 250 ms from `open` until `handOver` gives the transport to the match. Its handlers take the other
+ * side's lobby messages and hear once that it has gone.
  */
 export class LobbyLink {
   private readonly switch: TransportSwitch;
   private readonly link: PeerLink;
-  private stopTick: () => void;
+  private readonly scheduler: Scheduler;
+  private stopTick: (() => void) | null = null;
 
   constructor(transport: Transport, scheduler: Scheduler, handlers: { message(m: NetMsg): void; gone(why: Departure): void }) {
+    this.scheduler = scheduler;
     this.switch = new TransportSwitch(transport);
     this.link = new PeerLink(this.switch.current, scheduler, handlers);
+  }
+
+  /** Starts hearing the other side (what arrived earlier comes now, so the handlers must be ready) and the heartbeat; once. */
+  open(): void {
+    if (this.stopTick !== null) return;
     this.link.listen();
-    this.stopTick = scheduler.every(LOBBY_TICK_MS, () => this.link.tick(scheduler.now()));
+    this.stopTick = this.scheduler.every(LOBBY_TICK_MS, () => this.link.tick(this.scheduler.now()));
   }
 
   /** Latest ping round trip (ms), or null before the first pong. */
@@ -448,16 +455,19 @@ export class LobbyLink {
 
   /** The match takes the transport over: the lobby's heartbeat stops and hears nothing more; the match's channel hears `first` first. */
   handOver(first: readonly NetMsg[] = []): Transport {
-    this.stopTick();
-    this.stopTick = () => {};
+    this.stop();
     return this.switch.next(first);
   }
 
   /** Leaves the lobby: the other side is told (once) and the transport closes after it. */
   close(): void {
-    this.stopTick();
-    this.stopTick = () => {};
+    this.stop();
     this.link.leave();
     this.link.close();
+  }
+
+  private stop(): void {
+    this.stopTick?.();
+    this.stopTick = () => {};
   }
 }

@@ -846,6 +846,8 @@ describe('LobbyLink: the lobby\'s heartbeat until the match takes over', () => {
     const gone: string[] = [];
     const host = new LobbyLink(a, s, { message: (m) => hostHeard.push(m), gone: (why) => gone.push(why) });
     const guest = new LobbyLink(b, s, { message: () => {}, gone: () => {} });
+    host.open();
+    guest.open();
     s.advance(2100);
     expect(host.rttMs).toBe(60);
     guest.send({ type: 'ready', on: true });
@@ -869,12 +871,19 @@ describe('LobbyLink: the lobby\'s heartbeat until the match takes over', () => {
     expect(got.at(-1)).toEqual({ type: 'leave' });
   });
 
-  it('reports the other side leaving or going silent once', () => {
+  it('takes nothing before open, then what arrived earlier; reports the other side leaving once', () => {
     const s = new VirtualScheduler(0);
     const [a, b] = loopbackPair(s, { latencyMs: 30, jitterMs: 0, seed: 1 });
     const gone: string[] = [];
-    new LobbyLink(a, s, { message: () => {}, gone: (why) => gone.push(why) });
+    const heard: NetMsg[] = [];
     const guest = new LobbyLink(b, s, { message: () => {}, gone: () => {} });
+    guest.open();
+    guest.send({ type: 'ready', on: true });
+    s.advance(100);
+    const host = new LobbyLink(a, s, { message: (m) => heard.push(m), gone: (why) => gone.push(why) });
+    expect(heard).toEqual([]);
+    host.open();
+    expect(heard).toEqual([{ type: 'ready', on: true }]);
     guest.close();
     s.advance(100);
     s.advance(10000);
