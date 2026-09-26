@@ -112,11 +112,12 @@ export class Router {
 
   /**
    * Mouse hover focuses the keyboard stop under the pointer (a row's inner arrow buttons count as the
-   * row), so hover and keyboard share one highlight; text fields keep their caret until clicked.
+   * row), so hover and keyboard share one highlight. Text fields are left to clicks: hover never
+   * focuses one, and never takes the focus (and caret) away from a focused one.
    */
   private readonly hover = (e: PointerEvent): void => {
     const screen = this.shown;
-    if (!screen || !(e.target instanceof Element)) return;
+    if (!screen || !(e.target instanceof Element) || isTextField(this.root.ownerDocument.activeElement)) return;
     const stops = focusables(screen.el);
     let el = e.target.closest<HTMLElement>(FOCUSABLE);
     while (el !== null && !stops.includes(el)) el = el.parentElement?.closest<HTMLElement>(FOCUSABLE) ?? null;

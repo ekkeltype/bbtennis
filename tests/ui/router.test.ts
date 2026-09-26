@@ -255,6 +255,18 @@ describe('Router keys', () => {
     expect(document.activeElement).toBe(row);
   });
 
+  it('hovering never takes the focus out of a focused text field (it keeps its caret while the pointer crosses rows)', () => {
+    const el = root.querySelector('[data-screen="b"]')!;
+    const input = document.createElement('input');
+    el.prepend(input);
+    input.focus();
+    el.querySelectorAll('button')[1]!.dispatchEvent(new Event('pointerover', { bubbles: true }));
+    expect(document.activeElement).toBe(input);
+    input.blur();
+    el.querySelectorAll('button')[1]!.dispatchEvent(new Event('pointerover', { bubbles: true }));
+    expect(focused()).toBe('b1');
+  });
+
   it('stops handling keys after dispose', () => {
     router.dispose();
     press('Escape');
