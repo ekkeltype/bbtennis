@@ -51,7 +51,7 @@ const tags = (events: GameEvent[]): string[] => events.map((e) => `${e.type}@${e
 const wordSetsOf = (t: TurnState): ServeWordSet[] => (t.data.kind === 'serve' ? t.data.wordSets : []);
 
 /** Spec §3.4 speed factor, written out independently of shot.ts. */
-const speed = (cps: number): number => Math.min(1.3, Math.max(0.8, 0.85 + 0.05 * (cps - 3)));
+const speed = (cps: number): number => Math.min(1.3, Math.max(0.8, 0.875 + 0.025 * (cps - 3)));
 
 function strikeOf(t: TurnState): StrikeInfo {
   if (t.outcome?.kind !== 'strike') throw new Error(`expected a strike, got ${JSON.stringify(t.outcome)}`);

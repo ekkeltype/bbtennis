@@ -47,9 +47,9 @@ const randomsOf = (rNet: number, ux: readonly number[], uy: readonly number[]): 
 const noScatter = (rNet: number): ShotRandoms => randomsOf(rNet, [0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]);
 
 describe('speedFactor', () => {
-  it('is 0.85 + 0.05·(cps − 3) inside the clamp', () => {
-    expect(speedFactor(3)).toBeCloseTo(0.85, 12);
-    expect(speedFactor(5)).toBeCloseTo(0.95, 12);
+  it('is 0.875 + 0.025·(cps − 3) inside the clamp', () => {
+    expect(speedFactor(3)).toBeCloseTo(0.875, 12);
+    expect(speedFactor(5)).toBeCloseTo(0.925, 12);
   });
 
   it('clamps to [0.80, 1.30]', () => {
@@ -79,12 +79,12 @@ describe('contactFactor', () => {
 
 describe('strikeV', () => {
   it('is the speed factor when there is no contact factor and no stretch', () => {
-    expect(strikeV(5, {})).toBeCloseTo(0.95, 12);
+    expect(strikeV(5, {})).toBeCloseTo(0.925, 12);
   });
 
   it('multiplies by the serve contact factor after the clamp, without re-clamping', () => {
-    expect(strikeV(5, { contactFactor: 0.9 })).toBeCloseTo(0.855, 12);
-    expect(strikeV(3, { contactFactor: 0.85 })).toBeCloseTo(0.7225, 12);
+    expect(strikeV(5, { contactFactor: 0.9 })).toBeCloseTo(0.8325, 12);
+    expect(strikeV(3, { contactFactor: 0.85 })).toBeCloseTo(0.74375, 12);
   });
 
   it('multiplies a stretch shot by 0.9 after the clamp, without re-clamping', () => {
@@ -138,8 +138,8 @@ describe('flightTimeMs', () => {
 describe('graceMs', () => {
   it('is 400 ms × pace', () => {
     expect(graceMs(1)).toBeCloseTo(400, 9);
-    expect(graceMs(PACE_MULT.relaxed)).toBeCloseTo(560, 9);
-    expect(graceMs(PACE_MULT.lightning)).toBeCloseTo(280, 9);
+    expect(graceMs(PACE_MULT.relaxed)).toBeCloseTo(600, 9);
+    expect(graceMs(PACE_MULT.lightning)).toBeCloseTo(240, 9);
   });
 });
 

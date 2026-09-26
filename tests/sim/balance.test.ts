@@ -2,34 +2,63 @@
  * Balance simulation (spec §6). The full suite runs only with BBT_SIM=1 (`npm run test:sim`);
  * `npm test` runs the smoke subset.
  *
- * Retuned in src/core/tuning.ts (spec value → now): PACE_MULT.relaxed 1.5 → 1.4,
- * PACE_MULT.lightning 0.6 → 0.7, flight.serveReturnBonusMs 500 → 250,
- * flight.serveReturnBonusPaceMs 500 → 750 (reading allowance unchanged at Normal).
+ * Human model (humanTypist, src/core/sim.ts): spec §6's "hardest option that fits" on every serve
+ * and choice, second serves included. CpuBrain's second-serve aggression × 0.4 is a CPU rule
+ * (spec §3.8), so humanProfile's aggression is 2.5 (2.5 × 0.4 = 1); sim.test.ts checks the choice.
+ * Task 11 fix round 1: the first tuning ran the human with the CPU's × 0.4, and with the true
+ * policy it gave 6.3 % (Normal) and 8.5 % (Fast) double faults, so it was retuned.
+ *
+ * Retuned in src/core/tuning.ts (spec value → now): tossApexMs 2000 → 1930, speed.base
+ * 0.85 → 0.875, speed.perCps 0.05 → 0.025, flight.serveReturnBonusMs 500 → 250,
+ * flight.serveReturnBonusPaceMs 500 → 750. PACE_MULT keeps the spec's ×1.5 / 1.0 / 0.75 / 0.6.
+ * Double faults step with the toss window 2a: a hard serve word "fits" (spec §3.8 estimate) up to
+ * a length set by 2a, and one that only just fits is often dropped. With a = 1.93 s × pace each
+ * preset's reference typist sits well inside the band where 10-letter hard words fit and 11-letter
+ * ones do not (toss window 5.79 / 3.86 / 2.90 / 2.32 s against bands of 5.56–6.01 / 3.68–3.95 /
+ * 2.81–2.99 / 2.26–2.40 s for Relaxed / Normal / Fast / Lightning).
  *
  * Final summary with those constants and the seeds below.
  *
  * Equal human-model players (humanTypist), 5,000 points per preset, full sets:
  *   preset     WPM  median  p90  max  aces   DF     server  s/point (median)
- *   Relaxed     30     5     7   11   0.0 %  1.7 %  62.0 %  31.0
- *   Normal      50     4     7    9   0.0 %  3.2 %  59.7 %  20.9
- *   Fast        70     3     5    8   0.1 %  3.3 %  59.4 %  14.0
- *   Lightning   90     3     5    9   0.2 %  2.1 %  59.7 %  13.3
- *   (points of ≤ 2 shots: Fast 36.8 %, Lightning 36.4 %, so their median of 3 is not marginal)
+ *   Relaxed     30     5     8   11   0.0 %  3.2 %  62.1 %  33.3
+ *   Normal      50     5     7   10   0.0 %  3.5 %  60.4 %  20.4
+ *   Fast        70     3     5    8   0.0 %  3.3 %  60.7 %  14.3
+ *   Lightning   90     3     5    8   0.3 %  4.2 %  58.1 %  11.1
+ *   (points of ≤ 2 shots: Fast 27.0 %, Lightning 36.4 %, so their median of 3 is not marginal)
+ *   Other seeds (7000 + i, 10,000 points) give DF 3.6 / 3.2 / 4.1 / 4.2 % and server 61.9 / 60.9 /
+ *   60.5 / 56.6 %, with the other figures in range too.
  *
  * Share of points won by a fixed strategy against the adaptive human model, 5,000 points:
  *   preset     alwaysEasy  alwaysHard  neverHard
- *   Relaxed      40.4 %       7.4 %      49.6 %
- *   Normal       37.1 %      10.1 %      48.4 %
- *   Fast         41.9 %      16.2 %      47.2 %
- *   Lightning    36.3 %      14.6 %      46.5 %
+ *   Relaxed      40.5 %       8.4 %      48.8 %
+ *   Normal       37.5 %      10.3 %      48.3 %
+ *   Fast         40.4 %      13.6 %      49.2 %
+ *   Lightning    43.8 %      16.9 %      47.3 %
  *
  * CPU aggression 0.8 vs 0.2 at equal speed, share won by 0.8, 5,000 points:
- *   Relaxed L2 52.3 %, Normal L7 52.9 %, Fast L10 52.7 %, Lightning L12 55.0 %.
+ *   Relaxed L2 51.1 %, Normal L7 53.0 %, Fast L10 52.9 %, Lightning L12 52.1 %.
  *
- * CPU levels at Normal, 200 short sets per pair: the higher level won all 200 sets in each of the
- * 14 adjacent pairs (67.6–83.7 % of points) and each of the 13 pairs 2 apart (83.6–96.7 % of points).
+ * CPU levels at Normal, 200 short sets per pair: sets won by the higher level, points won by it.
+ *   adjacent  sets  points      2 apart  sets  points
+ *   0v1       200   64.7 %      0v2      200   80.3 %
+ *   1v2       200   69.2 %      1v3      200   90.1 %
+ *   2v3       199   76.5 %      2v4      200   89.2 %
+ *   3v4       199   69.2 %      3v5      200   82.6 %
+ *   4v5       200   69.4 %      4v6      200   88.1 %
+ *   5v6       200   72.4 %      5v7      200   92.9 %
+ *   6v7       200   79.1 %      6v8      200   96.5 %
+ *   7v8       200   83.2 %      7v9      200   95.2 %
+ *   8v9       200   80.4 %      8v10     200   92.5 %
+ *   9v10      200   74.1 %      9v11     200   91.3 %
+ *   10v11     200   78.9 %      10v12    200   90.6 %
+ *   11v12     200   75.8 %      11v13    200   86.9 %
+ *   12v13     200   82.2 %      12v14    200   85.0 %
+ *   13v14     200   77.1 %
+ *   Pairs 3–14 apart (not in this suite; 50 sets each, seeds of the 2-apart cells): the higher
+ *   level won all 50 sets in each of the 78 pairs (87.1–100 % of points).
  *
- * Not met: aces ≥ 5 % (measured 0.0–0.2 %; see the it.fails below).
+ * Not met: aces ≥ 5 % (measured 0.0–0.3 %; see the it.fails below).
  */
 import { describe, expect, it } from 'vitest';
 import { cpuProfile, type CpuPolicy } from '../../src/core/cpu';
@@ -135,9 +164,9 @@ describe.skipIf(!FULL).concurrent('balance simulation (spec §6)', { timeout: TE
       // means the receiver never finishes the chase word, but even a finished chase still needs a
       // full reaction and a choice word before T + grace, so a serve fast enough to ace 5 % of
       // returns leaves most of the rest unreturned. With the final constants, aces are 0.0 / 0.0 /
-      // 0.1 / 0.2 % (Relaxed / Normal / Fast / Lightning). Without any reading allowance they
-      // reach only 0.1 / 0.8 / 4.1 / 5.7 %, and the server then wins 77–85 % of points.
-      it.fails('aces are ≥ 5 % of points (not reachable; measured 0.0–0.2 %)', ({ expect }) => {
+      // 0.0 / 0.3 % (Relaxed / Normal / Fast / Lightning). Without any reading allowance they
+      // reach only 0.0 / 0.2 / 1.4 / 4.4 %, and the server then wins 77–86 % of points.
+      it.fails('aces are ≥ 5 % of points (not reachable; measured 0.0–0.3 %)', ({ expect }) => {
         expect(s().aceRate).toBeGreaterThanOrEqual(0.05);
       });
       it('double faults are 1–6 % of points', ({ expect }) => {

@@ -1,11 +1,7 @@
 import type { PaceId, Tier } from './types';
 
-/**
- * Pace multipliers (spec §3.9). Relaxed and Lightning are retuned from the spec's ×1.5 / ×0.6 by the
- * balance simulation (spec §6): reactions do not scale with pace, so at its reference WPM Relaxed
- * ran long (36 s per point) and Lightning too tight (median rally 2, server 47 %).
- */
-export const PACE_MULT: Record<PaceId, number> = { relaxed: 1.4, normal: 1.0, fast: 0.75, lightning: 0.7 };
+/** Pace multipliers (spec §3.9). */
+export const PACE_MULT: Record<PaceId, number> = { relaxed: 1.5, normal: 1.0, fast: 0.75, lightning: 0.6 };
 
 /**
  * All gameplay constants (spec §3). Balance targets (spec §6), for equal players at each pace's
@@ -15,7 +11,12 @@ export const PACE_MULT: Record<PaceId, number> = { relaxed: 1.4, normal: 1.0, fa
  */
 export const TUNING = {
   serveClockMs: 30000,
-  tossApexMs: 2000,
+  // Toss apex a = 1.93 s × pace (spec: 2.0 s). The toss window 2a decides the longest hard serve
+  // word that "fits" (spec §3.8 estimate), and a word that only just fits is often dropped. At 2.0 s
+  // an 11-letter word just fit at Normal and Fast, so double faults reached 6.3 % and 8.5 %; at
+  // 1.93 s each preset's reference typist fits 10-letter words with room and no 11-letter ones
+  // (spec §6 balance simulation; numbers in tests/sim/balance.test.ts).
+  tossApexMs: 1930,
   catchMs: 500,
   contactFactorMin: 0.85,
   flight: {
@@ -29,7 +30,10 @@ export const TUNING = {
     serveReturnBonusPaceMs: 750,
   },
   graceMs: 400,
-  speed: { base: 0.85, perCps: 0.05, cpsRef: 3, min: 0.8, max: 1.3, stretchMult: 0.9, minSpanS: 0.05 },
+  // Speed factor v = 0.875 + 0.025·(cps − 3) (spec: 0.85 + 0.05·(cps − 3); both give v ≈ 0.91 at
+  // 50 WPM). The gentler slope keeps Relaxed/30 WPM points ≤ 35 s and Lightning/90 WPM rallies at
+  // 3+ shots with the spec's pace multipliers (balance simulation, spec §6).
+  speed: { base: 0.875, perCps: 0.025, cpsRef: 3, min: 0.8, max: 1.3, stretchMult: 0.9, minSpanS: 0.05 },
   kmh: { base: 95, tierBonus: { easy: 1.0, medium: 1.05, hard: 1.1 } as Record<Tier, number>, serveMult: 1.25 },
   accuracy: {
     sigma0: { easy: 0.10, medium: 0.12, hard: 0.10 } as Record<Tier, number>,
