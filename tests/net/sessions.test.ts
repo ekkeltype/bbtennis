@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PlayerId } from '../../src/core/types';
+import type { GameEvent, PlayerId } from '../../src/core/types';
 import { ONLINE_PLAYBACK } from '../../src/game/displayQueue';
 import { TICK_MS } from '../../src/game/onlineLink';
+import type { NetMsg } from '../../src/net/protocol';
 import { seedWhere } from '../game/sessionHelpers';
 import {
   config,
@@ -47,20 +48,25 @@ const SETTLE_AFTER_MS = 1500;
 const SETTLE_TOLERANCE_MS = 20 + JITTER_MS;
 /** One confirmation per 50 ms tick, each taking latency ± 30 ms: consecutive ones arrive at most this far apart. */
 const MAX_CONFIRMATION_GAP_MS = TICK_MS + 2 * JITTER_MS;
-/**
- * Matches that do not settle today. Open, awaiting a controller ruling: fix HostSession (Task 21),
- * change the loopback's bytes-in-flight bufferedAmount, or accept it as tracked. Measured cause: every
- * frame carries the whole redacted state (~6 KB), so at 150 and 400 ms one-way the loopback always has
- * more than 16 KB in flight, and the host skips its event-less frames (spec §5.3). The guest's
- * confirmations then stall for up to ~430 ms, and its playback of the host's return lags by up to
- * ~410 ms for seconds. Strict: the test fails as soon as the unsettled matches differ from this list.
- */
-const KNOWN_UNSETTLED = ['seed 2 at 150 ms', 'seed 2 at 400 ms', 'seed 11 at 150 ms', 'seed 12 at 400 ms'];
 
-/** Runs `make` once, on first use, so each test can ask for the shared matches whatever runs first. */
+/**
+ * Runs `make` once, on first use, so each test can ask for the shared matches whatever runs first. A
+ * failure is kept and rethrown to every later caller, so one broken match fails each test that needs it
+ * at once instead of being replayed for each.
+ */
 function lazy<T>(make: () => T): () => T {
-  let value: { v: T } | null = null;
-  return () => (value ??= { v: make() }).v;
+  let made: { ok: true; value: T } | { ok: false; error: unknown } | null = null;
+  return () => {
+    if (made === null) {
+      try {
+        made = { ok: true, value: make() };
+      } catch (error) {
+        made = { ok: false, error };
+      }
+    }
+    if (!made.ok) throw made.error;
+    return made.value;
+  };
 }
 
 const invarianceRuns = lazy(() =>
@@ -84,6 +90,23 @@ function expectFinished(run: MatchRun): void {
     expect(ids, where).toEqual(ids.map((_, i) => i + 1));
   }
 }
+
+describe('the shared matches', () => {
+  it('are built on first use only; a build that fails is kept and rethrown to every test that asks, never built again', () => {
+    let builds = 0;
+    const ok = lazy(() => ++builds);
+    expect([ok(), ok()]).toEqual([1, 1]);
+    const boom = new Error('a typist fell behind');
+    let tries = 0;
+    const bad = lazy((): number => {
+      tries++;
+      throw boom;
+    });
+    expect(bad).toThrow(boom);
+    expect(bad).toThrow(boom);
+    expect(tries).toBe(1);
+  });
+});
 
 describe('online sessions run headless', () => {
   it('have no DOM to touch: a VirtualScheduler and a loopback transport are all they get', () => {
@@ -160,7 +183,7 @@ describe('online sessions: the guest\'s playback of host-owned turns', () => {
     }
   }, SHORT_SETS_TIMEOUT + INVARIANCE_TIMEOUT);
 
-  it('settles within 1.5 s of each guest strike: from then until the host\'s return ends, 60 ± 50 ms behind the confirmed τ per 50 ms period', () => {
+  it('settles within 1.5 s of each guest strike in every match: from then until the host\'s return ends, 60 ± 50 ms behind the confirmed τ per 50 ms period', () => {
     const unsettled: string[] = [];
     const starved: string[] = [];
     const details: string[] = [];
@@ -178,22 +201,27 @@ describe('online sessions: the guest\'s playback of host-owned turns', () => {
       }
       if (report.maxGapMs > MAX_CONFIRMATION_GAP_MS) starved.push(where);
     }
-    expect(unsettled, details.join('\n')).toEqual(KNOWN_UNSETTLED);
-    // The listed matches' measured cause: there, and only there, confirmations stall for longer than a tick plus the jitter window.
-    expect(starved).toEqual(KNOWN_UNSETTLED);
+    expect(unsettled, details.join('\n')).toEqual([]);
+    // Confirmations flowed (spec §5.3: they are never skipped): none waited longer than a tick plus the jitter window.
+    expect(starved).toEqual([]);
   }, SHORT_SETS_TIMEOUT + INVARIANCE_TIMEOUT);
 });
 
 describe('online sessions: redaction', () => {
-  it('frames sent to the guest never contain the host\'s unstruck serve words, spare sets or randoms', () => {
+  it('no frame sent to the guest, bare confirmations included, contains the host\'s serve words (unless struck or public), spare sets or randoms', () => {
     for (const run of allRuns()) {
       const where = `seed ${run.seed} at ${run.latencyMs} ms`;
       const scan = redactionLeaks(run.rig.hostWire.sent, run.secrets);
       expect(scan.leaks, where).toEqual([]);
-      // The scan had something to find: host serve turns with spare sets in frames, and host randoms.
+      // Every frame was scanned; most are bare confirmations (spec §5.3).
+      expect(scan.frames, where).toBe(run.rig.hostWire.sent.filter(({ m }) => m.type === 'frame').length);
+      expect(scan.confirmations, where).toBeGreaterThan(scan.frames / 2);
+      // The scan had something to find: frames carrying host turns, and every frame checked against each
+      // host serve word still secret (spare and appended sets too) and each host random. The floors are
+      // about half the smallest match's counts (the 0 ms tiebreak: 1135 frames, ~196k and ~1.9M checks).
       expect(scan.framesWithHostTurns, where).toBeGreaterThan(500);
-      expect(scan.wordsChecked, where).toBeGreaterThan(5000);
-      expect(scan.randomsChecked, where).toBeGreaterThan(5000);
+      expect(scan.wordsChecked, where).toBeGreaterThan(100_000);
+      expect(scan.randomsChecked, where).toBeGreaterThan(1_000_000);
       expect(run.secrets.maxSets, where).toBeGreaterThanOrEqual(3);
     }
   }, SHORT_SETS_TIMEOUT + INVARIANCE_TIMEOUT);
@@ -206,6 +234,23 @@ describe('online sessions: redaction', () => {
     const scan = redactionLeaks([{ at: 0, m: leaky, json: JSON.stringify(leaky) }], run.secrets);
     expect(scan.leaks.some((l) => l.includes('serve word'))).toBe(true);
     expect(scan.leaks.some((l) => l.includes('random'))).toBe(true);
+  }, INVARIANCE_TIMEOUT);
+
+  it('the scan checks every frame, in order, against every secret: a word in a frame with no host turn and a random in a bare confirmation are flagged, and a word only once struck is not', () => {
+    const run = invarianceRuns()[0]!;
+    const d = run.secrets.hostServeTurn!.data;
+    const word = d.kind === 'serve' ? d.wordSets.at(-1)!.options[1]!.word : '';
+    const final = run.rig.host.result!;
+    const [p0, p1] = final.players;
+    // The word slips out through a name; the random as a confirmation's τ.
+    const named: NetMsg = { type: 'frame', turn: 999, τ: 0, s: { ...final, turn: null, lastTurn: null, players: [{ ...p0, name: word }, p1] } };
+    const bare: NetMsg = { type: 'frame', turn: 999, τ: d.randoms[0] };
+    const strike: GameEvent = { turn: 999, τ: 0, type: 'strike', player: 0, word, tier: 'medium', kmh: 120, isServe: true, stretch: false, forehand: true };
+    const struck: NetMsg = { type: 'frame', turn: 999, τ: 0, ev: [strike] };
+    const scan = redactionLeaks([named, bare, struck, named].map((m, i) => ({ at: i, m, json: JSON.stringify(m) })), run.secrets);
+    expect(word).toMatch(/^[a-z]+$/);
+    expect(scan.leaks.filter((l) => l.includes(`"${word}"`)).map((l) => l.split(':')[0])).toEqual(['at 0']);
+    expect(scan.leaks.some((l) => l.startsWith('at 1:') && l.includes('random'))).toBe(true);
   }, INVARIANCE_TIMEOUT);
 });
 

@@ -511,8 +511,15 @@ export class HostSecrets {
 /** What a redaction scan found, and how much it looked at. */
 export interface RedactionScan {
   leaks: string[];
+  /** Frames scanned: every frame, in the order sent. */
+  frames: number;
+  /** Of those, the bare confirmations (no state). */
+  confirmations: number;
+  /** Of those, the ones whose state carried a host turn (its secrets redacted). */
   framesWithHostTurns: number;
+  /** Frame × host serve word checks: each frame against every word not yet made public. */
   wordsChecked: number;
+  /** Frame × host random checks: each frame against every random. */
   randomsChecked: number;
 }
 
@@ -522,32 +529,73 @@ export interface RedactionScan {
  * that happens to be such a value is no false alarm; every other string (words above all) is scanned.
  */
 const VOCABULARY_FIELD = /"(kind|phase|tier|type|k|status|variant|call|reason|side|outcome|surface|pace|format|wordPack|deuceRule)":"[^"]*"/g;
+const JSON_STRING = /"(?:[^"\\]|\\.)*"/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+type FrameMsg = Extract<NetMsg, { type: 'frame' }>;
+
+/** Each secret as JSON, with the host turns it belongs to; `skip` leaves a value out. */
+function byJson<T>(of: ReadonlyMap<number, Iterable<T>>, skip: (v: T) => boolean): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  for (const [turn, values] of of) {
+    for (const v of values) {
+      if (skip(v)) continue;
+      const key = JSON.stringify(v);
+      out.set(key, [...(out.get(key) ?? []), turn]);
+    }
+  }
+  return out;
+}
+
+/** The turns a frame's state carries. */
+const carried = (m: FrameMsg): TurnState[] => [m.s?.turn, m.s?.lastTurn].filter((t): t is TurnState => t !== null && t !== undefined);
+
+/** The words a frame shows in public: every word struck (in its state or events), and every return turn's chase word and choice options. */
+function publicWords(m: FrameMsg): string[] {
+  const words = (m.ev ?? []).flatMap((e) => (e.type === 'strike' ? [e.word] : []));
+  for (const t of carried(m)) {
+    if (t.outcome?.kind === 'strike') words.push(t.outcome.strike.word.word);
+    if (t.data.kind === 'return') words.push(t.data.chase.word, ...t.data.choice.options.map((o) => o.word));
+  }
+  return words;
+}
+
+/** The serve words of the guest's own serve turns in a frame: the guest's to see, whatever the host's words. */
+function guestServeWords(m: FrameMsg): string[] {
+  return carried(m).flatMap((t) => (t.data.owner === 1 && t.data.kind === 'serve' ? t.data.wordSets.flatMap((set) => set.options.map((o) => o.word)) : []));
+}
 
 /**
- * Scans the JSON of every frame sent to the guest for the host's secrets in the host turns it
- * carries: each serve word of every set (current and spare) as a JSON string, except the struck
- * word once the frame shows the serve struck, and each of the turn's randoms.
+ * Scans the JSON of every frame sent to the guest, in order, bare confirmations included, against all
+ * the host's recorded secrets: each serve word of every host serve turn (current, spare and appended
+ * sets) as a JSON string, and each random of every host turn as a JSON number. A word is exempt only
+ * from the frame on which it is first struck or shown as a return turn's word (a choice option, or the
+ * chase word, which is the word just struck), since it is public from then on. The picker may give the
+ * guest's own serve a word that is (or will be) one of the host's; in a frame showing it in the guest's
+ * serve turn it is the guest's and no leak.
  */
 export function redactionLeaks(sent: readonly Sent[], secrets: HostSecrets): RedactionScan {
-  const scan: RedactionScan = { leaks: [], framesWithHostTurns: 0, wordsChecked: 0, randomsChecked: 0 };
+  const words = byJson(secrets.words, () => false);
+  const randoms = byJson(secrets.randoms, (r) => r === 0);
+  /** The host's serve words not yet made public. */
+  const live = new Set(words.keys());
+  const scan: RedactionScan = { leaks: [], frames: 0, confirmations: 0, framesWithHostTurns: 0, wordsChecked: 0, randomsChecked: 0 };
   for (const { at, m, json: raw } of sent) {
-    if (m.type !== 'frame' || m.s === undefined) continue;
+    if (m.type !== 'frame') continue;
+    scan.frames++;
+    if (m.s === undefined) scan.confirmations++;
+    else if (carried(m).some((t) => t.data.owner === 0)) scan.framesWithHostTurns++;
+    for (const w of publicWords(m)) live.delete(JSON.stringify(w));
+    const own = new Set(guestServeWords(m).map((w) => JSON.stringify(w)));
+    scan.wordsChecked += live.size - [...own].filter((w) => live.has(w)).length;
+    scan.randomsChecked += randoms.size;
     const json = raw.replace(VOCABULARY_FIELD, '');
-    const hostTurns = [m.s.turn, m.s.lastTurn].filter((t): t is TurnState => t !== null && t.data.owner === 0);
-    if (hostTurns.length > 0) scan.framesWithHostTurns++;
-    for (const t of hostTurns) {
-      const id = t.data.turnId;
-      const struck = t.outcome?.kind === 'strike' ? t.outcome.strike.word.word : null;
-      for (const w of secrets.words.get(id) ?? []) {
-        if (w === struck) continue;
-        scan.wordsChecked++;
-        if (json.includes(JSON.stringify(w))) scan.leaks.push(`at ${at}: turn ${id} serve word "${w}"`);
-      }
-      for (const r of secrets.randoms.get(id) ?? []) {
-        if (r === 0) continue;
-        scan.randomsChecked++;
-        if (json.includes(JSON.stringify(r))) scan.leaks.push(`at ${at}: turn ${id} random ${r}`);
-      }
+    for (const w of new Set(json.match(JSON_STRING))) {
+      if (live.has(w) && !own.has(w)) scan.leaks.push(`at ${at}: turn ${words.get(w)!.join('/')} serve word ${w}`);
+    }
+    for (const r of new Set(json.replace(JSON_STRING, '""').match(JSON_NUMBER))) {
+      const turns = randoms.get(r);
+      if (turns !== undefined) scan.leaks.push(`at ${at}: turn ${turns.join('/')} random ${r}`);
     }
   }
   return scan;
