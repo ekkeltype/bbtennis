@@ -1,0 +1,7 @@
+node_modules
+dist
+artifacts
+*.zip
+.vite
+test-results
+tools/scratch/
