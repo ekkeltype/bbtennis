@@ -176,11 +176,12 @@ function drawNameChip(
  * 1 px halo outside the box, typed letters in the tier's typed shade (`TIER_TYPED`), remaining ones
  * near-white, inverse cursor block; a wrong key flashes the fill light grey for 80 ms (letters turn
  * dark) and shakes the plate by up to 2 px unless `reduceEffects`. Remote: grey outline, 70 % fill,
- * no cursor, typed letters in the typed shade. Hidden remote: tier outline, a dim dot per letter,
- * typed letters as 3×5 tier blocks. Remote plates shake on a wrong key but never flash. The name
- * chip is painted in `oppColor` with white or dark text, above the plate or, in the far prompt band,
- * beside it; a dark chip gets a light rim. Every plate has 1/2/3 tier pips and a 1 px dark stroke;
- * red is never used. Canvas state is restored afterwards.
+ * no cursor, typed letters in the typed shade. Hidden remote: tier outline, opaque fill (its dots
+ * must read over the crowd), a dim dot per letter, typed letters as 3×5 tier blocks. Remote plates
+ * shake on a wrong key but never flash. The name chip is painted in `oppColor` with white or dark
+ * text, above the plate or, in the far prompt band, beside it; a dark chip gets a light rim. Every
+ * plate has 1/2/3 tier pips and a 1 px dark stroke; red is never used. Canvas state is restored
+ * afterwards.
  */
 export function drawPlate(ctx: CanvasRenderingContext2D, p: PlateDraw): void {
   const alpha = 1 - clamp01(p.faded);
@@ -201,7 +202,7 @@ export function drawPlate(ctx: CanvasRenderingContext2D, p: PlateDraw): void {
   if (local) frame(ctx, x - s, y - s, w + 2 * s, h + 2 * s, s, PLATE.halo);
   frame(ctx, x, y, w, h, s, PLATE.outline);
   frame(ctx, x + s, y + s, w - 2 * s, h - 2 * s, s, p.style === 'remote' ? PLATE.dim : tier);
-  if (!local) ctx.globalAlpha = opacity * REMOTE_FILL_ALPHA;
+  if (p.style === 'remote') ctx.globalAlpha = opacity * REMOTE_FILL_ALPHA;
   rect(ctx, x + 2 * s, y + 2 * s, w - 4 * s, h - 4 * s, flash ? PLATE.flash : PLATE.fill);
   ctx.globalAlpha = opacity;
   drawPips(ctx, p.opt.tier, x, y, s, flash ? PLATE.fill : tier);

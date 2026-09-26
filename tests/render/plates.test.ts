@@ -360,12 +360,13 @@ describe('drawPlate — remote', () => {
     }
   });
 
-  it('hides the word: one dim dot per letter, typed letters as 3×5 tier blocks, tier outline and pips', () => {
+  it('hides the word on an opaque fill: one dim dot per letter, typed letters as 3×5 tier blocks, tier outline and pips', () => {
     const g = scene();
     const p = hidden(8, 'medium', { typed: 3 });
     drawPlate(as2d(g), p);
     const tier = TIER_COLOR.medium;
-    const fill = mix(PLATE.fill, BG, 0.7);
+    // Opaque, unlike a visible remote word's 70 % fill, so the dots read over the crowd.
+    const fill = PLATE.fill;
     expect(p.box.w).toBe(plateWidth(8));
     expect(at(g, p.box.x + 1, p.box.y + 8)).toBe(tier);
     expect(at(g, p.box.x + 3, p.box.y + 5)).toBe(tier);
