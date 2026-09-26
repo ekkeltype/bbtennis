@@ -249,8 +249,13 @@ Lightning ×0.6 (~90 WPM).
 
 ### 3.10 Words
 - Lowercase a–z only. Tiers by length: easy 3–5, medium 6–9, hard 10–14.
-- Packs: **Tennis & Dojo** (default), **Everyday English**, **Mixed**. Each pack ≥ 120 easy,
-  ≥ 120 medium, ≥ 80 hard words; no duplicates; no offensive words.
+- Packs (selectable in Options, vs-CPU setup and the host lobby): **Everyday** (default; common
+  English words), **Sports** (vocabulary from many sports), **Dojo** (martial arts), **Mixed**
+  (union). Each pack ≥ 120 easy, ≥ 120 medium, ≥ 80 hard words; no duplicates; no offensive words.
+- **No misleading words**: no pack contains a word that names a shot, stroke, spin, shot outcome or
+  direction (e.g. forehand, backhand, lob, volley, smash, slice, topspin, dropshot, crosscourt, ace,
+  left, right, wide, short, deep, long, high, low, middle, corner, line), because a word must never
+  contradict where the ball actually goes. A shared blocklist enforces this in tests.
 - Picker: one word per tier from the seeded match RNG; pairwise-distinct initials that are not
   adjacent on US QWERTY (no shared edge or diagonal); none of the last 20 **offered** words (every
   word ever shown or pre-picked, including unchosen options and dropped tosses); a re-toss never
