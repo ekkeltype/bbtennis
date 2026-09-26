@@ -81,8 +81,11 @@ export function cpuProfile(level: number): CpuProfile {
 /** How the CPU picks a serve/choice word: spec §3.8's adaptive rule, or a fixed strategy for balance checks. */
 export type CpuPolicy = 'adaptive' | 'alwaysEasy' | 'alwaysHard' | 'neverHard';
 
-/** Optional CpuBrain settings; `policy` defaults to 'adaptive'. */
-export interface CpuBrainOptions { policy?: CpuPolicy }
+/**
+ * Optional CpuBrain settings: `policy` defaults to 'adaptive'; `chaseReactionMs` (ms, finite, ≥ 0)
+ * replaces the reaction before a chase word's first key, for rally and serve-return chases alike.
+ */
+export interface CpuBrainOptions { policy?: CpuPolicy; chaseReactionMs?: number }
 
 /** One input the CPU will make: a letter or 'toss', at turn-clock τ (ms). */
 export interface PlannedKey { key: string; τ: number }
@@ -102,62 +105,91 @@ const CPU = {
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz';
 
+/**
+ * The plan for one prompt shown (or expected) at `shownAt`: the option it types, and its inputs
+ * from the prompt's `from`-th input (correct or wrong key) on.
+ */
+interface PromptPlan { shownAt: number; option: number; from: number; keys: PlannedKey[] }
+
 /** Planner for one CPU player. Deterministic given (seed, the turn states it sees). */
 export class CpuBrain {
   private readonly player: PlayerId;
   private readonly profile: CpuProfile;
   private readonly policy: CpuPolicy;
+  private readonly chaseReactionMs: number | undefined;
   private readonly rng: RngState;
-  /** Keys planned per prompt id; a prompt's plan is fixed once made. */
-  private readonly promptPlans = new Map<number, PlannedKey[]>();
-  /** Planned toss τ per PRE_SERVE (turn id + word set index), before clamping to the turn clock. */
+  /** Turn the plans below belong to; they are dropped when another turn id is seen. */
+  private turnId: number | null = null;
+  /** Plan per prompt, keyed `turnId:promptId`; fixed once made unless a planned key is skipped. */
+  private readonly promptPlans = new Map<string, PromptPlan>();
+  /** Planned toss τ per PRE_SERVE, keyed `turnId:setIndex`, before clamping to the turn clock. */
   private readonly tossPlans = new Map<string, number>();
 
   constructor(player: PlayerId, profile: CpuProfile, seed: number, opts: CpuBrainOptions = {}) {
     if (!isValidProfile(profile)) throw new RangeError(`CpuBrain: invalid profile ${JSON.stringify(profile)}`);
+    const { chaseReactionMs } = opts;
+    if (chaseReactionMs !== undefined && !isDelayMs(chaseReactionMs)) {
+      throw new RangeError(`CpuBrain: invalid chaseReactionMs ${chaseReactionMs}`);
+    }
     this.player = player;
     this.profile = { ...profile };
     this.policy = opts.policy ?? 'adaptive';
+    this.chaseReactionMs = chaseReactionMs;
     this.rng = seedRng(forkSeed(seed, player + 1));
   }
 
   /** Inputs the CPU will make for the current turn state, in τ order, from its current position on. Stable across calls for the same prompt. */
   plan(t: TurnState): PlannedKey[] {
+    this.enterTurn(t.data.turnId);
     if (!t.started || t.ended || t.outcome !== null || t.data.owner !== this.player) return [];
     const keys = t.data.kind === 'serve' ? this.planServe(t, t.data) : this.planReturn(t, t.data);
     return keys.map((k) => ({ ...k }));
   }
 
-  /** PRE_SERVE: the toss. TOSS: reaction + keys of the chosen serve word, judged against tossAt + 2a. */
+  /** Drops the plans of earlier turns when a new turn id is seen (ids restart when the brain plays another match). */
+  private enterTurn(turnId: number): void {
+    if (turnId === this.turnId) return;
+    this.turnId = turnId;
+    this.promptPlans.clear();
+    this.tossPlans.clear();
+  }
+
+  /** PRE_SERVE: the toss. TOSS: reaction + keys of the chosen serve word, judged against tossAt + 2a from now. */
   private planServe(t: TurnState, d: ServeTurnData): PlannedKey[] {
     if (t.phase === 'preServe') {
       return d.wordSets[t.setIndex] === undefined ? [] : [{ key: 'toss', τ: Math.max(this.tossPlan(t, d), t.τ) }];
     }
     const prompt = t.phase === 'toss' && t.active !== null ? t.prompts[t.active] : undefined;
     if (prompt?.kind !== 'serve') return [];
-    const keys = this.promptPlan(prompt.id, () => {
+    const plan = this.promptPlan(t, prompt.id, prompt.shownAt, () => {
       const deadline = (t.tossAt ?? prompt.shownAt) + 2 * d.tossApexMs * d.pace;
       const aggression = this.profile.aggression * (d.serveNo === 2 ? CPU.secondServeAggression : 1);
-      const word = prompt.options[this.choose(prompt.options, deadline - prompt.shownAt, aggression)];
-      return this.typeWord(word, Math.max(prompt.shownAt + this.profile.reactionMs, t.τ));
+      const option = this.choose(prompt.options, deadline - Math.max(prompt.shownAt, t.τ), aggression);
+      return this.newPlan(prompt.options, option, prompt.shownAt, this.profile.reactionMs, t.τ);
     });
-    return unconsumed(keys, prompt, t.τ);
+    return this.rest(plan, prompt, t.τ);
   }
 
-  /** Chase keys after a (half, for rally balls) reaction, then the choice keys a full reaction after the chase completes. */
+  /**
+   * Chase keys after the chase reaction (default: half a reaction for a rally ball, a full one for a
+   * serve return), then the choice keys a full reaction after the chase completes, judged against T from now.
+   */
   private planReturn(t: TurnState, d: ReturnTurnData): PlannedKey[] {
     const chase = t.prompts.find((p) => p.kind === 'chase');
     const choice = t.prompts.find((p) => p.kind === 'choice');
-    const chaseReactionMs = this.profile.reactionMs * (d.isServeReturn ? 1 : CPU.rallyChaseReaction);
-    const chaseKeys = this.promptPlan(chase?.id ?? d.promptBase, () =>
-      this.typeWord(d.chase, Math.max((chase?.shownAt ?? 0) + chaseReactionMs, t.τ)),
+    const chaseShownAt = chase?.shownAt ?? 0;
+    const chaseReactionMs = this.chaseReactionMs ?? this.profile.reactionMs * (d.isServeReturn ? 1 : CPU.rallyChaseReaction);
+    const chasePlan = this.promptPlan(t, chase?.id ?? d.promptBase, chaseShownAt, () =>
+      this.newPlan([d.chase], 0, chaseShownAt, chaseReactionMs, t.τ),
     );
-    const choiceKeys = this.promptPlan(choice?.id ?? d.promptBase + 1, () => {
-      const shownAt = choice?.shownAt ?? chaseKeys[chaseKeys.length - 1]?.τ ?? t.τ;
-      const word = d.choice.options[this.choose(d.choice.options, d.incoming.T - shownAt, this.profile.aggression)];
-      return this.typeWord(word, Math.max(shownAt + this.profile.reactionMs, t.τ));
+    const chaseKeys = this.rest(chasePlan, chase, t.τ);
+    const choiceShownAt = choice?.shownAt ?? chaseKeys[chaseKeys.length - 1]?.τ;
+    if (choiceShownAt === undefined) return chaseKeys;
+    const choicePlan = this.promptPlan(t, choice?.id ?? d.promptBase + 1, choiceShownAt, () => {
+      const option = this.choose(d.choice.options, d.incoming.T - Math.max(choiceShownAt, t.τ), this.profile.aggression);
+      return this.newPlan(d.choice.options, option, choiceShownAt, this.profile.reactionMs, t.τ);
     });
-    return [...unconsumed(chaseKeys, chase, t.τ), ...unconsumed(choiceKeys, choice, t.τ)];
+    return [...chaseKeys, ...this.rest(choicePlan, choice, t.τ)];
   }
 
   /** Planned toss τ for the current PRE_SERVE: its start + U(600, 1200), drawn once. */
@@ -171,13 +203,38 @@ export class CpuBrain {
     return τ;
   }
 
-  private promptPlan(id: number, make: () => PlannedKey[]): PlannedKey[] {
-    let keys = this.promptPlans.get(id);
-    if (keys === undefined) {
-      keys = make();
-      this.promptPlans.set(id, keys);
-    }
-    return keys;
+  /**
+   * The plan of a prompt shown (or expected) at `shownAt`, made once. A plan made for another shownAt
+   * is replaced: a choice pre-planned after a chase that was then re-planned is shown later than planned.
+   */
+  private promptPlan(t: TurnState, id: number, shownAt: number, make: () => PromptPlan): PromptPlan {
+    const key = `${t.data.turnId}:${id}`;
+    const cached = this.promptPlans.get(key);
+    if (cached?.shownAt === shownAt) return cached;
+    const plan = make();
+    this.promptPlans.set(key, plan);
+    return plan;
+  }
+
+  /** A plan to type `options[option]` in full, its first key a reaction after `shownAt` and never before τ. */
+  private newPlan(options: readonly WordOption[], option: number, shownAt: number, reactionMs: number, τ: number): PromptPlan {
+    return { shownAt, option, from: 0, keys: this.typeWord(options[option], 0, Math.max(shownAt + reactionMs, τ)) };
+  }
+
+  /**
+   * The plan's keys not yet typed (every planned key lands as a correct or a wrong key). If the turn
+   * clock τ has passed the next of them (a driver skipped it), the rest of the prompt is re-planned
+   * from its actual state (typed count, locked option) starting at τ.
+   */
+  private rest(plan: PromptPlan, prompt: PromptState | undefined, τ: number): PlannedKey[] {
+    if (prompt === undefined) return plan.keys;
+    if (isComplete(prompt)) return [];
+    const used = prompt.correctKeys + prompt.wrongKeys;
+    const keys = plan.keys.slice(used - plan.from);
+    if (keys[0] === undefined || keys[0].τ >= τ) return keys;
+    plan.from = used;
+    plan.keys = this.typeWord(prompt.options[prompt.locked ?? plan.option], prompt.typed, τ);
+    return plan.keys;
   }
 
   /**
@@ -210,26 +267,28 @@ export class CpuBrain {
   }
 
   /**
-   * Keys of one word from `start`: per-word factor f, jittered intervals, hesitations on hard words,
-   * and errors (never on the first key) followed by the right letter 150–300 ms later.
+   * Keys of `word` from letter `from` on, the first at `start`: per-word factor f, jittered intervals,
+   * hesitations on hard words, and errors (never on a prompt's first key) followed by the right letter
+   * 150–300 ms later.
    */
-  private typeWord(word: WordOption | undefined, start: number): PlannedKey[] {
+  private typeWord(word: WordOption | undefined, from: number, start: number): PlannedKey[] {
     if (word === undefined) return [];
     const { rng } = this;
     const f = clamp(1 + CPU.wordFactor.perZ * normalIH(rng), CPU.wordFactor.min, CPU.wordFactor.max);
     const keys: PlannedKey[] = [];
     let τ = start;
-    [...word.word].forEach((letter, i) => {
-      if (i > 0) {
+    for (let i = from; i < word.word.length; i++) {
+      const letter = word.word.charAt(i);
+      if (i > from) {
         τ += this.intervalMs() * f * (1 + CPU.intervalSpread * (uniform(rng) + uniform(rng) - 1));
         if (word.tier === 'hard' && chance(rng, CPU.hesitation.chance)) τ += uniformIn(rng, CPU.hesitation.min, CPU.hesitation.max);
-        if (chance(rng, this.profile.err)) {
-          keys.push({ key: wrongLetter(rng, letter), τ });
-          τ += uniformIn(rng, CPU.errorPause.min, CPU.errorPause.max);
-        }
+      }
+      if (i > 0 && chance(rng, this.profile.err)) {
+        keys.push({ key: wrongLetter(rng, letter), τ });
+        τ += uniformIn(rng, CPU.errorPause.min, CPU.errorPause.max);
       }
       keys.push({ key: letter, τ });
-    });
+    }
     return keys;
   }
 }
@@ -239,9 +298,14 @@ function isValidProfile({ wpm, err, reactionMs, aggression }: CpuProfile): boole
   return (
     Number.isFinite(wpm) && wpm > 0 &&
     err >= 0 && err < 1 &&
-    Number.isFinite(reactionMs) && reactionMs >= 0 &&
+    isDelayMs(reactionMs) &&
     Number.isFinite(aggression)
   );
+}
+
+/** A finite, non-negative delay in ms. */
+function isDelayMs(ms: number): boolean {
+  return Number.isFinite(ms) && ms >= 0;
 }
 
 /** τ at which the current PRE_SERVE began: the end of the last catch, else the end of the lead-in. */
@@ -251,13 +315,6 @@ function preServeStart(t: TurnState, d: ServeTurnData): number {
     if (e?.k === 'catch') return e.τ + d.catchMs;
   }
   return d.leadIn.ms;
-}
-
-/** The keys of a prompt's plan not yet typed (every planned key is either correct or wrong), at or after τ. */
-function unconsumed(keys: readonly PlannedKey[], prompt: PromptState | undefined, τ: number): PlannedKey[] {
-  if (prompt !== undefined && isComplete(prompt)) return [];
-  const consumed = prompt === undefined ? 0 : prompt.correctKeys + prompt.wrongKeys;
-  return keys.slice(consumed).filter((k) => k.τ >= τ);
 }
 
 function uniformIn(rng: RngState, min: number, max: number): number {

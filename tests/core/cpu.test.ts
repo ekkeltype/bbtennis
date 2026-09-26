@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CPU_LEVELS, CpuBrain, cpuProfile, isMilestone } from '../../src/core/cpu';
 import type { CpuPolicy, CpuProfile, PlannedKey } from '../../src/core/cpu';
-import { seedRng } from '../../src/core/rng';
+import { forkSeed, seedRng, uniform } from '../../src/core/rng';
 import { CPU_LEVEL_WPM, CPU_MILESTONES } from '../../src/core/tuning';
 import { applyLetter, createPrompt, lockedWord } from '../../src/core/typing';
 import type { KeyResult } from '../../src/core/typing';
@@ -411,6 +411,20 @@ describe('CpuBrain — serve turns', () => {
     expect(tier(2749, 0.5)).toBe('medium');
   });
 
+  it('judges a serve word it first sees late against the time left from then (deadline − now)', () => {
+    // est: medium (8) 2100 ms; deadline tossAt + 2600 ⇒ medium fits when first seen ≤ 250 ms after the toss.
+    const tier = (lateMs: number): Tier | undefined => {
+      const brain = new CpuBrain(0, CLEAN, 5);
+      const t = serveTurn({ tossApexMs: 1300 });
+      feed(t, brain.plan(t)[0] as PlannedKey);
+      t.τ = (t.tossAt ?? Number.NaN) + lateMs;
+      return lockedTier(t.prompts[0]?.options ?? [], brain.plan(t));
+    };
+    expect(tier(0)).toBe('medium');
+    expect(tier(249)).toBe('medium'); // 2600 − 249 − 250 = 2101 ≥ 2100
+    expect(tier(251)).toBe('easy');
+  });
+
   it('counts expected error time in the estimate', () => {
     // err 0.1: est(medium 8) = 500 + 8·200·(1 + 0.1/0.9) + 0.1·8·225 ≈ 2458 ms > 2600 − 250.
     const sloppy: CpuProfile = { ...CLEAN, err: 0.1 };
@@ -493,6 +507,110 @@ describe('CpuBrain — return turns', () => {
       expect(tier(shownAt + 250 + 2701)).toBe('hard');
       expect(tier(shownAt + 250 + 2699)).toBe('medium');
     }
+  });
+
+  it('judges a choice it first sees late against the time left from then (T − now)', () => {
+    // est: medium 'topspin' 1900 ms; T = shownAt + 2400 ⇒ medium fits when first seen ≤ 250 ms after it is shown.
+    const tier = (lateMs: number): Tier | undefined => {
+      const t = returnTurn({ T: 2900 });
+      [...'rally'].forEach((key, i) => feed(t, { key, τ: 100 * (i + 1) })); // the choice is shown at 500
+      t.τ = 500 + lateMs;
+      return lockedTier(t.prompts[1]?.options ?? [], new CpuBrain(0, CLEAN, 5).plan(t));
+    };
+    expect(tier(0)).toBe('medium');
+    expect(tier(249)).toBe('medium'); // 2400 − 249 − 250 = 1901 ≥ 1900
+    expect(tier(251)).toBe('easy');
+  });
+});
+
+describe('CpuBrain — chase reaction override (opts.chaseReactionMs)', () => {
+  it('replaces the reaction before rally and serve-return chase words', () => {
+    const opts = { chaseReactionMs: 250 };
+    expect(new CpuBrain(0, PROFILE, 1, opts).plan(returnTurn())[0]?.τ).toBe(250);
+    expect(new CpuBrain(0, PROFILE, 1, opts).plan(returnTurn({ isServeReturn: true }))[0]?.τ).toBe(250);
+    expect(new CpuBrain(0, PROFILE, 1, { chaseReactionMs: 0 }).plan(returnTurn())[0]?.τ).toBe(0);
+  });
+
+  it('leaves the full profile reaction before choice and serve words', () => {
+    const opts = { chaseReactionMs: 250 };
+    const t = returnTurn();
+    drive(new CpuBrain(0, PROFILE, 4, opts), t);
+    const [chase, choice] = t.prompts;
+    expect(choice?.tFirst).toBe((chase?.completedAt ?? Number.NaN) + PROFILE.reactionMs);
+    const [toss, first] = drive(new CpuBrain(0, PROFILE, 3, opts), serveTurn());
+    expect(first?.τ).toBe((toss?.τ ?? Number.NaN) + PROFILE.reactionMs);
+  });
+
+  it('rejects a chase reaction that would produce NaN or negative times', () => {
+    for (const chaseReactionMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => new CpuBrain(0, PROFILE, 1, { chaseReactionMs })).toThrow(RangeError);
+    }
+  });
+});
+
+describe('CpuBrain — skipped keys', () => {
+  const SLOPPY: CpuProfile = { ...PROFILE, err: 0.2 };
+
+  it('re-plans a serve word from its actual state at the turn clock when a planned key is skipped', () => {
+    const skipped = { right: 0, wrong: 0 };
+    for (const skip of [0, 1, 2]) {
+      for (let seed = 0; seed < 30; seed++) {
+        const brain = new CpuBrain(0, SLOPPY, seed);
+        const t = serveTurn();
+        feed(t, brain.plan(t)[0] as PlannedKey);
+        const planned = brain.plan(t);
+        const prompt = t.prompts[0] as PromptState;
+        const word = prompt.options.find((o) => o.word[0] === planned[0]?.key);
+        planned.slice(0, skip).forEach((k) => feed(t, k));
+        const missed = planned[skip] as PlannedKey;
+        skipped[missed.key === word?.word[prompt.typed] ? 'right' : 'wrong']++;
+        t.τ = missed.τ + 1; // clocked past it, never fed
+        const replanned = brain.plan(t);
+        expect(replanned[0]?.τ).toBe(t.τ);
+        expect(brain.plan(t)).toEqual(replanned);
+        drive(brain, t);
+        expect(prompt.completedAt).not.toBeNull();
+        expect(lockedWord(prompt)).toEqual(word);
+      }
+    }
+    expect(skipped.wrong).toBeGreaterThan(0);
+    expect(skipped.right).toBeGreaterThan(0);
+  });
+
+  it('completes a chase with a skipped key, then starts the choice a full reaction after the chase really completes', () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const brain = new CpuBrain(0, SLOPPY, seed);
+      const t = returnTurn();
+      const planned = brain.plan(t);
+      planned.slice(0, 2).forEach((k) => feed(t, k));
+      t.τ = (planned[2]?.τ ?? Number.NaN) + 1;
+      expect(brain.plan(t)[0]?.τ).toBe(t.τ);
+      drive(brain, t);
+      const [chase, choice] = t.prompts;
+      expect(chase?.completedAt).not.toBeNull();
+      expect(choice?.completedAt).not.toBeNull();
+      expect(choice?.tFirst).toBe((chase?.completedAt ?? Number.NaN) + SLOPPY.reactionMs);
+    }
+  });
+});
+
+describe('CpuBrain — turn ids', () => {
+  it('plans correctly when reused for a second match whose turn and prompt ids restart at 1', () => {
+    const brain = new CpuBrain(0, PROFILE, 3);
+    drive(brain, returnTurn({ turnId: 1, chase: 'rally' }));
+    drive(brain, serveTurn({ turnId: 2 }));
+
+    const ret = returnTurn({ turnId: 1, chase: 'bench' });
+    const fed = drive(brain, ret);
+    expect(fed[0]).toMatchObject({ key: 'b', τ: PROFILE.reactionMs * 0.5 });
+    expect(ret.prompts.map((p) => p.completedAt !== null)).toEqual([true, true]);
+
+    const serve = serveTurn({ turnId: 2, leadInMs: 4000 });
+    const toss = brain.plan(serve)[0]?.τ ?? Number.NaN;
+    expect(toss).toBeGreaterThanOrEqual(4000 + 600);
+    expect(toss).toBeLessThan(4000 + 1200);
+    drive(brain, serve);
+    expect(serve.prompts[0]?.completedAt).not.toBeNull();
   });
 });
 
@@ -612,10 +730,13 @@ describe('CpuBrain — plan contract', () => {
     expect(brain.plan(t)).toEqual(copy);
   });
 
-  it('draws from its own stream per player (forkSeed(seed, player + 1))', () => {
-    const p0 = new CpuBrain(0, PROFILE, 42).plan(returnTurn({ owner: 0 }));
-    const p1 = new CpuBrain(1, PROFILE, 42).plan(returnTurn({ owner: 1 }));
-    expect(p1).not.toEqual(p0);
+  it('seeds its RNG with exactly forkSeed(seed, player + 1): its first draw is the toss delay', () => {
+    for (const player of [0, 1] as const) {
+      const delay = 600 + 600 * uniform(seedRng(forkSeed(42, player + 1)));
+      const toss = new CpuBrain(player, PROFILE, 42).plan(serveTurn({ owner: player }))[0];
+      expect(toss?.key).toBe('toss');
+      expect(toss?.τ).toBeCloseTo(2500 + delay, 9);
+    }
   });
 
   it('returns exactly the not-yet-consumed rest of a fixed plan as inputs are fed, in τ order', () => {
@@ -631,16 +752,15 @@ describe('CpuBrain — plan contract', () => {
     }
   });
 
-  it('returns only inputs at or after the turn clock', () => {
+  it('returns only inputs at or after the turn clock, re-planning keys the clock has passed', () => {
     const brain = new CpuBrain(0, PROFILE, 6);
     const t = returnTurn();
     const full = brain.plan(t);
-    const mid = full[Math.floor(full.length / 2)]?.τ ?? Number.NaN;
-    t.τ = mid;
+    const late = (full[0]?.τ ?? Number.NaN) + 1;
+    t.τ = late;
     const rest = brain.plan(t);
-    expect(rest.length).toBeGreaterThan(0);
-    expect(rest.length).toBeLessThan(full.length);
-    expect(rest).toEqual(full.filter((k) => k.τ >= mid));
+    expect(rest[0]).toEqual({ key: 'r', τ: late }); // nothing of 'rally' was typed
+    for (const k of rest) expect(k.τ).toBeGreaterThanOrEqual(late);
   });
 
   it('plans nothing for a turn it does not own, one not started, or one that has ended', () => {
