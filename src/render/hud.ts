@@ -1,7 +1,7 @@
 import { CPU_LEVELS } from '../core/cpu';
 import { currentServer, pointsDisplay, setLine, situation, type SetCell } from '../core/scoring';
 import { TUNING } from '../core/tuning';
-import type { DisplayPrefs, LeadIn, PlayerInfo, PublicState } from '../core/types';
+import type { DisplayPrefs, LeadIn, PlayerInfo, PublicState, ScoreState } from '../core/types';
 import { clamp, easeOutQuad } from '../core/util';
 import { contrastRatio } from './color';
 import { checker } from './court';
@@ -246,15 +246,22 @@ function fitName(name: string, maxW: number): string {
   return out;
 }
 
+/** Games and points show until a Tiebreak-format match is decided; then its final tiebreak column is the whole score. */
+function showsGameColumns(s: ScoreState): boolean {
+  return !(s.format === 'tiebreak' && s.winner !== null);
+}
+
 function drawScoreboard(ctx: CanvasRenderingContext2D, pub: PublicState): void {
   const rows = scoreRows(pub);
   const right = BOARD.x + BOARD.w - 1;
   const pointsX = right - POINTS_W;
   const gamesX = pointsX - GAMES_W;
-  const cols = setColumns(rows, gamesX);
-  const nameW = (cols[0]?.x ?? gamesX) - 1 - NAME_X;
+  const gameColumns = showsGameColumns(pub.score);
+  const setsRight = gameColumns ? gamesX : right;
+  const cols = setColumns(rows, setsRight);
+  const nameW = (cols[0]?.x ?? setsRight) - 1 - NAME_X;
   panel(ctx, BOARD.x, BOARD.y, BOARD.w, BOARD.h);
-  rect(ctx, pointsX, BOARD.y + 1, POINTS_W, BOARD.h - 2, PAL.gold);
+  if (gameColumns) rect(ctx, pointsX, BOARD.y + 1, POINTS_W, BOARD.h - 2, PAL.gold);
   rect(ctx, BOARD.x + 1, BOARD.y + BOARD.row + 1, BOARD.w - 2, 1, PAL.shadow);
   const centred = (s: string, x: number, w: number, y: number, color: string): void =>
     drawText(ctx, s, x + Math.floor((w - textWidth(s)) / 2), y, color);
@@ -275,6 +282,7 @@ function drawScoreboard(ctx: CanvasRenderingContext2D, pub: PublicState): void {
       // Level with the top of the digits (glyph row 1).
       if (c.sup !== null) drawSup(ctx, c.sup, col.numbersEnd + SUP_GAP, top + 1, PAL.silver);
     });
+    if (!gameColumns) return;
     centred(String(r.games), gamesX, GAMES_W, top, PAL.white);
     centred(r.points, pointsX, POINTS_W, top, OUTLINE);
   });

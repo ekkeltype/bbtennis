@@ -445,6 +445,48 @@ describe('Hud.draw', () => {
     }
   });
 
+  /** The glyphs drawn in scoreboard row `i` (x 2–150). */
+  const rowGlyphs = (images: Box[], i: 0 | 1): Box[] => images.filter((b) => b.y === rowTop(i) && b.x <= 150);
+  /** True if the gold points column (x 134–149) was painted. */
+  const pointsColumnPainted = (rects: (Box & { style: string })[]): boolean =>
+    rects.some((r) => r.style === PAL.gold && r.x === 134 && r.y === 2);
+
+  it('ends a Tiebreak-format match on its final tiebreak points alone, without the zeroed games and points columns', () => {
+    const score: ScoreState = {
+      ...createScore('tiebreak', 'advantage', 0),
+      setGames: [[1, 0]],
+      setTiebreaks: [[7, 5]],
+      inTiebreak: false,
+      setsWon: [1, 0],
+      winner: 0,
+    };
+    const { rects, images } = drawBoard({ score, status: 'over', winner: 0 });
+    expect(pointsColumnPainted(rects)).toBe(false);
+    for (const i of [0, 1] as const) {
+      const glyphs = rowGlyphs(images, i);
+      // The name, then the final tiebreak points (7 / 5), right-aligned 2 px inside the frame.
+      expect(glyphs).toHaveLength((i === 0 ? 'ALEXANDRA' : 'KAI').length + 1);
+      expect(Math.max(...glyphs.map((b) => b.x + b.w))).toBe(148);
+    }
+  });
+
+  it('keeps the games and points columns while a Tiebreak-format match is on, after a forfeit, and at the end of other formats', () => {
+    const live: ScoreState = { ...createScore('tiebreak', 'advantage', 0), points: [3, 2] };
+    const full: ScoreState = { ...createScore('full', 'advantage', 0), setGames: [[6, 3]], setTiebreaks: [null], setsWon: [1, 0], winner: 0 };
+    const boards: Partial<MatchState>[] = [
+      { score: live },
+      { score: live, status: 'over', winner: 1, forfeitBy: 0 },
+      { score: full, status: 'over', winner: 0 },
+    ];
+    for (const over of boards) {
+      const { rects, images } = drawBoard(over);
+      expect(pointsColumnPainted(rects)).toBe(true);
+      const sets = over.score!.setGames.length;
+      // The name, the set columns, then games and points.
+      for (const i of [0, 1] as const) expect(rowGlyphs(images, i)).toHaveLength((i === 0 ? 'ALEXANDRA' : 'KAI').length + sets + 2);
+    }
+  });
+
   it("gives a dark belt swatch (black, navy, brown) a light 1 px inner outline in its highlight shade, so it never reads as an empty slot", () => {
     /** The swatch of row `i` as painted, in order: the 5×7 frame, then what is painted inside it. */
     const swatch = (players: MatchState['players'], i: 0 | 1): (Box & { style: string })[] =>
