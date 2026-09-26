@@ -621,6 +621,24 @@ describe('clock semantics', () => {
     expect(t.outcome?.kind).toBe('miss');
   });
 
+  it('nextDeadline never returns a τ before the latest processed τ (a deadline tie at a freeze start)', () => {
+    // The chase completes exactly when the OUT call is due, which starts the choice freeze; that
+    // freeze ends at 2312.1, where callT + frozenMs rounds one ulp below the key's τ.
+    const t = started(createTurn(returnData({ incoming: RALLY_OUT, freezeFirst: true })));
+    const s = RALLY_OUT.tBounce + 333.3;
+    const e = 2312.1;
+    turnInput(t, 'b', 333.3);
+    turnInput(t, 'a', 1000);
+    turnInput(t, 'l', 1500);
+    expect(tags(turnInput(t, 'l', s))).toEqual([`bounce@${s}`, `keyOk@${s}`, `wordDone@${s}`, `promptShown@${s}`]);
+    expect(t.freezeSince).toBe(s);
+    turnInput(t, 'd', e);
+    expect(RALLY_OUT.tBounce + t.frozenMs).toBeLessThan(e);
+    expect(nextDeadline(t)).toBe(e);
+    expect(tags(turnClock(t, nextDeadline(t)!))).toEqual([`call@${e}`, `turnEnd@${e}`]);
+    expect(t.outcome).toEqual({ kind: 'call', endτ: e, call: 'out' });
+  });
+
   it('a stale input is applied at the latest processed τ', () => {
     const t = tossed(3000);
     turnClock(t, 5000);

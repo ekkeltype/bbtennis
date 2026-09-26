@@ -93,10 +93,14 @@ export function appendWordSet(t: TurnState, set: ServeWordSet): void {
   if (t.data.kind === 'serve') t.data.wordSets.push(copy(set));
 }
 
-/** The τ at which the next deadline fires (for schedulers/tests), or null before the start, while frozen or once ended. */
+/**
+ * The τ at which the next deadline fires (for schedulers/tests), or null before the start, while frozen or once ended.
+ * Never before the latest processed τ, which a deadline shifted by a freeze can round just below.
+ */
 export function nextDeadline(t: TurnState): number | null {
   if (!t.started || t.ended || t.freezeSince !== null) return null;
-  return pendingDeadlines(t)[0]?.τ ?? null;
+  const next = pendingDeadlines(t)[0];
+  return next === undefined ? null : Math.max(t.τ, next.τ);
 }
 
 /** Effective simulation time (τ minus training freeze). */
