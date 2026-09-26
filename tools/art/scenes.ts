@@ -24,7 +24,7 @@ function moods(viewer: PlayerId): { label: string; state: SceneState }[] {
 }
 
 /** The static scene as `viewer` sees it, at 1×: backdrop, court, net and umpire. */
-function sceneCanvas(surface: Surface, viewer: PlayerId, state: SceneState): HTMLCanvasElement {
+export function sceneCanvas(surface: Surface, viewer: PlayerId, state: SceneState): HTMLCanvasElement {
   const { canvas, g } = newCanvas(W, H);
   drawBackdrop(g, surface, state);
   drawCourt(g, surface, viewer);

@@ -56,6 +56,13 @@ export function newCanvas(w: number, h: number): { canvas: HTMLCanvasElement; g:
   return { canvas, g };
 }
 
+/** A copy of the `w`×`h` area of `src` whose top-left corner is (`x`, `y`). */
+export function cropped(src: HTMLCanvasElement, x: number, y: number, w: number, h: number): HTMLCanvasElement {
+  const { canvas, g } = newCanvas(w, h);
+  g.drawImage(src, x, y, w, h, 0, 0, w, h);
+  return canvas;
+}
+
 /** A copy of `src` enlarged by the whole number `k`, nearest-neighbour. */
 export function scaled(src: HTMLCanvasElement, k: number): HTMLCanvasElement {
   const { canvas, g } = newCanvas(src.width * k, src.height * k);

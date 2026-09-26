@@ -5,6 +5,8 @@
  */
 import { addError } from './art/dom';
 import { drawFontSection } from './art/font';
+import { drawHudSection } from './art/hud';
+import { drawLiveSceneSections } from './art/liveScenes';
 import { drawPlatesSection } from './art/plates';
 import { drawRingsSection } from './art/rings';
 import { drawSceneSections } from './art/scenes';
@@ -16,6 +18,8 @@ const PARTS: readonly [name: string, draw: (parent: HTMLElement) => void][] = [
   ['plates', drawPlatesSection],
   ['rings', drawRingsSection],
   ['scenes', drawSceneSections],
+  ['live scenes', drawLiveSceneSections],
+  ['hud', drawHudSection],
 ];
 
 const main = document.getElementById('art');
