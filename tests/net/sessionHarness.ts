@@ -28,7 +28,7 @@ const GUEST_PLAYER: PlayerInfo = { name: 'Gus', look: LOOK, kind: 'remote', cpuL
 /** Milliseconds between two frames of a side whose rAF runs. */
 export const FRAME_MS = 16;
 /** Half-width of the uniform jitter around each nominal one-way latency. */
-const JITTER_MS = 30;
+export const JITTER_MS = 30;
 
 /** A Normal-pace match of `format` on a hard court. */
 export function config(format: FormatId): MatchConfig {
@@ -314,10 +314,26 @@ export function diffPoints(a: PointRecord[], b: PointRecord[]): string[] {
 // ---------------------------------------------------------------------------------------------
 // Playback and redaction checks
 
+/** A local time and a turn-clock τ. */
+export interface TimedTau { at: number; τ: number }
+
+/** The guest's playback of one host-owned turn: the host's confirmations as they arrived, and what the guest showed. */
+export interface PlaybackTrace {
+  turn: number;
+  kind: 'serve' | 'return';
+  /** Local time the first frame showing the turn ended arrived, or null. */
+  endedAt: number | null;
+  /** Each rise of the turn's confirmed τ, in arrival order (0 before the first). */
+  confirmed: TimedTau[];
+  /** Every guest view of the turn: its local time and displayed τ. */
+  shown: TimedTau[];
+}
+
 /**
  * Watches the guest: the τ the host has confirmed for each turn (the highest frame τ of the turn,
  * or its endτ once a frame shows it ended), from what the guest has received so far; and each
  * guest view, whose τ must stay within that for a host-owned turn and never go back within a turn.
+ * It keeps a trace of each host-owned turn, and the time of each guest strike, for `settleReport`.
  */
 export class PlaybackMonitor {
   readonly violations: string[] = [];
@@ -325,7 +341,12 @@ export class PlaybackMonitor {
   checked = 0;
   /** Of those, the views past τ 0 held exactly at the confirmed τ (playback caught up and waits). */
   atCap = 0;
+  /** The trace of each host-owned turn, by turn id. */
+  readonly traces = new Map<number, PlaybackTrace>();
+  /** Local time of each of the guest's strikes, by the id of the guest turn it ended. */
+  readonly strikes = new Map<number, number>();
   private readonly confirmed = new Map<number, number>();
+  private readonly ownStarts = new Map<number, number>();
   private heard = 0;
   private last: { turn: number; τ: number } | null = null;
 
@@ -333,7 +354,7 @@ export class PlaybackMonitor {
 
   /** A guest view model, taken after every message received so far. */
   saw(vm: ViewModel, now: number): void {
-    for (; this.heard < this.received.length; this.heard++) this.confirm(this.received[this.heard]!.m);
+    for (; this.heard < this.received.length; this.heard++) this.confirm(this.received[this.heard]!);
     const t = vm.pub.turn;
     if (t === null) {
       this.last = null;
@@ -344,22 +365,122 @@ export class PlaybackMonitor {
       this.violations.push(`at ${now}: turn ${id} went back from τ ${this.last.τ} to ${vm.turnτ}`);
     }
     this.last = { turn: id, τ: vm.turnτ };
-    if (t.data.owner !== 0) return;
+    if (t.data.owner !== 0) {
+      this.noteOwn(t, vm.turnτ, now);
+      return;
+    }
     this.checked++;
     const c = this.confirmed.get(id) ?? 0;
     if (vm.turnτ > c) this.violations.push(`at ${now}: turn ${id} shown at τ ${vm.turnτ} beyond the host's confirmed ${c}`);
     if (vm.turnτ > 0 && vm.turnτ === c) this.atCap++;
+    this.trace(t).shown.push({ at: now, τ: vm.turnτ });
   }
 
-  private confirm(m: NetMsg): void {
+  private confirm({ at, m }: Heard): void {
     if (m.type !== 'frame') return;
-    this.raise(m.turn, m.τ);
-    for (const t of [m.s?.turn, m.s?.lastTurn]) if (t?.ended && t.outcome !== null) this.raise(t.data.turnId, t.outcome.endτ);
+    const turns = [m.s?.turn, m.s?.lastTurn].filter((t): t is TurnState => t !== null && t !== undefined);
+    for (const t of turns) if (t.data.owner === 0) this.trace(t);
+    this.raise(m.turn, m.τ, at);
+    for (const t of turns) {
+      if (!t.ended || t.outcome === null) continue;
+      this.raise(t.data.turnId, t.outcome.endτ, at);
+      const trace = this.traces.get(t.data.turnId);
+      if (trace !== undefined) trace.endedAt ??= at;
+    }
   }
 
-  private raise(turn: number, τ: number): void {
-    this.confirmed.set(turn, Math.max(this.confirmed.get(turn) ?? 0, τ));
+  /** A guest-owned turn runs on the guest's clock (τ = now − its start), so its strike happened at start + endτ. */
+  private noteOwn(t: TurnState, τ: number, now: number): void {
+    const id = t.data.turnId;
+    if (!this.ownStarts.has(id)) this.ownStarts.set(id, now - τ);
+    if (t.outcome?.kind === 'strike' && !this.strikes.has(id)) this.strikes.set(id, this.ownStarts.get(id)! + t.outcome.endτ);
   }
+
+  private raise(turn: number, τ: number, at: number): void {
+    const was = this.confirmed.get(turn) ?? 0;
+    if (τ <= was) return;
+    this.confirmed.set(turn, τ);
+    this.traces.get(turn)?.confirmed.push({ at, τ });
+  }
+
+  private trace(t: TurnState): PlaybackTrace {
+    const id = t.data.turnId;
+    let trace = this.traces.get(id);
+    if (trace === undefined) {
+      trace = { turn: id, kind: t.data.kind, endedAt: null, confirmed: [], shown: [] };
+      this.traces.set(id, trace);
+    }
+    return trace;
+  }
+}
+
+/** One period of a host return turn's playback on the guest: when it began after the guest's strike, and its mean lag. */
+export interface LagPeriod { turn: number; afterStrikeMs: number; lag: number }
+
+/** How the guest's playback of the host's return turns went after each guest strike. */
+export interface SettleReport {
+  /** Every period from `afterMs` after a guest strike until the host's return to it ended. */
+  periods: LagPeriod[];
+  /** Host return turns with at least one such period. */
+  turns: number;
+  /** The longest wait between two confirmations the guest received in those periods (ms). */
+  maxGapMs: number;
+}
+
+/**
+ * The guest's mean lag (confirmed τ − displayed τ) over each `periodMs` period of every host return
+ * turn (the host's reply to a guest strike), from `afterMs` after the guest's strike (on the guest's
+ * clock) until a frame showed the turn ended (the confirmations stop there). Both are exact step
+ * functions of time: the confirmed τ changes as each frame arrives, the displayed τ at each view (the
+ * screen shows a view until the next; 0 before the turn is first shown, as its playback starts at 0).
+ * Averaging a whole period evens out the staircase of the 50 ms confirmations, as
+ * `tests/game/playback.test.ts` does.
+ */
+export function settleReport(monitor: PlaybackMonitor, afterMs: number, periodMs: number): SettleReport {
+  const report: SettleReport = { periods: [], turns: 0, maxGapMs: 0 };
+  for (const trace of monitor.traces.values()) {
+    const { shown, confirmed } = trace;
+    if (trace.kind !== 'return' || shown.length === 0) continue;
+    const strikeAt = monitor.strikes.get(trace.turn - 1);
+    if (strikeAt === undefined) throw new Error(`settleReport: no guest strike recorded before host turn ${trace.turn}`);
+    const [from, until] = [strikeAt + afterMs, Math.min(trace.endedAt ?? Number.POSITIVE_INFINITY, shown[shown.length - 1]!.at)];
+    if (from + periodMs > until) continue;
+    report.turns++;
+    for (let a = from; a + periodMs <= until; a += periodMs) {
+      report.periods.push({ turn: trace.turn, afterStrikeMs: a - strikeAt, lag: meanLag(trace, a, a + periodMs) });
+    }
+    const arrivals = confirmed.filter((c) => c.at >= from && c.at <= until).map((c) => c.at);
+    for (let i = 1; i < arrivals.length; i++) report.maxGapMs = Math.max(report.maxGapMs, arrivals[i]! - arrivals[i - 1]!);
+  }
+  return report;
+}
+
+/** The exact mean of confirmed τ − displayed τ over [a, b]. */
+function meanLag({ confirmed, shown }: PlaybackTrace, a: number, b: number): number {
+  const inside = (xs: readonly TimedTau[]): number[] => xs.slice(lastAtOrBefore(xs, a) + 1, lastAtOrBefore(xs, b) + 1).map((x) => x.at);
+  const cuts = [a, ...inside(confirmed), ...inside(shown), b].sort((x, y) => x - y);
+  let area = 0;
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const [x, y] = [cuts[i]!, cuts[i + 1]!];
+    area += (valueAt(confirmed, x) - valueAt(shown, x)) * (y - x);
+  }
+  return area / (b - a);
+}
+
+/** Index of the last entry at or before `t` (entries sorted by time), or −1. */
+function lastAtOrBefore(xs: readonly TimedTau[], t: number): number {
+  let [lo, hi] = [0, xs.length];
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid]!.at <= t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
+/** The τ of the latest entry at or before `t` (the later one where two share a time), else 0. */
+function valueAt(xs: readonly TimedTau[], t: number): number {
+  return xs[lastAtOrBefore(xs, t)]?.τ ?? 0;
 }
 
 /** The host's secrets as its own views show them: every word of its serve turns and the randoms of all its turns. */

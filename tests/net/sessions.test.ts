@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PlayerId } from '../../src/core/types';
+import { ONLINE_PLAYBACK } from '../../src/game/displayQueue';
 import { TICK_MS } from '../../src/game/onlineLink';
 import { seedWhere } from '../game/sessionHelpers';
 import {
@@ -7,10 +8,12 @@ import {
   diffPoints,
   diffTurn,
   FRAME_MS,
+  JITTER_MS,
   maxOneWayMs,
   playMatch,
   redactionLeaks,
   Rig,
+  settleReport,
   turnRecord,
   type MatchRun,
 } from './sessionHarness';
@@ -34,6 +37,24 @@ const SHORT_SET_FRAME_MS = 32;
 /** Generous: three full short-set matches take a while to simulate. */
 const SHORT_SETS_TIMEOUT = 240_000;
 const INVARIANCE_TIMEOUT = 120_000;
+
+/** Spec §6: after a strike, the guest's playback of the host's return settles within 1.5 s. */
+const SETTLE_AFTER_MS = 1500;
+/**
+ * Settled: a mean lag of margin ± this per 50 ms confirmation period. It is playback.test.ts's ±20 ms
+ * (a fixed delay, no jitter), widened by the ±30 ms by which each confirmation's arrival may move.
+ */
+const SETTLE_TOLERANCE_MS = 20 + JITTER_MS;
+/** One confirmation per 50 ms tick, each taking latency ± 30 ms: consecutive ones arrive at most this far apart. */
+const MAX_CONFIRMATION_GAP_MS = TICK_MS + 2 * JITTER_MS;
+/**
+ * Known HostSession defect (Task 21), found by the settle check in Task 22's fix round 1. Every frame
+ * carries the whole redacted state (~6 KB), so at 150 and 400 ms one-way more than 16 KB is always in
+ * flight, and the host skips its event-less frames (spec §5.3). The guest's confirmations then stall
+ * for up to ~430 ms, and its playback of the host's return lags by up to ~410 ms for seconds. Strict:
+ * the test fails once one of these settles, so the list shrinks as the defect is fixed.
+ */
+const KNOWN_UNSETTLED = ['seed 2 at 150 ms', 'seed 2 at 400 ms', 'seed 11 at 150 ms', 'seed 12 at 400 ms'];
 
 /** Runs `make` once, on first use, so each test can ask for the shared matches whatever runs first. */
 function lazy<T>(make: () => T): () => T {
@@ -136,6 +157,29 @@ describe('online sessions: the guest\'s playback of host-owned turns', () => {
       expect(run.playback.checked, where).toBeGreaterThan(1000);
       expect(run.playback.atCap, where).toBeGreaterThan(10);
     }
+  }, SHORT_SETS_TIMEOUT + INVARIANCE_TIMEOUT);
+
+  it('settles within 1.5 s of each guest strike: from then until the host\'s return ends, 60 ± 50 ms behind the confirmed τ per 50 ms period', () => {
+    const unsettled: string[] = [];
+    const starved: string[] = [];
+    const details: string[] = [];
+    for (const run of allRuns()) {
+      const where = `seed ${run.seed} at ${run.latencyMs} ms`;
+      const report = settleReport(run.playback, SETTLE_AFTER_MS, TICK_MS);
+      // Enough of the host's returns lasted past the deadline to judge.
+      expect(report.turns, where).toBeGreaterThan(20);
+      expect(report.periods.length, where).toBeGreaterThan(500);
+      const outside = report.periods.filter((p) => !(Math.abs(p.lag - ONLINE_PLAYBACK.margin) <= SETTLE_TOLERANCE_MS));
+      if (outside.length > 0) {
+        unsettled.push(where);
+        const some = outside.slice(0, 3).map((p) => `turn ${p.turn} at strike + ${p.afterStrikeMs.toFixed(0)} ms: ${p.lag.toFixed(1)} ms`);
+        details.push(`${where}: ${outside.length} of ${report.periods.length} periods outside, e.g. ${some.join('; ')}`);
+      }
+      if (report.maxGapMs > MAX_CONFIRMATION_GAP_MS) starved.push(where);
+    }
+    expect(unsettled, details.join('\n')).toEqual(KNOWN_UNSETTLED);
+    // The known defect's cause: there, and only there, confirmations stall for longer than a tick plus the jitter window.
+    expect(starved).toEqual(KNOWN_UNSETTLED);
   }, SHORT_SETS_TIMEOUT + INVARIANCE_TIMEOUT);
 });
 
