@@ -140,6 +140,26 @@ describe('msgBytes', () => {
   });
 });
 
+/** A frame whose JSON is exactly `chars` long. */
+function frameOfLength(chars: number): Extract<NetMsg, { type: 'frame' }> {
+  const ev = { turn: 1, τ: 0, type: 'situation' as const, text: '' };
+  const m = { type: 'frame' as const, turn: 1, τ: 0, ev: [ev] };
+  ev.text = 'x'.repeat(chars - JSON.stringify(m).length);
+  expect(JSON.stringify(m).length).toBe(chars);
+  return m;
+}
+
+/** A frame whose JSON is exactly `bytes` UTF-8 bytes, its event text padded with `pad`. */
+function frameOfBytes(bytes: number, pad: string): Extract<NetMsg, { type: 'frame' }> {
+  const ev = { turn: 1, τ: 0, type: 'situation' as const, text: '' };
+  const m = { type: 'frame' as const, turn: 1, τ: 0, ev: [ev] };
+  const room = bytes - msgBytes(m);
+  const width = new TextEncoder().encode(pad).byteLength;
+  ev.text = pad.repeat(Math.floor(room / width)) + 'x'.repeat(room % width);
+  expect(msgBytes(m)).toBe(bytes);
+  return m;
+}
+
 /** A hello whose JSON is exactly `bytes` UTF-8 bytes. */
 function helloOfBytes(bytes: number): NetMsg {
   const m = { type: 'hello', proto: PROTO, app: APP_ID, name: '', look: noBand } satisfies NetMsg;
@@ -201,6 +221,38 @@ describe('decodeMsg', () => {
   it(`drops a string whose JSON is over MAX_MSG_CHARS (${MAX_MSG_CHARS})`, () => {
     const m = { type: 'hello', proto: PROTO, app: APP_ID, name: 'x'.repeat(MAX_MSG_CHARS), look: noBand };
     expect(decodeMsg(JSON.stringify(m))).toBeNull();
+  });
+
+  it(`keeps a string of exactly MAX_SEND_BYTES (${MAX_SEND_BYTES}) characters and drops one a character longer`, () => {
+    const fits = JSON.stringify(frameOfLength(MAX_SEND_BYTES));
+    expect(decodeMsg(fits)).toEqual(JSON.parse(fits));
+    expect(decodeMsg(JSON.stringify(frameOfLength(MAX_SEND_BYTES + 1)))).toBeNull();
+  });
+
+  it('drops a 100 KB string without parsing it', () => {
+    const big = JSON.stringify(frameOfLength(100 * 1024));
+    const parse = vi.spyOn(JSON, 'parse');
+    const decoded = decodeMsg(big);
+    const parses = parse.mock.calls.length;
+    parse.mockRestore();
+    expect(decoded).toBeNull();
+    expect(parses).toBe(0);
+  });
+
+  it.each(['x', 'é', '🎾'])('keeps every message encodeMsg sends, up to MAX_SEND_BYTES padded with %j', (pad) => {
+    const json = encodeMsg(frameOfBytes(MAX_SEND_BYTES, pad));
+    expect(json).not.toBeNull();
+    expect(decodeMsg(json)).toEqual(JSON.parse(json!));
+  });
+
+  it('does not stringify what it parsed again to measure it', () => {
+    const json = JSON.stringify(samples[15]);
+    const stringify = vi.spyOn(JSON, 'stringify');
+    const decoded = decodeMsg(json);
+    const stringifies = stringify.mock.calls.length;
+    stringify.mockRestore();
+    expect(decoded).toEqual(samples[15]);
+    expect(stringifies).toBe(0);
   });
 });
 
@@ -341,15 +393,6 @@ describe('parseMsg rejects', () => {
 });
 
 describe('parseMsg size cap', () => {
-  /** A frame whose JSON is exactly `chars` long. */
-  function frameOfLength(chars: number): unknown {
-    const base = { type: 'frame', turn: 1, τ: 0, ev: [{ turn: 1, τ: 0, type: 'situation', text: '' }] };
-    const pad = chars - JSON.stringify(base).length;
-    base.ev[0]!.text = 'x'.repeat(pad);
-    expect(JSON.stringify(base).length).toBe(chars);
-    return base;
-  }
-
   it('accepts a message of exactly 32 KB of JSON', () => {
     expect(parseMsg(frameOfLength(MAX_MSG_CHARS))).not.toBeNull();
   });

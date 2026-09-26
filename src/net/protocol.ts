@@ -9,13 +9,14 @@ export const PROTO = 1;
 /** Application id sent in `hello` and `reject`. */
 export const APP_ID = 'bbtennis';
 
-/** Messages whose JSON is longer than this many characters are dropped on receipt (spec §5.3). */
+/** parseMsg drops a value whose JSON is longer than this many characters (spec §5.3). */
 export const MAX_MSG_CHARS = 32 * 1024;
 
 /**
  * Largest message a transport sends, in UTF-8 bytes of its JSON (see msgBytes); transports drop a
- * larger one (see encodeMsg). Every sendable message is within MAX_MSG_CHARS and well under the
- * 64 KiB a WebRTC data channel always accepts.
+ * larger one (see encodeMsg). It is also the most characters decodeMsg accepts in a received string:
+ * a string never has more characters than UTF-8 bytes, so every sendable message passes. Well under
+ * the 64 KiB a WebRTC data channel always accepts.
  */
 export const MAX_SEND_BYTES = 32000;
 
@@ -221,6 +222,11 @@ export function parseMsg(raw: unknown): NetMsg | null {
   return chars > MAX_MSG_CHARS ? null : parseFields(raw);
 }
 
+/** parseMsg for a value whose size was already checked, so its JSON is not measured again. */
+function parseSized(raw: unknown): NetMsg | null {
+  return isRec(raw) ? parseFields(raw) : null;
+}
+
 /** The wire form of `msg` (its JSON), or null with a `[bbt] frame too big` warning when it is over MAX_SEND_BYTES. */
 export function encodeMsg(msg: NetMsg): string | null {
   const json = JSON.stringify(msg);
@@ -230,14 +236,17 @@ export function encodeMsg(msg: NetMsg): string | null {
   return null;
 }
 
-/** A received wire message: a JSON string that passes parseMsg. Anything else (invalid JSON, non-strings) is null. */
+/**
+ * A received wire message: a JSON string of at most MAX_SEND_BYTES characters (checked before it is
+ * parsed; no sendable message is longer) that passes parseMsg. Anything else is null.
+ */
 export function decodeMsg(data: unknown): NetMsg | null {
-  if (typeof data !== 'string') return null;
+  if (typeof data !== 'string' || data.length > MAX_SEND_BYTES) return null;
   let raw: unknown;
   try {
     raw = JSON.parse(data);
   } catch {
     return null;
   }
-  return parseMsg(raw);
+  return parseSized(raw);
 }
