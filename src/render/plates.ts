@@ -15,8 +15,10 @@ export type PlateStyle = 'localActive' | 'remote' | 'hiddenRemote';
  * being typed; `faded` runs 0 (shown) → 1 (gone), multiplying the canvas opacity; `lastWrongAgeMs`
  * is the time since the last wrong key (null = none); `isNextCursor` shows the inverse block on the
  * next letter; `showInitialBlock` marks the first letter of an unlocked option; `nameChip` is the
- * owner's name for a tab (first 3 letters, in capitals); `oppColor` is the owner's `#RRGGBB` belt
- * colour, painted behind the name chip (null = dark chip); `scale` 2 redraws the plate at double size.
+ * owner's name for a tab (first 3 letters, in capitals); `oppColor` is the owner's belt colour, painted
+ * behind the name chip (null = dark chip): any `RAMPS.cloth` shade (a human's belt is their headband
+ * or shirt ramp) or `PAL.grey` keeps the chip text at ≥ 4.5:1; it must be `#RRGGBB`, other formats
+ * throw; `scale` 2 redraws the plate at double size.
  */
 export interface PlateDraw {
   box: PlateBox;
@@ -120,9 +122,13 @@ function drawPips(ctx: CanvasRenderingContext2D, tier: Tier, x: number, y: numbe
   for (let i = 0; i < n; i++) rect(ctx, x + PIP_X * s, y + (top + 3 * i) * s, 2 * s, 2 * s, color);
 }
 
-/** Near-white or dark text, whichever contrasts more with `bg` (≥ 4.5:1 on every belt ramp shade). */
+/**
+ * White or dark text, whichever contrasts more with `bg`: ≥ 4.5:1 on `PLATE.fill`, `PAL.grey` and
+ * every `RAMPS.cloth` shade (worst case red mid, 4.53:1). Pure white, not the plates' near-white,
+ * because near-white misses 4.5:1 on mid-luminance cloth (blue mid, red mid, orange lo).
+ */
 function readableOn(bg: string): string {
-  return contrastRatio(PLATE.text, bg) >= contrastRatio(PLATE.outline, bg) ? PLATE.text : PLATE.outline;
+  return contrastRatio(PAL.white, bg) >= contrastRatio(PLATE.outline, bg) ? PAL.white : PLATE.outline;
 }
 
 /**
@@ -155,7 +161,7 @@ function drawNameChip(
  * dark) and shakes the plate by up to 2 px unless `reduceEffects`. Remote: grey outline, 70 % fill,
  * no cursor, typed letters in the typed shade. Hidden remote: tier outline, a dim dot per letter,
  * typed letters as 3×5 tier blocks. Remote plates shake on a wrong key but never flash. The name
- * chip is painted in `oppColor` with light or dark text. Every plate has 1/2/3 tier pips and a 1 px
+ * chip is painted in `oppColor` with white or dark text. Every plate has 1/2/3 tier pips and a 1 px
  * dark stroke; red is never used. Canvas state is restored afterwards.
  */
 export function drawPlate(ctx: CanvasRenderingContext2D, p: PlateDraw): void {

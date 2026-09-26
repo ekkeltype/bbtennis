@@ -398,7 +398,7 @@ describe('drawPlate — name chip', () => {
     x: number,
     y: number,
     text: string,
-    ink = PLATE.text,
+    ink = PAL.white,
     paper = PLATE.fill,
   ): void => {
     let cx = x;
@@ -414,7 +414,7 @@ describe('drawPlate — name chip', () => {
     }
   };
 
-  it('shows the first 3 letters of the name, capitalised, on a dark tab above the plate without a belt colour', () => {
+  it("shows the name's first 3 letters in white capitals on a dark tab above the plate without a belt colour", () => {
     const g = scene();
     const p = plate('rally', { style: 'remote', nameChip: 'alexander' });
     drawPlate(as2d(g), p);
@@ -426,28 +426,33 @@ describe('drawPlate — name chip', () => {
     chipText(g, x + 2, y - 9, 'ALE');
   });
 
-  it('paints the tab in the belt colour with light or dark text, whichever reads at ≥ 4.5:1', () => {
-    for (const [belt, ramp] of Object.entries(BELT_COLOR)) {
-      for (const shade of RAMPS.cloth[ramp]!) {
-        const g = scene();
-        const p = plate('rally', { style: 'remote', nameChip: 'kim', oppColor: shade });
-        drawPlate(as2d(g), p);
-        const { x, y } = p.box;
-        const w = textWidth('KIM') + 4;
-        const inside = colours(g, x + 1, y - 9, w - 2, 9);
-        const text = [...inside].filter((c) => c !== shade);
-        expect(inside.has(shade), `${belt} ${shade}`).toBe(true);
-        expect(text.length, `${belt} ${shade}`).toBe(1);
-        expect([PLATE.text, PLATE.outline], `${belt} ${shade}`).toContain(text[0]);
-        expect(contrastRatio(text[0]!, shade), `${belt} ${shade}`).toBeGreaterThanOrEqual(4.5);
-        chipText(g, x + 2, y - 9, 'KIM', text[0], shade);
-        expect(colours(g, x, y - 10, w, 1), `${belt} ${shade} top stroke`).toEqual(new Set([PLATE.outline]));
-      }
+  it('paints the tab in any cloth shade or the grey belt fallback with text at ≥ 4.5:1', () => {
+    const belts: [string, string][] = [
+      ...RAMPS.cloth.flatMap((ramp, r) =>
+        ramp.map((shade, i): [string, string] => [`cloth ${r}[${i}] ${shade}`, shade]),
+      ),
+      [`PAL.grey ${PAL.grey}`, PAL.grey],
+    ];
+    expect(belts.length).toBe(RAMPS.cloth.length * 3 + 1);
+    for (const [label, shade] of belts) {
+      const g = scene();
+      const p = plate('rally', { style: 'remote', nameChip: 'kim', oppColor: shade });
+      drawPlate(as2d(g), p);
+      const { x, y } = p.box;
+      const w = textWidth('KIM') + 4;
+      const inside = colours(g, x + 1, y - 9, w - 2, 9);
+      const text = [...inside].filter((c) => c !== shade);
+      expect(inside.has(shade), label).toBe(true);
+      expect(text.length, label).toBe(1);
+      expect([PAL.white, PLATE.outline], label).toContain(text[0]);
+      expect(contrastRatio(text[0]!, shade), label).toBeGreaterThanOrEqual(4.5);
+      chipText(g, x + 2, y - 9, 'KIM', text[0], shade);
+      expect(colours(g, x, y - 10, w, 1), `${label} top stroke`).toEqual(new Set([PLATE.outline]));
     }
   });
 
-  it('picks dark text on a white belt and near-white text on a black belt', () => {
-    for (const [ramp, ink] of [[BELT_COLOR.white, PLATE.outline], [BELT_COLOR.black, PLATE.text]] as const) {
+  it('picks dark text on a white belt and white text on a black belt', () => {
+    for (const [ramp, ink] of [[BELT_COLOR.white, PLATE.outline], [BELT_COLOR.black, PAL.white]] as const) {
       const g = scene();
       const shade = RAMPS.cloth[ramp]![1];
       const p = plate('rally', { style: 'remote', nameChip: 'kim', oppColor: shade });
