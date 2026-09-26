@@ -1,16 +1,24 @@
 /*
- * Balance simulation (spec §6). The full suite runs only with BBT_SIM=1 (`npm run test:sim`);
- * `npm test` runs the smoke subset.
+ * Balance simulation (spec §6, as amended in ac7c81b by rulings R35/R36). The full suite runs only
+ * with BBT_SIM=1 (`npm run test:sim`); `npm test` runs the smoke subset.
+ *
+ * Targets, equal players at each preset's reference WPM: median rally 3–6 shots, p90 ≤ 12, no point
+ * over 40 shots; aces ≤ 15 % (R36 dropped the draft's ≥ 5 % floor: an ace needs a failed chase, so
+ * between equal players aces are rare by design); double faults 1–6 %; server wins 55–65 %; ≤ 35 s
+ * per point. Plus the fixed-strategy, aggression and CPU-level checks below.
  *
  * Human model (humanTypist, src/core/sim.ts): spec §6's "hardest option that fits" on every serve
  * and choice, second serves included. CpuBrain's second-serve aggression × 0.4 is a CPU rule
  * (spec §3.8), so humanProfile's aggression is 2.5 (2.5 × 0.4 = 1); sim.test.ts checks the choice.
  * Task 11 fix round 1: the first tuning ran the human with the CPU's × 0.4, and with the true
  * policy it gave 6.3 % (Normal) and 8.5 % (Fast) double faults, so it was retuned.
+ * Recorded deviation: the human model types through CpuBrain, so its per-word variation is the
+ * CPU's 1 + 0.15·z (spec §3.8), not the 12 % spec §6 names; every figure below was measured so.
  *
- * Retuned in src/core/tuning.ts (spec value → now): tossApexMs 2000 → 1930, speed.base
- * 0.85 → 0.875, speed.perCps 0.05 → 0.025, flight.serveReturnBonusMs 500 → 250,
- * flight.serveReturnBonusPaceMs 500 → 750. PACE_MULT keeps the spec's ×1.5 / 1.0 / 0.75 / 0.6.
+ * Constants in src/core/tuning.ts (original draft value → spec value, amended ac7c81b / R35):
+ * tossApexMs 2000 → 1930, speed.base 0.85 → 0.875, speed.perCps 0.05 → 0.025,
+ * flight.serveReturnBonusMs 500 → 250, flight.serveReturnBonusPaceMs 500 → 750. PACE_MULT keeps
+ * the spec's ×1.5 / 1.0 / 0.75 / 0.6 (never changed).
  * Double faults step with the toss window 2a: a hard serve word "fits" (spec §3.8 estimate) up to
  * a length set by 2a, and one that only just fits is often dropped. With a = 1.93 s × pace each
  * preset's reference typist sits well inside the band where 10-letter hard words fit and 11-letter
@@ -57,8 +65,6 @@
  *   13v14     200   77.1 %
  *   Pairs 3–14 apart (not in this suite; 50 sets each, seeds of the 2-apart cells): the higher
  *   level won all 50 sets in each of the 78 pairs (87.1–100 % of points).
- *
- * Not met: aces ≥ 5 % (measured 0.0–0.3 %; see the it.fails below).
  */
 import { describe, expect, it } from 'vitest';
 import { cpuProfile, type CpuPolicy } from '../../src/core/cpu';
@@ -157,17 +163,15 @@ describe.skipIf(!FULL).concurrent('balance simulation (spec §6)', { timeout: TE
       it('no point lasts more than 40 shots', ({ expect }) => {
         expect(s().maxShots).toBeLessThanOrEqual(40);
       });
+      // No lower bound on aces (R36 dropped the draft's ≥ 5 %, which no constant reaches without
+      // changing semantics). An ace means the receiver never finishes the chase word, but even a
+      // finished chase still needs a full reaction and a choice word before T + grace, so a serve
+      // fast enough to ace 5 % of returns leaves most of the rest unreturned. With the final
+      // constants, aces are 0.0 / 0.0 / 0.0 / 0.3 % (Relaxed / Normal / Fast / Lightning). Without
+      // any reading allowance they reach only 0.0 / 0.2 / 1.4 / 4.4 %, and the server then wins
+      // 77–86 % of points.
       it('aces are ≤ 15 % of points', ({ expect }) => {
         expect(s().aceRate).toBeLessThanOrEqual(0.15);
-      });
-      // Spec §6 also wants aces ≥ 5 %, which no constant reaches without changing semantics. An ace
-      // means the receiver never finishes the chase word, but even a finished chase still needs a
-      // full reaction and a choice word before T + grace, so a serve fast enough to ace 5 % of
-      // returns leaves most of the rest unreturned. With the final constants, aces are 0.0 / 0.0 /
-      // 0.0 / 0.3 % (Relaxed / Normal / Fast / Lightning). Without any reading allowance they
-      // reach only 0.0 / 0.2 / 1.4 / 4.4 %, and the server then wins 77–86 % of points.
-      it.fails('aces are ≥ 5 % of points (not reachable; measured 0.0–0.3 %)', ({ expect }) => {
-        expect(s().aceRate).toBeGreaterThanOrEqual(0.05);
       });
       it('double faults are 1–6 % of points', ({ expect }) => {
         expect(s().dfRate).toBeGreaterThanOrEqual(0.01);

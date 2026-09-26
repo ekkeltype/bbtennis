@@ -4,18 +4,20 @@ import type { PaceId, Tier } from './types';
 export const PACE_MULT: Record<PaceId, number> = { relaxed: 1.5, normal: 1.0, fast: 0.75, lightning: 0.6 };
 
 /**
- * All gameplay constants (spec §3). Balance targets (spec §6), for equal players at each pace's
- * reference WPM (Relaxed 30, Normal 50, Fast 70, Lightning 90): median rally 3–6 shots, p90 ≤ 12,
- * max 40; aces 5–15 %; double faults 1–6 %; server wins 55–65 %; ≤ 35 s per point. All are met
- * except aces ≥ 5 %, which the rules cannot reach (measured values: tests/sim/balance.test.ts).
+ * All gameplay constants (spec §3). Balance targets (spec §6 as amended in ac7c81b, rulings R35/R36),
+ * for equal players at each pace's reference WPM (Relaxed 30, Normal 50, Fast 70, Lightning 90):
+ * median rally 3–6 shots, p90 ≤ 12, max 40; aces ≤ 15 % (no lower bound); double faults 1–6 %;
+ * server wins 55–65 %; ≤ 35 s per point. These constants meet all of them (measured values:
+ * tests/sim/balance.test.ts).
  */
 export const TUNING = {
   serveClockMs: 30000,
-  // Toss apex a = 1.93 s × pace (spec: 2.0 s). The toss window 2a decides the longest hard serve
-  // word that "fits" (spec §3.8 estimate), and a word that only just fits is often dropped. At 2.0 s
-  // an 11-letter word just fit at Normal and Fast, so double faults reached 6.3 % and 8.5 %; at
-  // 1.93 s each preset's reference typist fits 10-letter words with room and no 11-letter ones
-  // (spec §6 balance simulation; numbers in tests/sim/balance.test.ts).
+  // Toss apex a = 1.93 s × pace (spec §3.2; the original draft's 2.0 s → 1.93 s, amended ac7c81b).
+  // The toss window 2a decides the longest hard serve word that "fits" (spec §3.8 estimate), and a
+  // word that only just fits is often dropped. At 2.0 s an 11-letter word just fit at Normal and
+  // Fast, so double faults reached 6.3 % and 8.5 %; at 1.93 s each preset's reference typist fits
+  // 10-letter words with room and no 11-letter ones (spec §6 balance simulation; numbers in
+  // tests/sim/balance.test.ts).
   tossApexMs: 1930,
   catchMs: 500,
   contactFactorMin: 0.85,
@@ -24,15 +26,17 @@ export const TUNING = {
     perCharMs: 100,
     place: { easy: 1.0, medium: 0.85, hard: 0.7 } as Record<Tier, number>,
     pressure: 0.85,
-    // Serve reading allowance 250 + 750·pace ms (spec: 500 + 500·pace; the same 1 s at Normal): keeps
-    // the server's share of points near 60 % at every preset (balance simulation, spec §6).
+    // Serve reading allowance 250 + 750·pace ms (spec §3.4; the original draft's 500 + 500·pace →
+    // 250 + 750·pace, amended ac7c81b; the same 1 s at Normal): keeps the server's share of points
+    // near 60 % at every preset (balance simulation, spec §6).
     serveReturnBonusMs: 250,
     serveReturnBonusPaceMs: 750,
   },
   graceMs: 400,
-  // Speed factor v = 0.875 + 0.025·(cps − 3) (spec: 0.85 + 0.05·(cps − 3); both give v ≈ 0.91 at
-  // 50 WPM). The gentler slope keeps Relaxed/30 WPM points ≤ 35 s and Lightning/90 WPM rallies at
-  // 3+ shots with the spec's pace multipliers (balance simulation, spec §6).
+  // Speed factor v = 0.875 + 0.025·(cps − 3) (spec §3.4; the original draft's 0.85 + 0.05·(cps − 3)
+  // → 0.875 + 0.025·(cps − 3), amended ac7c81b; both give v ≈ 0.91 at 50 WPM). The gentler slope
+  // keeps Relaxed/30 WPM points ≤ 35 s and Lightning/90 WPM rallies at 3+ shots with the spec's
+  // pace multipliers (balance simulation, spec §6).
   speed: { base: 0.875, perCps: 0.025, cpsRef: 3, min: 0.8, max: 1.3, stretchMult: 0.9, minSpanS: 0.05 },
   kmh: { base: 95, tierBonus: { easy: 1.0, medium: 1.05, hard: 1.1 } as Record<Tier, number>, serveMult: 1.25 },
   accuracy: {
@@ -50,8 +54,9 @@ export const TUNING = {
     serveArcH: 0.9,
     netClearZ: 1.3,
     postBounceDist: 3.0,
+    // Height of the contact point C (spec §3.4); a rally shot struck at C launches from there, so this
+    // is also the spec's rally z0 = 1.0 m.
     contactZ: 1.0,
-    rallyZ0: 1.0,
     maxBehindBaseline: 1.2,
     maxAbsX: 5.8,
     netHitZ: 0.6,

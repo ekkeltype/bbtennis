@@ -60,6 +60,10 @@ const PLAYERS: [PlayerInfo, PlayerInfo] = [
  * 120 WPM and reaction 900 → 400 ms, linear in WPM and held at the end rows outside that range;
  * aggression HUMAN_AGGRESSION, so the adaptive policy always takes the hardest option that fits,
  * second serves included. The full model adds the 250 ms chase reaction: use humanTypist.
+ *
+ * Recorded deviation from spec §6: typing runs on CpuBrain, so each word's interval factor is the
+ * CPU's 1 + 0.15·z (clamped 0.7–1.4), not the 12 % per-word variation §6 gives the human model. The
+ * balance figures in tests/sim/balance.test.ts (and rulings R35/R36) were measured with 15 %.
  */
 export function humanProfile(wpm: number): CpuProfile {
   if (!Number.isFinite(wpm) || wpm <= 0) throw new RangeError(`humanProfile: WPM must be finite and positive, got ${wpm}`);
@@ -73,7 +77,10 @@ export function humanProfile(wpm: number): CpuProfile {
   };
 }
 
-/** The full spec §6 human model at `wpm`: humanProfile with the 250 ms chase reaction. */
+/**
+ * The spec §6 human model at `wpm`: humanProfile with the 250 ms chase reaction (and CpuBrain's 15 %
+ * per-word variation in place of §6's 12 %; see humanProfile).
+ */
 export function humanTypist(wpm: number, policy: CpuPolicy = 'adaptive'): SimTypist {
   return { profile: humanProfile(wpm), chaseReactionMs: HUMAN_CHASE_REACTION_MS, policy };
 }
