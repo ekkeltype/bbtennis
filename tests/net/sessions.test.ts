@@ -48,11 +48,12 @@ const SETTLE_TOLERANCE_MS = 20 + JITTER_MS;
 /** One confirmation per 50 ms tick, each taking latency ± 30 ms: consecutive ones arrive at most this far apart. */
 const MAX_CONFIRMATION_GAP_MS = TICK_MS + 2 * JITTER_MS;
 /**
- * Known HostSession defect (Task 21), found by the settle check in Task 22's fix round 1. Every frame
- * carries the whole redacted state (~6 KB), so at 150 and 400 ms one-way more than 16 KB is always in
- * flight, and the host skips its event-less frames (spec §5.3). The guest's confirmations then stall
- * for up to ~430 ms, and its playback of the host's return lags by up to ~410 ms for seconds. Strict:
- * the test fails once one of these settles, so the list shrinks as the defect is fixed.
+ * Matches that do not settle today. Open, awaiting a controller ruling: fix HostSession (Task 21),
+ * change the loopback's bytes-in-flight bufferedAmount, or accept it as tracked. Measured cause: every
+ * frame carries the whole redacted state (~6 KB), so at 150 and 400 ms one-way the loopback always has
+ * more than 16 KB in flight, and the host skips its event-less frames (spec §5.3). The guest's
+ * confirmations then stall for up to ~430 ms, and its playback of the host's return lags by up to
+ * ~410 ms for seconds. Strict: the test fails as soon as the unsettled matches differ from this list.
  */
 const KNOWN_UNSETTLED = ['seed 2 at 150 ms', 'seed 2 at 400 ms', 'seed 11 at 150 ms', 'seed 12 at 400 ms'];
 
