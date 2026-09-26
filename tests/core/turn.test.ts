@@ -576,6 +576,7 @@ describe('training freeze', () => {
     type(t, 'ball', 1000);
     turnInput(t, 'd', 2300);
     expect(t.frozenMs).toBe(2000);
+    // Frozen 0 → 1000 (chase) and 1300 → 2300 (choice): T falls at 5000 and the grace ends at 5400.
     type(t, 'rop', 5100);
     const s = strikeOf(t);
     expect(s.τ).toBe(5300);
