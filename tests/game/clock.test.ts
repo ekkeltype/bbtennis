@@ -1,5 +1,62 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RealScheduler, VirtualScheduler } from '../../src/game/clock';
+import type { Scheduler } from '../../src/game/clock';
+
+/** Delays `after` must treat as 0. */
+const ZERO_DELAYS = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -5];
+/** Periods `every` must reject. */
+const BAD_PERIODS = [0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+
+/** A scheduler plus the way to move its time source forward (fake timers for RealScheduler). */
+interface Harness {
+  s: Scheduler;
+  advance: (ms: number) => void;
+}
+
+describe.each([
+  {
+    name: 'VirtualScheduler',
+    make: (): Harness => {
+      const s = new VirtualScheduler(40);
+      return { s, advance: (ms) => s.advance(ms) };
+    },
+  },
+  {
+    name: 'RealScheduler',
+    make: (): Harness => ({ s: new RealScheduler(), advance: (ms) => vi.advanceTimersByTime(ms) }),
+  },
+])('$name (contract shared by both schedulers)', ({ make }) => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('after treats NaN, ±Infinity and negative delays as 0', () => {
+    const { s, advance } = make();
+    const fired: string[] = [];
+    const nows: number[] = [];
+    for (const ms of ZERO_DELAYS) {
+      s.after(ms, () => {
+        fired.push(String(ms));
+        nows.push(s.now());
+      });
+    }
+    advance(0);
+    expect(fired).toEqual(['NaN', 'Infinity', '-Infinity', '-5']);
+    expect(nows.every((t) => Number.isFinite(t))).toBe(true);
+  });
+
+  it('every throws RangeError for a period that is not finite and > 0, and schedules nothing', () => {
+    const { s, advance } = make();
+    const fn = vi.fn();
+    for (const ms of BAD_PERIODS) expect(() => s.every(ms, fn), `every(${ms})`).toThrow(RangeError);
+    advance(1000);
+    expect(fn).not.toHaveBeenCalled();
+  });
+});
 
 describe('VirtualScheduler', () => {
   it('starts at the given time (default 0) and advances now()', () => {
@@ -116,18 +173,68 @@ describe('VirtualScheduler', () => {
     expect(at).toEqual([40]);
   });
 
-  it('rejects intervals and advances that would hang or run time backwards', () => {
+  it('rejects advances that would hang or run time backwards', () => {
     const s = new VirtualScheduler();
-    expect(() => s.every(0, () => {})).toThrow(RangeError);
-    expect(() => s.every(Number.NaN, () => {})).toThrow(RangeError);
     expect(() => s.advance(-1)).toThrow(RangeError);
     expect(() => s.advance(Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    expect(() => s.advance(Number.NaN)).toThrow(RangeError);
+  });
+
+  it('after(NaN) fires at the current time, ahead of timers due later, with a finite now()', () => {
+    const s = new VirtualScheduler(40);
+    const at: string[] = [];
+    s.after(5, () => at.push(`five@${s.now()}`));
+    s.after(Number.NaN, () => at.push(`nan@${s.now()}`));
+    s.advance(10);
+    expect(at).toEqual(['nan@40', 'five@45']);
+  });
+
+  it.each([0, 250, 1234.5])('every(1000/60) from origin %s fires exactly 60 times over advance(1000), the 60th at origin + 1000', (origin) => {
+    const s = new VirtualScheduler(origin);
+    const at: number[] = [];
+    s.every(1000 / 60, () => at.push(s.now()));
+    s.advance(1000);
+    expect(at).toHaveLength(60);
+    expect(Math.abs(at[59]! - (origin + 1000))).toBeLessThanOrEqual(1e-9);
+    expect(s.now()).toBe(origin + 1000);
+  });
+
+  it('a timer due only float-rounding past the end of an advance fires in it, at the end', () => {
+    const s = new VirtualScheduler();
+    const at: number[] = [];
+    s.after(0.1 + 0.2, () => at.push(s.now()));
+    s.advance(0.3);
+    expect(at).toEqual([0.3]);
+    expect(s.now()).toBe(0.3);
+  });
+
+  it('every does not drift: an hour of 60 Hz ticks stays within 1e-9 ms of origin + k * 1000/60', () => {
+    const origin = 250;
+    const s = new VirtualScheduler(origin);
+    let ticks = 0;
+    let worst = 0;
+    s.every(1000 / 60, () => {
+      ticks += 1;
+      worst = Math.max(worst, Math.abs(s.now() - (origin + (ticks * 1000) / 60)));
+    });
+    s.advance(3_600_000);
+    expect(ticks).toBe(216_000);
+    expect(worst).toBeLessThanOrEqual(1e-9);
   });
 });
 
 describe('RealScheduler', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it('after hands setTimeout a 0 ms delay for NaN, ±Infinity and negative ms', () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const s = new RealScheduler();
+    for (const ms of ZERO_DELAYS) s.after(ms, () => {});
+    expect(setTimeoutSpy.mock.calls.map((call) => call[1])).toEqual([0, 0, 0, 0]);
   });
 
   it('now() is a finite, non-decreasing millisecond clock', () => {
