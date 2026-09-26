@@ -11,6 +11,8 @@ import {
   type MatchConfig,
   type MatchState,
   type PlayerId,
+  type PlayerInfo,
+  type PromptKind,
   type PromptState,
   type ServeTurnData,
   type TrainingFlags,
@@ -297,7 +299,45 @@ describe('Engine: serve faults', () => {
       serveNo: 1,
       side: 'ad',
       owner: server,
-      leadIn: { kind: 'point', ms: LEAD.pointMs, text: ['DOUBLE FAULT'] },
+      leadIn: { kind: 'point', ms: LEAD.faultMs + LEAD.pointMs, text: ['FAULT', 'TIME VIOLATION', 'DOUBLE FAULT'] },
+    });
+  });
+
+  it('a double fault is called FAULT with the second fault reason, then DOUBLE FAULT (spec §3.1)', () => {
+    const e = newEngine(12);
+    const server = e.owner() as PlayerId;
+    const dropper = scripted({ letters: 1 });
+    const secondServeOnly: Typist = (t) => (t.data.kind === 'serve' && t.data.serveNo === 2 ? dropper(t) : []);
+    const d = new Driver(e, byRole(server, secondServeOnly, idle));
+    d.playTurn();
+    d.playTurn();
+    expect(ofType(d.events, 'call').map((c) => c.call)).toEqual(['timeViolation', 'ballDropped', 'doubleFault']);
+    expect(serveData(e.state.turn).leadIn).toEqual({
+      kind: 'point',
+      ms: LEAD.faultMs + LEAD.pointMs,
+      text: ['FAULT', 'BALL DROPPED', 'DOUBLE FAULT'],
+    });
+  });
+
+  it('a double fault that ends a game adds GAME <NAME> and the game extra after both calls', () => {
+    const base = newEngine(8);
+    const server = base.owner() as PlayerId;
+    const receiver = other(server);
+    const e = restored(base, (s) => {
+      s.score.points[receiver] = 3;
+    });
+    const d = new Driver(e, [idle, idle]);
+    d.playTurn();
+    d.playTurn();
+    expect(ofType(d.events, 'game')).toEqual([expect.objectContaining({ winner: receiver })]);
+    expect(serveData(e.state.turn)).toMatchObject({
+      owner: receiver,
+      serveNo: 1,
+      leadIn: {
+        kind: 'point',
+        ms: LEAD.faultMs + LEAD.pointMs + LEAD.gameExtraMs,
+        text: ['FAULT', 'TIME VIOLATION', 'DOUBLE FAULT', `GAME ${NAMES[receiver]}`],
+      },
     });
   });
 
@@ -609,15 +649,84 @@ describe('Engine: training flags', () => {
     expect(next.data.kind === 'return' && words(next.data.choice.options)).toEqual(C1);
   });
 
-  it('freezeUntilFirstKey sets freezeFirst, and seenKinds carry over to the next turn', () => {
-    const e = newEngine(9, { training: training({ freezeUntilFirstKey: true }) });
-    const server = e.owner() as PlayerId;
-    expect(serveData(e.state.turn).freezeFirst).toBe(true);
-    const d = new Driver(e, byRole(server, scripted(), idle));
-    d.playTurn();
-    expect(e.state.lastTurn?.seenKinds).toEqual(['serve']);
-    expect(e.state.turn?.data.freezeFirst).toBe(true);
-    expect(e.state.turn?.seenKinds).toEqual(['serve']);
+  describe('first-prompt freezes belong to the trainee (spec §3.12)', () => {
+    const HUMAN: PlayerId = 0;
+    const CPU: PlayerId = 1;
+    const TRAINEE: [PlayerInfo, PlayerInfo] = [{ ...PLAYERS[0], kind: 'human', cpuLevel: null }, PLAYERS[1]];
+    const seedServedBy = (p: PlayerId): number => {
+      for (let seed = 0; ; seed++) if ((uniform(seedRng(seed)) < 0.5 ? 0 : 1) === p) return seed;
+    };
+    const trainee = (seed: number): Engine =>
+      new Engine({ config: config({ pace: 'relaxed', training: training({ freezeUntilFirstKey: true }) }), players: TRAINEE, seed });
+
+    /** The kinds of the prompts that froze the simulation in turn `t`, in order. */
+    function frozenKinds(t: TurnState): PromptKind[] {
+      let shown: number | null = null;
+      const kinds: PromptKind[] = [];
+      for (const x of t.log) {
+        if (x.k === 'show') shown = x.prompt;
+        if (x.k === 'freeze' && x.on) kinds.push(t.prompts.find((p) => p.id === shown)?.kind as PromptKind);
+      }
+      return kinds;
+    }
+
+    /** Plays the current turn with shot randoms that always land IN; returns it once ended. */
+    const playIn = (e: Engine, d: Driver): TurnState => {
+      (e.state.turn as TurnState).data.randoms = randoms(0.999, 0.5, 0.5);
+      expect(d.playTurn()).toBe('ended');
+      return e.state.lastTurn as TurnState;
+    };
+
+    it('trainee serves first: the CPU return never freezes, and the trainee first chase and choice still do', () => {
+      const e = trainee(seedServedBy(HUMAN));
+      const d = new Driver(e, [scripted(), scripted({ keyMs: 60 })]);
+      const serve = playIn(e, d);
+      expect(serve.data).toMatchObject({ kind: 'serve', owner: HUMAN, freezeFirst: true });
+      expect(frozenKinds(serve)).toEqual(['serve']);
+
+      const cpuReturn = playIn(e, d);
+      expect(cpuReturn.data).toMatchObject({ kind: 'return', owner: CPU, freezeFirst: false });
+      expect(frozenKinds(cpuReturn)).toEqual([]);
+      expect(cpuReturn.outcome?.kind).toBe('strike');
+      expect(e.state.turn?.seenKinds).toEqual(['serve']);
+
+      const humanReturn = playIn(e, d);
+      expect(humanReturn.data).toMatchObject({ kind: 'return', owner: HUMAN, freezeFirst: true });
+      expect(frozenKinds(humanReturn)).toEqual(['chase', 'choice']);
+      expect(e.state.seenKinds).toEqual([['serve', 'chase', 'choice'], ['chase', 'choice']]);
+    });
+
+    it('CPU serves first: its serve never freezes, and the trainee first serve still does', () => {
+      const e = trainee(seedServedBy(CPU));
+      const serveOnly = scripted({ keyMs: 60 });
+      const d = new Driver(e, [scripted(), (t) => (t.data.kind === 'serve' ? serveOnly(t) : [])]);
+      const played: TurnState[] = [];
+      for (let i = 0; i < 40 && !(e.state.turn?.data.kind === 'serve' && e.state.turn.data.owner === HUMAN); i++) {
+        played.push(playIn(e, d));
+      }
+      expect(played[0]?.data).toMatchObject({ kind: 'serve', owner: CPU, freezeFirst: false });
+      expect(played[1]?.data).toMatchObject({ kind: 'return', owner: HUMAN, freezeFirst: true });
+      expect(frozenKinds(played[1] as TurnState)).toEqual(['chase', 'choice']);
+      for (const t of played) {
+        if (t.data.owner === CPU) expect([t.data.freezeFirst, frozenKinds(t)]).toEqual([false, []]);
+        else expect(frozenKinds(t)).toEqual(t === played[1] ? ['chase', 'choice'] : []);
+      }
+
+      const humanServe = e.state.turn as TurnState;
+      expect(humanServe.data).toMatchObject({ kind: 'serve', owner: HUMAN, freezeFirst: true });
+      expect(humanServe.seenKinds).toEqual(['chase', 'choice']);
+      expect(frozenKinds(playIn(e, d))).toEqual(['serve']);
+    });
+
+    it('per-player seenKinds survive fromState', () => {
+      const e = trainee(seedServedBy(HUMAN));
+      const d = new Driver(e, [scripted(), scripted({ keyMs: 60 })]);
+      playIn(e, d);
+      playIn(e, d);
+      const b = Engine.fromState(JSON.parse(JSON.stringify(e.state)) as MatchState);
+      expect(b.state.seenKinds).toEqual([['serve'], ['chase', 'choice']]);
+      expect(b.state.turn?.seenKinds).toEqual(['serve']);
+    });
   });
 
   it('rejects an invalid training word list at construction', () => {

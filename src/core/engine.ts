@@ -15,6 +15,7 @@ import {
   type PlayerInfo,
   type PlayerStats,
   type PointReason,
+  type PromptKind,
   type ReturnTurnData,
   type RngState,
   type ServeTurnData,
@@ -91,6 +92,7 @@ export class Engine {
       forfeitBy: null,
       nextTurnId: 1,
       nextPromptBase: 1,
+      seenKinds: [[], []],
       rng,
       picker: createPicker(),
     };
@@ -193,6 +195,7 @@ export class Engine {
     const previous = s.lastTurn;
     const discarded = t.data.kind === 'return' && outcome.kind === 'call';
     if (!discarded) addTyping(s.stats[t.data.owner], t);
+    this.seenKinds()[t.data.owner] = [...t.seenKinds];
     for (const p of t.prompts) s.nextPromptBase = Math.max(s.nextPromptBase, p.id + 1);
     s.lastTurn = t;
     s.turn = null;
@@ -233,18 +236,25 @@ export class Engine {
     s.turn = this.returnTurn(t, strike);
   }
 
-  /** A fault on serve `d`: a second serve after a first-serve fault, otherwise a double fault. */
+  /**
+   * A fault on serve `d` is called FAULT (+ reason) for faultMs (spec §3.1 FAULT_CALL): before a second
+   * serve after a first-serve fault, otherwise before the DOUBLE FAULT point call in the same lead-in.
+   */
   private fault(d: ServeTurnData, reason: FaultReason, at: At): GameEvent[] {
+    const call = ['FAULT', FAULT_TEXT[reason]];
     if (d.serveNo === 1) {
-      this.state.turn = this.serveTurn(2, { kind: 'fault', ms: TUNING.leadIn.faultMs, text: ['FAULT', FAULT_TEXT[reason]] });
+      this.state.turn = this.serveTurn(2, { kind: 'fault', ms: TUNING.leadIn.faultMs, text: call });
       return [];
     }
     this.state.stats[d.owner].doubleFaults++;
-    return [at({ type: 'call', call: 'doubleFault', player: d.owner }), ...this.point(d.receiver, 'doubleFault', at)];
+    return [at({ type: 'call', call: 'doubleFault', player: d.owner }), ...this.point(d.receiver, 'doubleFault', at, call)];
   }
 
-  /** Scores a point; then either the match is over or the next point's serve turn is created. */
-  private point(winner: PlayerId, reason: ScoredReason, at: At): GameEvent[] {
+  /**
+   * Scores a point; then either the match is over or the next point's serve turn is created, its
+   * lead-in the point call (spec §3.1 POINT_CALL), preceded by `faultCall` for a double fault.
+   */
+  private point(winner: PlayerId, reason: ScoredReason, at: At, faultCall: string[] = []): GameEvent[] {
     const s = this.state;
     const lead = TUNING.leadIn;
     s.stats[winner].pointsWon++;
@@ -252,8 +262,8 @@ export class Engine {
     s.pointNo++;
     s.rallyStrikes = 0;
     const events = [at({ type: 'point', winner, reason })];
-    const text = [POINT_TEXT[reason]];
-    let ms = lead.pointMs;
+    const text = [...faultCall, POINT_TEXT[reason]];
+    let ms = (faultCall.length > 0 ? lead.faultMs : 0) + lead.pointMs;
     if (won.game !== null) {
       events.push(at({ type: 'game', winner: won.game }));
       text.push(`GAME ${this.name(won.game)}`);
@@ -298,7 +308,7 @@ export class Engine {
       pace: PACE_MULT[config.pace],
       wordSets: [first, spare],
       randoms: drawShotRandoms(this.rng()),
-      freezeFirst: training?.freezeUntilFirstKey === true,
+      freezeFirst: this.freezes(owner),
     });
   }
 
@@ -312,10 +322,11 @@ export class Engine {
         ? pickFixed(this.picker(), fixed.choice, 'choice')
         : pickTriple(this.rng(), this.picker(), config.wordPack, [strike.word.word]);
     const m = uniform(this.rng()) < 0.5 ? 1 : -1;
+    const owner = other(strike.player);
     return this.newTurn({
       kind: 'return',
       ...ids,
-      owner: other(strike.player),
+      owner,
       striker: strike.player,
       incoming: strike.flight,
       chase: strike.word,
@@ -324,8 +335,14 @@ export class Engine {
       choice: { options, targets: rallyTargets(strike.player, m), m },
       pace: PACE_MULT[config.pace],
       randoms: drawShotRandoms(this.rng()),
-      freezeFirst: config.training?.freezeUntilFirstKey === true,
+      freezeFirst: this.freezes(owner),
     });
+  }
+
+  /** Training freezes the first prompt of each kind for a person (the trainee), never for the CPU (spec §3.12). */
+  private freezes(owner: PlayerId): boolean {
+    const { config, players } = this.state;
+    return config.training?.freezeUntilFirstKey === true && players[owner].kind !== 'cpu';
   }
 
   /** One toss's serve words (none of `avoid`) with their targets in the receiver's box. */
@@ -349,11 +366,19 @@ export class Engine {
     return ids;
   }
 
-  /** An unstarted turn that carries over the kinds of prompt seen so far (match-wide training freezes, R26). */
+  /**
+   * An unstarted turn that carries over the kinds of prompt its owner has seen so far in the match, so
+   * a training freeze applies once per kind per player: the CPU's turns never use up the trainee's.
+   */
   private newTurn(data: TurnData): TurnState {
     const t = createTurn(data);
-    t.seenKinds = [...(this.state.lastTurn?.seenKinds ?? [])];
+    t.seenKinds = [...this.seenKinds()[data.owner]];
     return t;
+  }
+
+  /** Each player's seen prompt kinds (a state saved without them starts from none). */
+  private seenKinds(): [PromptKind[], PromptKind[]] {
+    return (this.state.seenKinds ??= [[], []]);
   }
 
   private name(p: PlayerId): string {

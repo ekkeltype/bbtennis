@@ -296,6 +296,7 @@ export interface MatchState {
   forfeitBy: PlayerId | null;
   nextTurnId: number;
   nextPromptBase: number;
+  seenKinds?: [PromptKind[], PromptKind[]]; // per player: prompt kinds shown in its own turns (training freezes)
   rng: RngState | null;         // null in PublicState
   picker: PickerState | null;   // null in PublicState
 }
