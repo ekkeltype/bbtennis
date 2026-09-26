@@ -1,17 +1,13 @@
 import { button, panel, slider, spinner, type Choice } from '../controls';
 import type { UiContext } from '../context';
 import { h } from '../dom';
+import { DEUCE_CHOICES, DISPLAY_CHOICES, PACE_CHOICES, PACK_CHOICES } from '../options';
 import type { ScreenFactory } from '../router';
 import type { Settings } from '../settings';
-import { DEUCE_CHOICES, PACE_CHOICES, PACK_CHOICES } from './cpuSetup';
 
 const ON_OFF: readonly Choice<boolean>[] = [
   { value: true, label: 'ON' },
   { value: false, label: 'OFF' },
-];
-const DISPLAY_CHOICES: readonly Choice<Settings['display']>[] = [
-  { value: 'pixel', label: 'PIXEL-PERFECT' },
-  { value: 'fit', label: 'FIT' },
 ];
 const VOLUME_STEPS = 10;
 

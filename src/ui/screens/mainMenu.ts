@@ -1,11 +1,10 @@
 import { BELT_COLOR, RAMPS } from '../../render/palette';
-import { button, swatch } from '../controls';
+import { button, fullscreenButton, swatch } from '../controls';
 import type { UiContext } from '../context';
 import { h } from '../dom';
 import { logoCanvas } from '../logo';
 import type { ScreenFactory } from '../router';
 import { highestBelt } from '../settings';
-import { fullscreenButton } from './title';
 
 /** The player's card under the menu: name, headband/belt swatch and highest belt. */
 function playerTag(ctx: UiContext): HTMLElement {

@@ -1,3 +1,4 @@
+import type { UiContext } from './context';
 import { h, isHeldActionKey, type Child } from './dom';
 import { icon } from './icons';
 
@@ -10,6 +11,13 @@ interface RowOptions { label: string; disabled?: boolean; note?: string }
 /** A menu button (Enter/Space/click activate it natively). */
 export function button(label: string, onClick: () => void, cls = ''): HTMLButtonElement {
   return h('button', { type: 'button', class: `btn ${cls}`.trim(), onclick: onClick }, label);
+}
+
+/** The fullscreen toggle shown on the title, main menu and pause screens (a button, never a letter hotkey). */
+export function fullscreenButton(ctx: Pick<UiContext, 'toggleFullscreen'>, cls = ''): HTMLButtonElement {
+  const b = button('FULLSCREEN', () => ctx.toggleFullscreen(), `fs ${cls}`.trim());
+  b.prepend(icon('fullscreen'));
+  return b;
 }
 
 /** A colour swatch showing a ramp's mid shade with its highlight and shadow as a pixel bevel (null = empty). */

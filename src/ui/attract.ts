@@ -1,11 +1,12 @@
-import type { MatchConfig, Surface, ViewModel } from '../core/types';
+import type { MatchConfig, ViewModel } from '../core/types';
 import type { Scheduler } from '../game/clock';
 import { LocalSession } from '../game/localSession';
+import { SURFACE_CHOICES, valuesOf } from './options';
 import { attractPlayers } from './players';
 
 /** The demo restarts this long after its MATCH_OVER (spec §4.6). */
 const RESTART_AFTER_MS = 2000;
-const SURFACES: readonly Surface[] = ['hard', 'clay', 'grass', 'dojo'];
+const SURFACES = valuesOf(SURFACE_CHOICES);
 
 /** A fresh 32-bit match seed from the platform's crypto RNG (Math.random if that is missing). */
 export function randomSeed(): number {

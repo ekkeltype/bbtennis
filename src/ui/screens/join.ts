@@ -9,7 +9,7 @@ import { button, panel, type Choice } from '../controls';
 import { h } from '../dom';
 import { humanPlayer } from '../players';
 import type { ScreenFactory } from '../router';
-import { DEUCE_CHOICES, FORMAT_CHOICES, PACE_CHOICES, PACK_CHOICES, SURFACE_CHOICES } from './cpuSetup';
+import { DEUCE_CHOICES, FORMAT_CHOICES, PACE_CHOICES, PACK_CHOICES, SURFACE_CHOICES } from '../options';
 import { keepFocus, OpponentCard, PING_REFRESH_MS, pingText, readyButton, readyStatus, showReady } from './lobby';
 import type { JoinParams, OnlineContext, OnlineEnv } from './online';
 

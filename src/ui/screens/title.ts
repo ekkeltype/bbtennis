@@ -1,16 +1,8 @@
-import { button } from '../controls';
+import { button, fullscreenButton } from '../controls';
 import type { UiContext } from '../context';
 import { h } from '../dom';
-import { icon } from '../icons';
 import { logoCanvas } from '../logo';
 import type { ScreenFactory } from '../router';
-
-/** The fullscreen toggle shown on the title, main menu and pause screens (a button, never a letter hotkey). */
-export function fullscreenButton(ctx: UiContext, cls = ''): HTMLButtonElement {
-  const b = button('FULLSCREEN', () => ctx.toggleFullscreen(), `fs ${cls}`.trim());
-  b.prepend(icon('fullscreen'));
-  return b;
-}
 
 /** Title (spec §4.6): the logo over the attract demo, "PRESS ENTER" to reach the main menu. */
 export function titleScreen(ctx: UiContext): ScreenFactory {

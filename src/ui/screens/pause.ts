@@ -1,8 +1,7 @@
-import { button, panel } from '../controls';
+import { button, fullscreenButton, panel } from '../controls';
 import type { PauseParams, UiContext } from '../context';
 import { h } from '../dom';
 import type { ScreenFactory } from '../router';
-import { fullscreenButton } from './title';
 
 /**
  * The in-match menu (spec §4.6): a local match (vs CPU, Training) is paused behind it and offers

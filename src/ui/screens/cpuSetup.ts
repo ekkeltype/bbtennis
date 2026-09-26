@@ -1,47 +1,13 @@
 import { CPU_LEVELS, isMilestone, type CpuLevelInfo } from '../../core/cpu';
-import type { DeuceRule, FormatId, PaceId, Surface, WordPackId } from '../../core/types';
 import { BELT_COLOR, RAMPS } from '../../render/palette';
-import { button, panel, pickerRow, spinner, swatch, type Choice } from '../controls';
+import { button, panel, pickerRow, spinner, swatch } from '../controls';
 import type { UiContext } from '../context';
 import { h } from '../dom';
 import { icon } from '../icons';
+import { DEUCE_CHOICES, FORMAT_CHOICES, PACE_CHOICES, PACK_CHOICES, SURFACE_CHOICES } from '../options';
 import { cpuPlayer } from '../players';
 import type { ScreenFactory } from '../router';
 import type { Settings } from '../settings';
-
-/** Match formats with what it takes to win (spec §3.6). */
-export const FORMAT_CHOICES: readonly Choice<FormatId>[] = [
-  { value: 'tiebreak', label: 'TIEBREAK', hint: 'FIRST TO 7' },
-  { value: 'short', label: 'SHORT SET', hint: 'FIRST TO 4 GAMES' },
-  { value: 'full', label: 'FULL SET', hint: 'FIRST TO 6 GAMES' },
-  { value: 'bo3', label: 'BEST OF 3', hint: 'SHORT SETS' },
-];
-/** Pace presets with the typing speed each suits (spec §3.9). */
-export const PACE_CHOICES: readonly Choice<PaceId>[] = [
-  { value: 'relaxed', label: 'RELAXED', hint: '30 WPM' },
-  { value: 'normal', label: 'NORMAL', hint: '50 WPM' },
-  { value: 'fast', label: 'FAST', hint: '70 WPM' },
-  { value: 'lightning', label: 'LIGHTNING', hint: '90 WPM' },
-];
-/** Court surfaces (cosmetic). */
-export const SURFACE_CHOICES: readonly Choice<Surface>[] = [
-  { value: 'hard', label: 'HARD' },
-  { value: 'clay', label: 'CLAY' },
-  { value: 'grass', label: 'GRASS' },
-  { value: 'dojo', label: 'DOJO' },
-];
-/** Word packs (spec §3.10), Everyday first. */
-export const PACK_CHOICES: readonly Choice<WordPackId>[] = [
-  { value: 'everyday', label: 'EVERYDAY' },
-  { value: 'sports', label: 'SPORTS' },
-  { value: 'dojo', label: 'DOJO' },
-  { value: 'mixed', label: 'MIXED' },
-];
-/** Deuce handling (spec §3.6). */
-export const DEUCE_CHOICES: readonly Choice<DeuceRule>[] = [
-  { value: 'advantage', label: 'ADVANTAGE' },
-  { value: 'golden', label: 'GOLDEN POINT' },
-];
 
 /** "GREEN BELT, 2 STRIPES" / "BLACK BELT, 2ND DAN". */
 export function rankText(l: CpuLevelInfo): string {

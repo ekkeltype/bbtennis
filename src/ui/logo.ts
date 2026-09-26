@@ -1,5 +1,6 @@
 import { drawText, textWidth } from '../render/font';
 import { OUTLINE, PAL, RAMPS } from '../render/palette';
+import { rect } from './paint';
 
 /** Logo canvas size in logo pixels (CSS shows each at 2 game pixels, see styles.css). */
 const W = 132;
@@ -7,11 +8,6 @@ const H = 63;
 const LINE1 = 'BLACK BELT';
 const LINE2 = 'TENNIS';
 const BLACK = RAMPS.cloth[4]!;
-
-function rect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, c: string): void {
-  g.fillStyle = c;
-  g.fillRect(x, y, w, h);
-}
 
 /** Text at 2× with a 1 px outline all round and a 1 px drop shadow under it. */
 function outlined(g: CanvasRenderingContext2D, s: string, y: number, fill: string, shadow: string): void {

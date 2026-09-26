@@ -11,7 +11,7 @@ import { humanPlayer } from '../players';
 import { LookPreview } from '../preview';
 import type { ScreenFactory } from '../router';
 import { DEFAULT_PROFILE } from '../settings';
-import { DEUCE_CHOICES, FORMAT_CHOICES, PACE_CHOICES, PACK_CHOICES, SURFACE_CHOICES } from './cpuSetup';
+import { DEUCE_CHOICES, FORMAT_CHOICES, PACE_CHOICES, PACK_CHOICES, SURFACE_CHOICES } from '../options';
 import type { OnlineContext, OnlineEnv } from './online';
 
 /** How often a lobby screen refreshes the round trip it shows. */

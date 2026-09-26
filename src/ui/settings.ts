@@ -3,6 +3,7 @@ import { NAME_CHARS, NAME_MAX, sanitizeName } from '../core/text';
 import type { DeuceRule, FormatId, Look, PaceId, Profile, Surface, WordPackId } from '../core/types';
 import { RAMPS } from '../render/palette';
 import { HAIR_STYLES } from '../render/sprites/parts';
+import { DEUCE_CHOICES, DISPLAY_CHOICES, FORMAT_CHOICES, PACE_CHOICES, PACK_CHOICES, SURFACE_CHOICES, valuesOf } from './options';
 
 export type { Profile } from '../core/types';
 
@@ -66,12 +67,12 @@ export const DEFAULT_CAREER: Career = {
   earned: [],
 };
 
-const PACES: readonly PaceId[] = ['relaxed', 'normal', 'fast', 'lightning'];
-const PACKS: readonly WordPackId[] = ['everyday', 'sports', 'dojo', 'mixed'];
-const DEUCE_RULES: readonly DeuceRule[] = ['advantage', 'golden'];
-const SURFACES: readonly Surface[] = ['hard', 'clay', 'grass', 'dojo'];
-const FORMATS: readonly FormatId[] = ['tiebreak', 'short', 'full', 'bo3'];
-const DISPLAYS: readonly Settings['display'][] = ['pixel', 'fit'];
+const PACES = valuesOf(PACE_CHOICES);
+const PACKS = valuesOf(PACK_CHOICES);
+const DEUCE_RULES = valuesOf(DEUCE_CHOICES);
+const SURFACES = valuesOf(SURFACE_CHOICES);
+const FORMATS = valuesOf(FORMAT_CHOICES);
+const DISPLAYS = valuesOf(DISPLAY_CHOICES);
 
 type Fields = Record<string, unknown>;
 

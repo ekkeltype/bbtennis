@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { pickerRow, slider, spinner } from '../../src/ui/controls';
+import { fullscreenButton, pickerRow, slider, spinner } from '../../src/ui/controls';
 import { focusables, h } from '../../src/ui/dom';
 
 function press(target: Element, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
@@ -206,5 +206,19 @@ describe('pickerRow', () => {
     s.el.querySelectorAll<HTMLElement>('.item')[1]!.click();
     expect(s.value()).toBe(1);
     expect(s.el.querySelector('.value')?.textContent).toBe('COLOUR 1');
+  });
+});
+
+describe('fullscreenButton', () => {
+  it('is a FULLSCREEN menu button with its icon that toggles fullscreen', () => {
+    const ctx = { toggleFullscreen: vi.fn() };
+    const b = fullscreenButton(ctx, 'corner');
+    expect(b.textContent).toBe('FULLSCREEN');
+    expect(b.classList.contains('btn')).toBe(true);
+    expect(b.classList.contains('fs')).toBe(true);
+    expect(b.classList.contains('corner')).toBe(true);
+    expect(b.querySelector('.icon')).not.toBeNull();
+    b.click();
+    expect(ctx.toggleFullscreen).toHaveBeenCalledOnce();
   });
 });

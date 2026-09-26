@@ -4,6 +4,7 @@ import { plateWidth } from '../render/layout';
 import { OUTLINE, PAL, SURFACE_PAL } from '../render/palette';
 import { drawLeader, drawPlate, drawTierRing, drawTimingBar, type PlateDraw } from '../render/plates';
 import { buildSheet, drawPlayer } from '../render/sprites/sheet';
+import { rect } from './paint';
 
 /** Size of every How to Play illustration, in game pixels (CSS shows one per `--u`). */
 export const ILLUSTRATION = { w: 116, h: 56 } as const;
@@ -30,11 +31,6 @@ function plate(g: CanvasRenderingContext2D, o: WordOption, x: number, y: number,
     reduceEffects: true,
     ...state,
   });
-}
-
-function rect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, c: string): void {
-  g.fillStyle = c;
-  g.fillRect(x, y, w, h);
 }
 
 /** Night backdrop with a strip of hard court (surround, court, a white line) along the bottom. */
