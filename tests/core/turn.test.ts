@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { rallyTargets, restSpot, serverSpot, serveTargets } from '../../src/core/court';
-import { ballAt, buildFlight, stanceFor } from '../../src/core/trajectory';
+import { ballAt, stanceFor } from '../../src/core/trajectory';
 import {
   appendWordSet,
   createTurn,
@@ -11,97 +11,34 @@ import {
   turnInput,
 } from '../../src/core/turn';
 import type {
-  BallFlight,
   GameEvent,
   ReturnTurnData,
   ServeTurnData,
   ServeWordSet,
-  ShotRandoms,
   StrikeInfo,
-  Tier,
   TurnState,
   Vec2,
-  WordOption,
 } from '../../src/core/types';
+import {
+  CHOICE,
+  flight,
+  opt,
+  RALLY_IN,
+  RALLY_OUT,
+  returnData,
+  SET_A,
+  SET_B,
+  serveData,
+  serveSet,
+} from './turnFixtures';
 
-const HALF: ShotRandoms = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5];
-
-const tierOf = (len: number): Tier => (len <= 5 ? 'easy' : len <= 9 ? 'medium' : 'hard');
-const opt = (word: string): WordOption => ({ word, len: word.length, tier: tierOf(word.length) });
-
-const serveSet = (words: string[], variant: 'T' | 'wide' = 'T'): ServeWordSet => ({
-  options: words.map(opt),
-  targets: serveTargets(1, 'deuce', variant),
-  variant,
-});
-
-const SET_A = ['ball', 'volley', 'tiebreaker'];
-const SET_B = ['ace', 'racket', 'backhander'];
+/** A spare serve word set for `appendWordSet`. */
 const SET_C = ['net', 'umpire', 'grandslams'];
 
-/** Server 0 → receiver 1 from the deuce side; intro lead-in 2.5 s, serve clock 30 s, apex a = 2 s. */
-function serveData(over: Partial<ServeTurnData> = {}): ServeTurnData {
-  return {
-    kind: 'serve',
-    turnId: 7,
-    promptBase: 40,
-    owner: 0,
-    receiver: 1,
-    serveNo: 1,
-    side: 'deuce',
-    leadIn: { kind: 'intro', ms: 2500, text: ['ALEX TO SERVE'] },
-    serveClockMs: 30000,
-    tossApexMs: 2000,
-    catchMs: 500,
-    pace: 1,
-    wordSets: [serveSet(SET_A), serveSet(SET_B, 'wide')],
-    randoms: HALF,
-    freezeFirst: false,
-    ...over,
-  };
-}
-
-const flight = (over: Partial<Parameters<typeof buildFlight>[0]> = {}): BallFlight =>
-  buildFlight({
-    isServe: false,
-    tier: 'medium',
-    p0: { x: -1, y: -11.5, z: 1 },
-    landing: { x: 1.5, y: 9 },
-    outcome: 'in',
-    T: 3000,
-    grace: 400,
-    destEnd: 1,
-    ...over,
-  });
-
-const RALLY_IN = flight();
-const RALLY_OUT = flight({ landing: { x: 4.6, y: 9 }, outcome: 'out' });
 const RALLY_NET = flight({ outcome: 'net' });
 const SERVE_IN = flight({ isServe: true, tier: 'easy', p0: { x: 0.8, y: -12.3, z: 2.6 }, landing: serveTargets(1, 'deuce', 'T')[0]! });
 const SERVE_OUT = flight({ isServe: true, tier: 'easy', p0: { x: 0.8, y: -12.3, z: 2.6 }, landing: { x: -0.5, y: 5 }, outcome: 'out' });
 const SERVE_NET = flight({ isServe: true, tier: 'easy', p0: { x: 0.8, y: -12.3, z: 2.6 }, landing: { x: 2, y: 5 }, outcome: 'net' });
-
-const CHOICE = ['drop', 'volley', 'crosscourt'];
-
-/** Receiver 1 returning a rally ball struck by player 0 at depth n = 1 (so the reply flies at n = 2, one pressure step). */
-function returnData(over: Partial<ReturnTurnData> = {}): ReturnTurnData {
-  return {
-    kind: 'return',
-    turnId: 8,
-    promptBase: 48,
-    owner: 1,
-    striker: 0,
-    incoming: RALLY_IN,
-    chase: opt('ball'),
-    isServeReturn: false,
-    n: 1,
-    choice: { options: CHOICE.map(opt), targets: rallyTargets(0, 1), m: 1 },
-    pace: 1,
-    randoms: HALF,
-    freezeFirst: false,
-    ...over,
-  };
-}
 
 /** Types `word` one key every `step` ms from `from`; returns all events. */
 function type(t: TurnState, word: string, from: number, step = 100): GameEvent[] {

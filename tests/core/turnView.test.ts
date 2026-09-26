@@ -1,27 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { rallyTargets, serveTargets } from '../../src/core/court';
-import { buildFlight } from '../../src/core/trajectory';
+import { rallyTargets } from '../../src/core/court';
 import { createTurn, simTime, startTurn, turnClock, turnInput } from '../../src/core/turn';
 import { type TurnView, turnViewAt } from '../../src/core/turnView';
-import type {
-  BallFlight,
-  ReturnTurnData,
-  ServeTurnData,
-  ShotRandoms,
-  Tier,
-  TurnData,
-  TurnState,
-  WordOption,
-} from '../../src/core/types';
+import type { ReturnTurnData, ServeTurnData, TurnData, TurnState, WordOption } from '../../src/core/types';
 import { progress } from '../../src/core/typing';
+import { CHOICE, opt, RALLY_OUT, returnData, SET_A, SET_B, serveData, serveSet } from './turnFixtures';
 
-const HALF: ShotRandoms = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5];
-const tierOf = (len: number): Tier => (len <= 5 ? 'easy' : len <= 9 ? 'medium' : 'hard');
-const opt = (word: string): WordOption => ({ word, len: word.length, tier: tierOf(word.length) });
-
-function serveData(over: Partial<ServeTurnData> = {}): ServeTurnData {
-  return {
-    kind: 'serve',
+/** Player 1's second serve to player 0 from the ad side, after a 1.5 s fault call. */
+const secondServe = (over: Partial<ServeTurnData> = {}): ServeTurnData =>
+  serveData({
     turnId: 3,
     promptBase: 16,
     owner: 1,
@@ -29,51 +16,18 @@ function serveData(over: Partial<ServeTurnData> = {}): ServeTurnData {
     serveNo: 2,
     side: 'ad',
     leadIn: { kind: 'fault', ms: 1500, text: ['FAULT', 'OUT'] },
-    serveClockMs: 30000,
-    tossApexMs: 2000,
-    catchMs: 500,
-    pace: 1,
-    wordSets: [
-      { options: ['ball', 'volley', 'tiebreaker'].map(opt), targets: serveTargets(0, 'ad', 'T'), variant: 'T' },
-      { options: ['ace', 'racket', 'backhander'].map(opt), targets: serveTargets(0, 'ad', 'wide'), variant: 'wide' },
-    ],
-    randoms: HALF,
-    freezeFirst: false,
-    ...over,
-  };
-}
-
-const flight = (over: Partial<Parameters<typeof buildFlight>[0]> = {}): BallFlight =>
-  buildFlight({
-    isServe: false,
-    tier: 'medium',
-    p0: { x: -1, y: -11.5, z: 1 },
-    landing: { x: 1.5, y: 9 },
-    outcome: 'in',
-    T: 3000,
-    grace: 400,
-    destEnd: 1,
+    wordSets: [serveSet(SET_A, 'T', 0, 'ad'), serveSet(SET_B, 'wide', 0, 'ad')],
     ...over,
   });
 
-function returnData(over: Partial<ReturnTurnData> = {}): ReturnTurnData {
-  return {
-    kind: 'return',
+/** Player 1 returning a rally ball, with the choice targets mirrored (m = −1). */
+const rallyReturn = (over: Partial<ReturnTurnData> = {}): ReturnTurnData =>
+  returnData({
     turnId: 4,
     promptBase: 24,
-    owner: 1,
-    striker: 0,
-    incoming: flight(),
-    chase: opt('ball'),
-    isServeReturn: false,
-    n: 1,
-    choice: { options: ['drop', 'volley', 'crosscourt'].map(opt), targets: rallyTargets(0, -1), m: -1 },
-    pace: 1,
-    randoms: HALF,
-    freezeFirst: false,
+    choice: { options: CHOICE.map(opt), targets: rallyTargets(0, -1), m: -1 },
     ...over,
-  };
-}
+  });
 
 /** One scripted moment: an owner key at τ (or only a clock confirmation when `key` is absent). */
 interface Step {
@@ -171,7 +125,7 @@ function expectReplayMatches(data: TurnData, steps: Step[]): TurnState {
 
 describe('turnViewAt', () => {
   it('replays a serve turn with a catch, a re-toss, a wrong key and a strike', () => {
-    const t = expectReplayMatches(serveData(), [
+    const t = expectReplayMatches(secondServe(), [
       ...at(1000, 1500, 2000),
       { τ: 3000, key: 'toss' },
       ...at(4000, 6999, 7000, 7200, 7499, 7500),
@@ -195,13 +149,13 @@ describe('turnViewAt', () => {
   });
 
   it('replays a time violation at the catch end, keeping the toss and catch times', () => {
-    const t = expectReplayMatches(serveData(), [{ τ: 29000, key: 'toss' }, ...at(33000, 33400, 33500, 34000)]);
+    const t = expectReplayMatches(secondServe(), [{ τ: 29000, key: 'toss' }, ...at(33000, 33400, 33500, 34000)]);
     expect(t.outcome).toEqual({ kind: 'fault', endτ: 33500, reason: 'timeViolation' });
     expect(turnViewAt(t, 34000)).toMatchObject({ phase: 'ended', tossAt: 29000, catchAt: 33000 });
   });
 
   it('replays a training freeze and a dropped ball, with simτ standing still while frozen', () => {
-    const t = expectReplayMatches(serveData({ freezeFirst: true }), [
+    const t = expectReplayMatches(secondServe({ freezeFirst: true }), [
       ...at(1500),
       { τ: 3000, key: 'toss' },
       ...at(4000, 5000),
@@ -215,7 +169,7 @@ describe('turnViewAt', () => {
   });
 
   it('replays a return turn: chase with a wrong key, choice, queued strike at T', () => {
-    const t = expectReplayMatches(returnData(), [
+    const t = expectReplayMatches(rallyReturn(), [
       { τ: 100, key: 'b' },
       { τ: 150, key: 'q' },
       { τ: 200, key: 'a' },
@@ -238,7 +192,7 @@ describe('turnViewAt', () => {
   });
 
   it('replays an OUT call that overrides a queued strike', () => {
-    const t = expectReplayMatches(returnData({ incoming: flight({ landing: { x: 4.6, y: 9 }, outcome: 'out' }) }), [
+    const t = expectReplayMatches(rallyReturn({ incoming: RALLY_OUT }), [
       ...keys('ball', 100),
       ...keys('drop', 600),
       ...at(1000, 1799, 1800, 2500),
@@ -249,13 +203,13 @@ describe('turnViewAt', () => {
   });
 
   it('replays a stretch strike and a miss', () => {
-    expectReplayMatches(returnData(), [...keys('ball', 100), ...at(2000), ...keys('drop', 2900), ...at(3300)]);
-    const miss = expectReplayMatches(returnData({ isServeReturn: true }), [...keys('ba', 100), ...at(3399, 3400, 4000)]);
+    expectReplayMatches(rallyReturn(), [...keys('ball', 100), ...at(2000), ...keys('drop', 2900), ...at(3300)]);
+    const miss = expectReplayMatches(rallyReturn({ isServeReturn: true }), [...keys('ba', 100), ...at(3399, 3400, 4000)]);
     expect(miss.outcome).toEqual({ kind: 'miss', endτ: 3400, ace: true });
   });
 
   it('replays a return turn frozen on its first chase and choice prompts', () => {
-    const t = expectReplayMatches(returnData({ freezeFirst: true }), [
+    const t = expectReplayMatches(rallyReturn({ freezeFirst: true }), [
       ...at(500),
       ...keys('ball', 1000),
       ...at(2000),
@@ -268,7 +222,7 @@ describe('turnViewAt', () => {
   });
 
   it('shows nothing of an unstarted turn', () => {
-    const t = createTurn(returnData());
+    const t = createTurn(rallyReturn());
     expect(turnViewAt(t, 0)).toEqual({
       phase: 'chase',
       τ: 0,
@@ -281,11 +235,11 @@ describe('turnViewAt', () => {
       strike: null,
       outcome: null,
     });
-    expect(turnViewAt(createTurn(serveData()), 5000).phase).toBe('leadIn');
+    expect(turnViewAt(createTurn(secondServe()), 5000).phase).toBe('leadIn');
   });
 
   it('builds fresh prompt views that do not alias the turn prompts', () => {
-    const { t } = run(returnData(), keys('ball', 100));
+    const { t } = run(rallyReturn(), keys('ball', 100));
     const view = turnViewAt(t, 1000);
     view.prompts[0]!.options[0]!.word = 'zzz';
     expect(t.prompts[0]!.options[0]!.word).toBe('ball');
