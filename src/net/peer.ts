@@ -17,6 +17,9 @@ export const HOST_CODE_TRIES = 5;
 /** Time allowed to reach the broker (host) or open the connection (guest) (spec §5.4). */
 export const JOIN_TIMEOUT_MS = 20000;
 
+/** A guest connection that has not opened this long after reaching the host is closed (the guest's own join gives up then too). */
+export const GUEST_OPEN_TIMEOUT_MS = JOIN_TIMEOUT_MS;
+
 /** Delay before a join reports STILL_CONNECTING (spec §5.4). */
 export const SLOW_STATUS_MS = 5000;
 
@@ -245,11 +248,13 @@ class PeerHost implements HostHandle {
   private guestCb: ((t: Transport) => void) | null = null;
   private readonly unclaimed: Transport[] = [];
   private readonly guests = new Set<Transport>();
+  /** The open timeouts of connections still opening, to cancel on close(). */
+  private readonly opening = new Set<() => void>();
   private closed = false;
   private cancelReconnect: (() => void) | null = null;
 
   constructor(readonly code: string, private readonly peer: PeerLike, private readonly s: Scheduler) {
-    peer.on('connection', (conn) => conn.on('open', () => this.admit(conn)));
+    peer.on('connection', (conn) => this.waitForOpen(conn));
     peer.on('disconnected', () => this.reconnectLater());
   }
 
@@ -263,12 +268,39 @@ class PeerHost implements HostHandle {
     this.closed = true;
     this.unclaimed.length = 0;
     this.cancelReconnect?.();
+    for (const cancel of this.opening) cancel();
+    this.opening.clear();
     if (this.guests.size === 0) {
       this.peer.destroy();
       return;
     }
     for (const t of this.guests) t.close();
     this.s.after(CLOSE_FLUSH_MS, () => this.peer.destroy());
+  }
+
+  /**
+   * A guest's connection reached the host: it is admitted once open, and closed if it has not opened
+   * within GUEST_OPEN_TIMEOUT_MS (an open after that hands over nothing). A close or error before it
+   * opens ends the wait.
+   */
+  private waitForOpen(conn: ConnLike): void {
+    let timedOut = false;
+    const cancelTimer = this.s.after(GUEST_OPEN_TIMEOUT_MS, () => {
+      this.opening.delete(cancelTimer);
+      timedOut = true;
+      conn.close();
+    });
+    this.opening.add(cancelTimer);
+    const settle = (): void => {
+      cancelTimer();
+      this.opening.delete(cancelTimer);
+    };
+    conn.on('open', () => {
+      settle();
+      if (!timedOut) this.admit(conn);
+    });
+    conn.on('close', settle);
+    conn.on('error', settle);
   }
 
   private admit(conn: ConnLike): void {

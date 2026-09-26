@@ -4,7 +4,7 @@ import { seedRng, uniform } from '../../src/core/rng';
 import { VirtualScheduler, type Scheduler } from '../../src/game/clock';
 import { ALPHABET } from '../../src/net/codes';
 import {
-  CLOSE_FLUSH_MS, DEFAULT_ICE_SERVERS, HOST_CODE_TRIES, JOIN_TIMEOUT_MS, NetError, RECONNECT_DELAY_MS, SLOW_STATUS_MS,
+  CLOSE_FLUSH_MS, DEFAULT_ICE_SERVERS, GUEST_OPEN_TIMEOUT_MS, HOST_CODE_TRIES, JOIN_TIMEOUT_MS, NetError, RECONNECT_DELAY_MS, SLOW_STATUS_MS,
   STILL_CONNECTING, errorKind, errorText, hostGame, joinGame, peerOptions,
   type BrokerOptions, type ConnLike, type PeerEnv, type PeerFactory, type PeerLike,
 } from '../../src/net/peer';
@@ -482,6 +482,37 @@ describe('hostGame', () => {
     s.advance(10 * RECONNECT_DELAY_MS);
     expect(peer.reconnects).toBe(0);
     const late = arrive();
+    late.emit('open');
+    expect(late.closes).toEqual([undefined]);
+  });
+
+  it(`closes a guest connection that has not opened ${GUEST_OPEN_TIMEOUT_MS} ms after it arrived; one that opened, closed or failed in time is left alone`, async () => {
+    const { handle, arrive, s } = await openHost();
+    const guests: Transport[] = [];
+    handle.onGuest((t) => guests.push(t));
+    const [stuck, quick, gone, failed] = [arrive(), arrive(), arrive(), arrive()];
+    s.advance(GUEST_OPEN_TIMEOUT_MS - 1);
+    quick.emit('open');
+    gone.emit('close');
+    failed.emit('error', peerError('negotiation-failed'));
+    expect(stuck.closes).toEqual([]);
+    s.advance(1);
+    expect(stuck.closes).toEqual([undefined]);
+    expect([quick, gone, failed].map((c) => c.closes)).toEqual([[], [], []]);
+    // An open after the timeout (the connection is already closed) hands over nothing.
+    stuck.emit('open');
+    expect(guests).toHaveLength(1);
+    s.advance(10 * GUEST_OPEN_TIMEOUT_MS);
+    expect(quick.closes).toEqual([]);
+  });
+
+  it('close() stops the open timeouts: a connection still opening is left to the peer\'s destruction, and one that opens later is closed at once', async () => {
+    const { handle, arrive, s, peer } = await openHost();
+    const [late, never] = [arrive(), arrive()];
+    handle.close();
+    expect(peer.destroyed).toBe(true);
+    s.advance(GUEST_OPEN_TIMEOUT_MS);
+    expect(never.closes).toEqual([]);
     late.emit('open');
     expect(late.closes).toEqual([undefined]);
   });
