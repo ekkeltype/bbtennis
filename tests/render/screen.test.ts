@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlayerId, Surface } from '../../src/core/types';
-import { Screen, cachedLayer, computeScale, layersPerEnd, type Layer, type ScaleInfo } from '../../src/render/screen';
+import { Screen, cachedLayer, computeScale, cssUnit, layersPerEnd, type Layer, type ScaleInfo } from '../../src/render/screen';
 
 /** Device-pixel values must be whole numbers (within float noise). */
 function expectWhole(v: number): void {
@@ -126,6 +126,22 @@ describe('computeScale (spec §4.1)', () => {
         }
       }
     }
+  });
+});
+
+describe('cssUnit: the overlay unit --u (spec §4.6)', () => {
+  it('is k / dpr CSS px in pixel mode: 1536×760 @1.25 → 2.4', () => {
+    const i = computeScale(1536, 760, 1.25, 'pixel');
+    expect(cssUnit(i)).toBeCloseTo(2.4, 12);
+    expect(cssUnit(i)).toBeCloseTo(i.k / i.dpr, 12);
+  });
+
+  it('follows the fitted canvas in fit mode, where k / dpr would be wrong: 900×500 @1 → 1.85', () => {
+    const i = computeScale(900, 500, 1, 'pixel');
+    expect(i).toMatchObject({ mode: 'fit', k: 1, dpr: 1 });
+    expect(cssUnit(i)).toBeCloseTo(1.85, 12);
+    expect(cssUnit(i) * 480).toBeCloseTo(i.cssW, 12);
+    expect(cssUnit(i) * 270).toBeLessThanOrEqual(500);
   });
 });
 

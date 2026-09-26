@@ -4,8 +4,9 @@ import { H, W, viewerEnd } from './projection';
 /**
  * How the 480×270 buffer maps onto the window (spec §4.1). `k` is the whole device-pixel scale
  * (≥ 2 in pixel mode; in fit mode the floor of the fitted scale, at least 1). `cssW`/`cssH` and
- * `offsetX`/`offsetY` are CSS px whose device-pixel equivalents are whole numbers. One game pixel is
- * `cssW / 480` CSS px in both modes (`k / dpr` in pixel mode, the overlay's `--u`, spec §4.6).
+ * `offsetX`/`offsetY` are CSS px whose device-pixel equivalents are whole numbers. The DOM overlay's
+ * unit is `--u = cssW / 480` CSS px, one game pixel in both modes (`cssUnit`, spec §4.6); it equals
+ * `k / dpr` only in pixel mode, so the overlay must not derive `--u` from `k`.
  */
 export interface ScaleInfo { k: number; dpr: number; cssW: number; cssH: number; mode: 'pixel' | 'fit'; offsetX: number; offsetY: number }
 
@@ -38,6 +39,11 @@ export function computeScale(innerW: number, innerH: number, dpr: number, mode: 
     offsetX: Math.max(0, Math.floor((devW - w) / 2)) / ratio,
     offsetY: Math.max(0, Math.floor((devH - h) / 2)) / ratio,
   };
+}
+
+/** The DOM overlay's `--u`: CSS px per game pixel, `cssW / 480` in pixel and fit mode alike (spec §4.6). */
+export function cssUnit(info: ScaleInfo): number {
+  return info.cssW / W;
 }
 
 /** An offscreen drawing surface: its canvas (a `drawImage` source) and 2D context. */
