@@ -4,8 +4,9 @@ import { Engine } from '../../src/core/engine';
 import { TUNING } from '../../src/core/tuning';
 import type { GameEvent, PlayerId, PlayerInfo, TurnState, ViewModel } from '../../src/core/types';
 import { VirtualScheduler } from '../../src/game/clock';
+import { DisplayQueue } from '../../src/game/displayQueue';
 import { GuestSession } from '../../src/game/guestSession';
-import { HostSession } from '../../src/game/hostSession';
+import { HostSession, OnlineLifecycle } from '../../src/game/hostSession';
 import type { Session } from '../../src/game/session';
 import { MAX_SEND_BYTES, msgBytes, type NetMsg } from '../../src/net/protocol';
 import { loopbackPair, type Transport } from '../../src/net/transport';
@@ -328,7 +329,85 @@ describe('online sessions: link', () => {
   });
 });
 
+describe('online sessions: a transport with messages or a close already waiting', () => {
+  /** A loopback pair on its own scheduler at 20 ms, and the ticker the sessions run on. */
+  function pair(): { s: VirtualScheduler; a: Transport; b: Transport; ticker: (ms: number, fn: () => void) => () => void } {
+    const s = new VirtualScheduler(1000);
+    const [a, b] = loopbackPair(s, { latencyMs: 20, jitterMs: 0, seed: 1 });
+    return { s, a, b, ticker: (ms, fn) => s.every(ms, fn) };
+  }
+
+  it('a HostSession built after the guest already closed ends at once as a disconnect, and stays ended', () => {
+    const { s, a, b, ticker } = pair();
+    b.close();
+    s.advance(100);
+    const host = new HostSession({ transport: a, config: TIEBREAK, host: HOST, guest: GUEST, seed: 1, scheduler: s, ticker });
+    expect(host.endReason).toBe('disconnect');
+    expect(host.opponentGone).toBe('disconnect');
+    expect(host.over).toBe(true);
+    for (let t = 0; t < 10000; t += 250) {
+      s.advance(250);
+      host.frame(250);
+    }
+    expect(host.endReason).toBe('disconnect');
+    expect(host.over).toBe(true);
+    expect(host.frame(FRAME).overlay.unstable).toBe(false);
+  });
+
+  it('a HostSession built after the guest sent clocks, an input and a forfeit, then closed, applies them in order without throwing', () => {
+    const { s, a, b, ticker } = pair();
+    b.send({ type: 'clock', turn: 1, τ: 0 });
+    b.send({ type: 'input', seq: 0, turn: 1, k: 'toss', τ: 200 });
+    b.send({ type: 'clock', turn: 1, τ: 400 });
+    b.send({ type: 'forfeit' });
+    b.close();
+    s.advance(100);
+    // The guest serves first, so turn 1 is the guest's.
+    const h = new HostSession({ transport: a, config: TIEBREAK, host: HOST, guest: GUEST, seed: seedWhere(1), scheduler: s, ticker });
+    expect(h.endReason).toBe('forfeit');
+    expect(h.opponentGone).toBe('disconnect');
+    expect(h.over).toBe(true);
+    const r = h.result!;
+    expect(r.forfeitBy).toBe(1);
+    expect(r.winner).toBe(0);
+    // The guest's first turn was started by its first clock and clocked to its last one.
+    expect(r.lastTurn?.data.turnId).toBe(1);
+    expect(r.lastTurn?.started).toBe(true);
+    expect(r.lastTurn?.τ).toBe(400);
+  });
+
+  it('a GuestSession built after the host sent start, frames and leave, then closed, shows the host and ends as "left"', () => {
+    const { s, a, b, ticker } = pair();
+    const host = new HostSession({ transport: a, config: TIEBREAK, host: HOST, guest: GUEST, seed: 1, scheduler: s, ticker });
+    s.advance(100);
+    host.dispose();
+    s.advance(100);
+    const guest = new GuestSession({ transport: b, scheduler: s, me: { ...GUEST, kind: 'human' }, ticker });
+    expect(guest.endReason).toBe('left');
+    expect(guest.opponentGone).toBe('left');
+    expect(guest.over).toBe(true);
+    const vm = guest.frame(FRAME);
+    expect(vm.pub.players[0].name).toBe(HOST.name);
+    expect(vm.pub.status).toBe('playing');
+  });
+});
+
 describe('online sessions: forfeit and rematch', () => {
+  it('a side that has left never starts a rematch, even when the other side wants one', () => {
+    const o = online({ seed: 1 });
+    run(o, 3000);
+    o.host.forfeit();
+    run(o, 300);
+    o.guest.rematch();
+    run(o, 300);
+    o.host.leave();
+    o.host.rematch();
+    run(o, 300);
+    expect(o.host.endReason).toBe('forfeit');
+    expect(o.host.over).toBe(true);
+    expect(o.hostNet.sent.filter((m) => m.type === 'start')).toHaveLength(1);
+  });
+
   it('a host forfeit ends the match for both at once with the forfeit reason', () => {
     const o = online({ seed: 1 });
     run(o, 3000);
@@ -446,6 +525,64 @@ describe('online sessions: key rate', () => {
     }
     expect(host.frame(FRAME).pub.turn?.started).toBe(false);
     expect(host.frame(FRAME).turnτ).toBe(0);
+  });
+});
+
+describe('OnlineLifecycle: the shared start and end of an online match', () => {
+  function lifecycle(): { s: VirtualScheduler; b: Transport; life: OnlineLifecycle; ticks: () => number } {
+    const s = new VirtualScheduler(1000);
+    const [a, b] = loopbackPair(s, { latencyMs: 20, jitterMs: 0, seed: 1 });
+    const queue = new DisplayQueue(s.now());
+    const got: NetMsg[] = [];
+    let n = 0;
+    b.send({ type: 'forfeit' });
+    s.advance(50);
+    const life = new OnlineLifecycle({ transport: a, scheduler: s, message: (m) => got.push(m), display: () => queue });
+    // Nothing is taken from the transport before open: the forfeit that came first is still held.
+    expect(got).toEqual([]);
+    life.open((ms, fn) => s.every(ms, fn), () => n++);
+    expect(got).toEqual([{ type: 'forfeit' }]);
+    return { s, b, life, ticks: () => n };
+  }
+
+  it('open hands over what arrived earlier, then ticks every 50 ms until dispose', () => {
+    const { s, life, ticks } = lifecycle();
+    s.advance(200);
+    expect(ticks()).toBe(4);
+    life.dispose();
+    s.advance(200);
+    expect(ticks()).toBe(4);
+    expect(life.disposed).toBe(true);
+    expect(life.playing).toBe(false);
+  });
+
+  it('a new match keeps a lost opponent as the reason; a lost opponent is over at once with no rematch', () => {
+    const { s, b, life } = lifecycle();
+    life.reset();
+    expect(life.reason).toBeNull();
+    expect(life.playing).toBe(true);
+    b.close();
+    s.advance(100);
+    expect(life.reason).toBe('disconnect');
+    life.reset();
+    expect(life.reason).toBe('disconnect');
+    expect(life.over).toBe(true);
+    expect(life.showing).toBe(false);
+    expect(life.mayRematch).toBe(false);
+  });
+
+  it('the first reason stays; a forfeit allows a rematch until this side leaves, and a new match after leaving stays "left"', () => {
+    const { life } = lifecycle();
+    life.settle(1);
+    life.settle(null);
+    expect(life.reason).toBe('forfeit');
+    expect(life.over).toBe(true);
+    expect(life.mayRematch).toBe(true);
+    life.leave();
+    expect(life.reason).toBe('forfeit');
+    expect(life.mayRematch).toBe(false);
+    life.reset();
+    expect(life.reason).toBe('left');
   });
 });
 

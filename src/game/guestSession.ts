@@ -1,7 +1,6 @@
 import { emptyStats } from '../core/engine';
 import { createScore } from '../core/scoring';
 import { appendWordSet, createTurn, startTurn, turnClock, turnInput } from '../core/turn';
-import { TUNING } from '../core/tuning';
 import type { KeyClass } from '../core/typing';
 import {
   other,
@@ -19,7 +18,16 @@ import type { NetMsg } from '../net/protocol';
 import type { Transport } from '../net/transport';
 import type { Scheduler } from './clock';
 import { DisplayQueue, type DisplayEntry } from './displayQueue';
-import { KeyRate, onlineOverlay, PeerLink, TICK_MS, WaitTag, type Departure, type EndReason, type Ticker } from './hostSession';
+import {
+  KeyRate,
+  OnlineLifecycle,
+  onlineOverlay,
+  WaitTag,
+  type Departure,
+  type EndReason,
+  type PeerLink,
+  type Ticker,
+} from './hostSession';
 import { workerTicker } from './loop';
 import type { Session } from './session';
 
@@ -78,14 +86,15 @@ export interface GuestSessionOptions {
  * finished playing here): the guest runs it in a local TurnRunner from the turn's start data, with its
  * own clock and instant feedback, and streams `input`s and `clock`s to the host, whose engine replays
  * them. The host's result of each own turn is compared with the local one; a mismatch is logged as a
- * desync and the host's version is shown. A `start` from the host begins a new match. Online play
+ * desync and the host's version is shown. A `start` from the host begins a new match. The rules of
+ * a match's end (forfeit, leave, rematch, a lost host) are the shared OnlineLifecycle's. Online play
  * never pauses.
  */
 export class GuestSession implements Session {
   private readonly scheduler: Scheduler;
+  private readonly life: OnlineLifecycle;
   private readonly link: PeerLink;
   private readonly wait = new WaitTag();
-  private readonly stopTicker: () => void;
   private queue: DisplayQueue;
   private rate = new KeyRate();
   /** The latest state from the host; the placeholder until the first one arrives. */
@@ -94,26 +103,28 @@ export class GuestSession implements Session {
   private lastPushed = 0;
   private own: OwnTurn | null = null;
   private seq = 0;
-  private reason: EndReason | null = null;
   private final: MatchState | null = null;
   private wantsRematch = false;
   private lastView: ViewModel | null = null;
-  private disposed = false;
 
+  /** Sets up the waiting view; only then takes the host's messages (earlier ones included). */
   constructor(opts: GuestSessionOptions) {
     this.scheduler = opts.scheduler;
+    this.life = new OnlineLifecycle({
+      transport: opts.transport,
+      scheduler: opts.scheduler,
+      message: (m) => this.onMessage(m),
+      display: () => this.queue,
+    });
+    this.link = this.life.link;
     this.queue = new DisplayQueue(opts.scheduler.now());
     this.latest = waitingState(WAITING_CONFIG, [{ ...opts.me, name: '', kind: 'remote' }, opts.me]);
-    this.link = new PeerLink(opts.transport, opts.scheduler, {
-      message: (m) => this.onMessage(m),
-      gone: (why) => this.onGone(why),
-    });
-    this.stopTicker = (opts.ticker ?? workerTicker)(TICK_MS, () => this.tick());
+    this.life.open(opts.ticker ?? workerTicker, () => this.tick());
   }
 
   /** Why the match ended, or null while it is played. */
   get endReason(): EndReason | null {
-    return this.reason;
+    return this.life.reason;
   }
 
   /** How the host went away, or null while connected. */
@@ -123,11 +134,7 @@ export class GuestSession implements Session {
 
   /** True once the match has ended: at once for a forfeit, disconnect or leave; after the MATCH_OVER celebration otherwise. */
   get over(): boolean {
-    const r = this.reason;
-    if (r === null) return false;
-    if (r !== 'finished') return true;
-    const at = this.queue.finishedAt;
-    return at !== null && this.scheduler.now() - at >= TUNING.leadIn.matchOverMs;
+    return this.life.over;
   }
 
   /** The final state (as the guest sees it) once `over`, else null. */
@@ -156,7 +163,7 @@ export class GuestSession implements Session {
    * a toss whose word set has not arrived yet are dropped; an off-turn letter shows WAIT.
    */
   key(k: KeyClass, timeStamp: number): void {
-    if (this.disposed || this.reason !== null || k.kind === 'ignore') return;
+    if (!this.life.playing || k.kind === 'ignore') return;
     const now = this.scheduler.now();
     const own = this.running();
     if (own === null) {
@@ -186,46 +193,39 @@ export class GuestSession implements Session {
 
   /** The guest gives up: the match ends at once, won by the host, who is told. */
   forfeit(): void {
-    if (this.disposed || this.reason !== null) return;
+    if (!this.life.playing) return;
     this.link.send({ type: 'forfeit' });
     this.concede(GUEST);
   }
 
   /** Asks the host for a rematch once the match is over; the host starts it when it wants one too. */
   rematch(): void {
-    if (this.disposed || this.wantsRematch || !this.over || this.link.gone !== null) return;
-    if (this.reason !== 'finished' && this.reason !== 'forfeit') return;
+    if (this.wantsRematch || !this.life.mayRematch) return;
     this.wantsRematch = true;
     this.link.send({ type: 'rematch', want: true });
   }
 
   /** Leaves the match (Menu, page hide): the host is told, and a match still being played ends as 'left'. */
   leave(): void {
-    if (this.disposed) return;
-    this.link.leave();
-    this.reason ??= 'left';
+    this.life.leave();
   }
 
   /** Leaves (if not yet), stops the ticker and closes the transport. */
   dispose(): void {
-    if (this.disposed) return;
-    this.leave();
-    this.disposed = true;
-    this.stopTicker();
-    this.link.close();
+    this.life.dispose();
   }
 
   private tick(): void {
-    if (this.disposed) return;
+    if (this.life.disposed) return;
     const now = this.scheduler.now();
     this.link.tick(now);
     this.step(now);
-    if (this.own !== null && !this.own.checked && this.reason === null) this.sendClock(this.own, now);
+    if (this.own !== null && !this.own.checked && this.life.playing) this.sendClock(this.own, now);
   }
 
   /** Moves the match to `now`: the guest's own turn is clocked, the display advances, and an own turn it reaches starts. */
   private step(now: number): void {
-    if (this.disposed || (this.reason !== null && this.reason !== 'finished')) return;
+    if (!this.life.showing) return;
     const own = this.running();
     if (own !== null) {
       const events = turnClock(own.runner, now - own.start);
@@ -278,7 +278,7 @@ export class GuestSession implements Session {
   }
 
   private onMessage(m: NetMsg): void {
-    if (this.disposed) return;
+    if (this.life.disposed) return;
     switch (m.type) {
       case 'frame':
         this.onFrame(m);
@@ -287,7 +287,7 @@ export class GuestSession implements Session {
         this.restart(m);
         return;
       case 'forfeit':
-        if (this.reason === null) this.concede(other(GUEST));
+        if (this.life.playing) this.concede(other(GUEST));
         return;
       default:
         return;
@@ -300,16 +300,13 @@ export class GuestSession implements Session {
    * held for the display, except those the guest's own runner already showed.
    */
   private onFrame(m: FrameMsg): void {
-    if (this.reason !== null && this.reason !== 'finished') return;
+    if (!this.life.showing) return;
     const s = m.s;
     if (s !== undefined) {
       this.latest = s;
       if (s.lastTurn !== null) this.offer(s.lastTurn);
       if (s.turn !== null) this.offer(s.turn);
-      if (s.status === 'over' && this.reason === null) {
-        this.reason = s.forfeitBy === null ? 'finished' : 'forfeit';
-        this.queue.end();
-      }
+      if (s.status === 'over') this.life.settle(s.forfeitBy);
     }
     this.queue.confirm(m.turn, m.τ);
     if (m.ev !== undefined) this.queue.hold(m.ev.filter((e) => !this.shownLocally(e)));
@@ -353,7 +350,7 @@ export class GuestSession implements Session {
     this.rate = new KeyRate();
     this.lastPushed = 0;
     this.own = null;
-    this.reason = null;
+    this.life.reset();
     this.final = null;
     this.wantsRematch = false;
     const [host, guest] = this.latest.players;
@@ -363,15 +360,10 @@ export class GuestSession implements Session {
     ]);
   }
 
-  private onGone(why: Departure): void {
-    this.reason ??= why === 'left' ? 'left' : 'disconnect';
-  }
-
   /** `player` forfeits: the latest state ends there, won by the other player (as the host's engine does). */
   private concede(player: PlayerId): void {
     this.latest = { ...this.latest, status: 'over', winner: other(player), forfeitBy: player };
-    this.reason = 'forfeit';
-    this.queue.end();
+    this.life.settle(player);
   }
 
   private buildView(now: number): ViewModel {

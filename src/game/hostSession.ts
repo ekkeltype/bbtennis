@@ -46,11 +46,12 @@ type FrameMsg = Extract<NetMsg, { type: 'frame' }>;
 type GuestTurnMsg = Extract<NetMsg, { type: 'input' } | { type: 'clock' }>;
 
 /**
- * The link to the other player, shared by both online sessions (spec §5.3 heartbeat). Any message
- * counts as liveness: 3 s of silence make the link unstable, and 8 s of silence, a transport close or
- * error, or a `leave` lose the opponent (reported once through `gone`). It pings every 2 s, answers
- * pings and keeps the latest round trip. Every other message goes to `message`. After a local
- * `leave` or `close` it sends and reports nothing more.
+ * The link to the other player, shared by both online sessions (spec §5.3 heartbeat). It takes
+ * nothing from the transport until `listen`. Any message counts as liveness: 3 s of silence make the
+ * link unstable, and 8 s of silence, a transport close or error, or a `leave` lose the opponent
+ * (reported once through `gone`). It pings every 2 s, answers pings and keeps the latest round trip.
+ * Every other message goes to `message`. After a local `leave` or `close` it sends and reports
+ * nothing more.
  */
 export class PeerLink {
   private lastHeard: number;
@@ -60,6 +61,7 @@ export class PeerLink {
   private rtt: number | null = null;
   private lost: Departure | null = null;
   private quiet = false;
+  private listening = false;
 
   constructor(
     private readonly transport: Transport,
@@ -69,8 +71,20 @@ export class PeerLink {
     const now = scheduler.now();
     this.lastHeard = now;
     this.lastPingAt = now;
-    transport.onMessage((m) => this.receive(m));
-    transport.onClose(() => this.lose('disconnect'));
+  }
+
+  /**
+   * Starts taking the transport's messages and its close (once). A transport hands over what arrived
+   * before its first listener synchronously, here, so the handlers must be ready for it.
+   */
+  listen(): void {
+    if (this.listening) return;
+    this.listening = true;
+    const now = this.scheduler.now();
+    this.lastHeard = now;
+    this.lastPingAt = now;
+    this.transport.onMessage((m) => this.receive(m));
+    this.transport.onClose(() => this.lose('disconnect'));
   }
 
   /** How the opponent went away, or null while the link is up. */
@@ -208,6 +222,116 @@ export function onlineOverlay(link: PeerLink, wait: WaitTag, now: number): Overl
   };
 }
 
+/** What an online session hands its lifecycle. */
+export interface OnlineLifecycleOptions {
+  transport: Transport;
+  scheduler: Scheduler;
+  /** Takes each message of the opponent other than the link's own (ping, pong, leave). */
+  message(m: NetMsg): void;
+  /** The display queue of the current match (a new match replaces it). */
+  display(): DisplayQueue;
+}
+
+/**
+ * The start and end of an online match, one set of rules for both sessions. It owns the link, which
+ * `open` starts (with the 50 ms tick) once the session is ready, because a transport hands over
+ * messages and a close that arrived earlier at once. A match ends for its first reason: played out or
+ * forfeited on court (`settle`), the opponent gone (the link), or this side leaving. A forfeit, a lost
+ * opponent or a leave is `over` at once; a played-out match once the display has shown its last turn
+ * and the MATCH_OVER celebration has played. A new match (`reset`) never revives a session whose
+ * opponent is gone or that has left.
+ */
+export class OnlineLifecycle {
+  /** The link to the opponent. */
+  readonly link: PeerLink;
+  private readonly scheduler: Scheduler;
+  private readonly display: () => DisplayQueue;
+  private why: EndReason | null = null;
+  private left = false;
+  private closed = false;
+  private stopTicker: () => void = () => {};
+
+  constructor(opts: OnlineLifecycleOptions) {
+    this.scheduler = opts.scheduler;
+    this.display = opts.display;
+    this.link = new PeerLink(opts.transport, opts.scheduler, {
+      message: opts.message,
+      gone: (why) => {
+        this.why ??= why;
+      },
+    });
+  }
+
+  /** Starts taking messages (any that came earlier arrive now) and runs `tick` every 50 ms; once, when the session is ready. */
+  open(ticker: Ticker, tick: () => void): void {
+    this.link.listen();
+    this.stopTicker = ticker(TICK_MS, tick);
+  }
+
+  /** Why the match ended, or null while it is played. */
+  get reason(): EndReason | null {
+    return this.why;
+  }
+
+  /** True once disposed: the session does nothing more. */
+  get disposed(): boolean {
+    return this.closed;
+  }
+
+  /** True while the match is being played (it has not ended and the session is not disposed). */
+  get playing(): boolean {
+    return !this.closed && this.why === null;
+  }
+
+  /** True while the display moves on: the match is played, or it was played out and its end is still showing. */
+  get showing(): boolean {
+    return !this.closed && (this.why === null || this.why === 'finished');
+  }
+
+  /** True once the match has ended: at once for a forfeit, disconnect or leave; after the MATCH_OVER celebration otherwise. */
+  get over(): boolean {
+    const r = this.why;
+    if (r === null) return false;
+    if (r !== 'finished') return true;
+    const at = this.display().finishedAt;
+    return at !== null && this.scheduler.now() - at >= TUNING.leadIn.matchOverMs;
+  }
+
+  /** True when a rematch may be asked for or begin: the match is over, played out or forfeited, the opponent is there and this side has not left. */
+  get mayRematch(): boolean {
+    return !this.left && this.link.gone === null && (this.why === 'finished' || this.why === 'forfeit') && this.over;
+  }
+
+  /** The match's state says it is over: played out, or forfeited by `forfeitBy`. No turn follows the ones queued. Ignored once ended. */
+  settle(forfeitBy: PlayerId | null): void {
+    if (this.why !== null) return;
+    this.why = forfeitBy === null ? 'finished' : 'forfeit';
+    this.display().end();
+  }
+
+  /** A new match begins (with a new display queue): no reason yet, unless the opponent is gone or this side has left. */
+  reset(): void {
+    this.why = this.link.gone ?? (this.left ? 'left' : null);
+  }
+
+  /** Leaves the match (Menu, page hide): the opponent is told once, and a match still being played ends as 'left'. */
+  leave(): void {
+    if (this.closed) return;
+    this.link.leave();
+    this.left = true;
+    this.why ??= 'left';
+  }
+
+  /** Leaves (if not yet), stops the tick and closes the transport. */
+  dispose(): void {
+    if (this.closed) return;
+    this.leave();
+    this.closed = true;
+    this.stopTicker();
+    this.link.close();
+  }
+}
+
 /** How to set up the host's side of an online match. */
 export interface HostSessionOptions {
   transport: Transport;
@@ -231,16 +355,16 @@ export interface HostSessionOptions {
  * or `input` and applies them in arrival order, and the host watches it in passive playback. The
  * display queue decides what the host sees; `pub` is the host's redacted state with the displayed
  * turn and the one before it. Each match opens with `start`; `rematch`, `forfeit` and `leave` end or
- * renew it. Online play never pauses.
+ * renew it (their rules are the shared OnlineLifecycle's). Online play never pauses.
  */
 export class HostSession implements Session {
   private readonly config: MatchConfig;
   private readonly players: [PlayerInfo, PlayerInfo];
   private readonly seed: number;
   private readonly scheduler: Scheduler;
+  private readonly life: OnlineLifecycle;
   private readonly link: PeerLink;
   private readonly wait = new WaitTag();
-  private readonly stopTicker: () => void;
   private engine!: Engine;
   private queue!: DisplayQueue;
   private rate = new KeyRate();
@@ -249,28 +373,30 @@ export class HostSession implements Session {
   private lastPushed = 0;
   private lastFrameAt = Number.NEGATIVE_INFINITY;
   private trimWarned = false;
-  private reason: EndReason | null = null;
   private final: MatchState | null = null;
   private wants: [boolean, boolean] = [false, false];
   private lastView: ViewModel | null = null;
-  private disposed = false;
 
+  /** Sets up the first match and tells the guest; only then takes the guest's messages (earlier ones included). */
   constructor(opts: HostSessionOptions) {
     this.config = opts.config;
     this.players = [opts.host, opts.guest];
     this.seed = opts.seed;
     this.scheduler = opts.scheduler;
-    this.link = new PeerLink(opts.transport, opts.scheduler, {
+    this.life = new OnlineLifecycle({
+      transport: opts.transport,
+      scheduler: opts.scheduler,
       message: (m) => this.onMessage(m),
-      gone: (why) => this.onGone(why),
+      display: () => this.queue,
     });
+    this.link = this.life.link;
     this.newMatch(opts.seed);
-    this.stopTicker = (opts.ticker ?? workerTicker)(TICK_MS, () => this.tick());
+    this.life.open(opts.ticker ?? workerTicker, () => this.tick());
   }
 
   /** Why the match ended, or null while it is played. */
   get endReason(): EndReason | null {
-    return this.reason;
+    return this.life.reason;
   }
 
   /** How the guest went away, or null while connected. */
@@ -280,11 +406,7 @@ export class HostSession implements Session {
 
   /** True once the match has ended: at once for a forfeit, disconnect or leave; after the MATCH_OVER celebration otherwise. */
   get over(): boolean {
-    const r = this.reason;
-    if (r === null) return false;
-    if (r !== 'finished') return true;
-    const at = this.queue.finishedAt;
-    return at !== null && this.scheduler.now() - at >= TUNING.leadIn.matchOverMs;
+    return this.life.over;
   }
 
   /** The final state (as the host sees it) once `over`, else null. */
@@ -311,7 +433,7 @@ export class HostSession implements Session {
    * running; keys stamped before that start are dropped, and an off-turn letter shows WAIT.
    */
   key(k: KeyClass, timeStamp: number): void {
-    if (this.disposed || this.reason !== null || k.kind === 'ignore') return;
+    if (!this.life.playing || k.kind === 'ignore') return;
     const now = this.scheduler.now();
     const f = this.queue.front;
     const turn = this.engine.state.turn;
@@ -334,15 +456,14 @@ export class HostSession implements Session {
 
   /** The host gives up: the match ends at once, won by the guest, who is told. */
   forfeit(): void {
-    if (this.disposed || this.reason !== null) return;
+    if (!this.life.playing) return;
     this.concede(HOST);
     this.link.send({ type: 'forfeit' });
   }
 
   /** Asks for a rematch once the match is over; a new match starts when the guest wants one too. */
   rematch(): void {
-    if (this.disposed || this.wants[HOST] || !this.over || this.link.gone !== null) return;
-    if (this.reason !== 'finished' && this.reason !== 'forfeit') return;
+    if (this.wants[HOST] || !this.life.mayRematch) return;
     this.wants[HOST] = true;
     this.link.send({ type: 'rematch', want: true });
     this.maybeRematch();
@@ -350,18 +471,12 @@ export class HostSession implements Session {
 
   /** Leaves the match (Menu, page hide): the guest is told, and a match still being played ends as 'left'. */
   leave(): void {
-    if (this.disposed) return;
-    this.link.leave();
-    this.reason ??= 'left';
+    this.life.leave();
   }
 
   /** Leaves (if not yet), stops the ticker and closes the transport. */
   dispose(): void {
-    if (this.disposed) return;
-    this.leave();
-    this.disposed = true;
-    this.stopTicker();
-    this.link.close();
+    this.life.dispose();
   }
 
   /** A fresh engine, display and bookkeeping; the guest hears `start`, then the first frame. */
@@ -371,7 +486,7 @@ export class HostSession implements Session {
     this.queue = new DisplayQueue(this.scheduler.now());
     this.rate = new KeyRate();
     this.lastPushed = 0;
-    this.reason = null;
+    this.life.reset();
     this.final = null;
     this.wants = [false, false];
     this.link.send({
@@ -386,11 +501,11 @@ export class HostSession implements Session {
   }
 
   private tick(): void {
-    if (this.disposed) return;
+    if (this.life.disposed) return;
     const now = this.scheduler.now();
     this.link.tick(now);
     this.step(now);
-    if (this.reason !== null) return;
+    if (!this.life.playing) return;
     const t = this.engine.state.turn;
     const clocking = t !== null && t.started && t.data.owner === HOST;
     if (clocking || now - this.lastFrameAt >= IDLE_FRAME_MS) this.sendFrame([]);
@@ -398,7 +513,7 @@ export class HostSession implements Session {
 
   /** Moves the match to `now`: the host's own turn is clocked, the display advances, and a host turn it reaches starts. */
   private step(now: number): void {
-    if (this.disposed || (this.reason !== null && this.reason !== 'finished')) return;
+    if (!this.life.showing) return;
     const f = this.queue.front;
     const turn = this.engine.state.turn;
     if (f !== null && f.local && f.startedAt !== null && turn === f.turn && turn.started) {
@@ -413,7 +528,7 @@ export class HostSession implements Session {
   }
 
   private onMessage(m: NetMsg): void {
-    if (this.disposed) return;
+    if (this.life.disposed) return;
     switch (m.type) {
       case 'input':
       case 'clock':
@@ -424,7 +539,7 @@ export class HostSession implements Session {
         this.maybeRematch();
         return;
       case 'forfeit':
-        if (this.reason === null) this.concede(GUEST);
+        if (this.life.playing) this.concede(GUEST);
         return;
       default:
         return;
@@ -438,7 +553,7 @@ export class HostSession implements Session {
    */
   private onGuestTurn(m: GuestTurnMsg): void {
     const t = this.engine.state.turn;
-    if (this.reason !== null || t === null || t.data.turnId !== m.turn || t.data.owner !== GUEST) return;
+    if (!this.life.playing || t === null || t.data.turnId !== m.turn || t.data.owner !== GUEST) return;
     if (!t.started) this.absorb(this.engine.start(GUEST));
     if (m.type === 'input') {
       if (this.rate.allow(m.turn, m.τ)) this.absorb(this.engine.input(GUEST, m.k, m.τ));
@@ -448,17 +563,13 @@ export class HostSession implements Session {
     this.queue.confirm(m.turn, m.τ);
   }
 
-  private onGone(why: Departure): void {
-    this.reason ??= why === 'left' ? 'left' : 'disconnect';
-  }
-
   /** `player` forfeits: the engine ends the match and the guest gets the final frame. */
   private concede(player: PlayerId): void {
     this.absorb(this.engine.forfeit(player));
   }
 
   private maybeRematch(): void {
-    if (!this.wants[HOST] || !this.wants[GUEST] || !this.over || this.link.gone !== null) return;
+    if (!this.wants[HOST] || !this.wants[GUEST] || !this.life.mayRematch) return;
     this.matchNo++;
     this.newMatch(forkSeed(this.seed, this.matchNo));
   }
@@ -483,10 +594,7 @@ export class HostSession implements Session {
         this.queue.update(t);
       }
     }
-    if (s.status === 'over' && this.reason === null) {
-      this.reason = s.forfeitBy === null ? 'finished' : 'forfeit';
-      this.queue.end();
-    }
+    if (s.status === 'over') this.life.settle(s.forfeitBy);
   }
 
   /**
