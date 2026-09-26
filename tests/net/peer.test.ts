@@ -11,7 +11,7 @@ import {
 import * as netErrors from '../../src/net/netErrors';
 import * as peerConfig from '../../src/net/peerConfig';
 import { MAX_SEND_BYTES, type NetMsg } from '../../src/net/protocol';
-import type { Transport } from '../../src/net/transport';
+import { MAX_HELD_MESSAGES, type Transport } from '../../src/net/transport';
 
 type Listener = (...args: any[]) => void;
 
@@ -309,6 +309,24 @@ describe('hostGame', () => {
     expect(log).toEqual([]);
     transports[0]!.onMessage((m) => log.push(m.type));
     expect(log).toEqual(['leave', 'close:negotiation-failed']);
+  });
+
+  it(`holds at most MAX_HELD_MESSAGES (${MAX_HELD_MESSAGES}) messages of an unclaimed guest that floods the host`, async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { handle, arrive } = await openHost();
+    const conn = arrive();
+    conn.emit('open');
+    for (let id = 0; id < 1000; id++) conn.emit('data', `{"type":"ping","id":${id}}`);
+    let transport: Transport | null = null;
+    handle.onGuest((t) => (transport = t));
+    const got: number[] = [];
+    transport!.onMessage((m) => {
+      if (m.type === 'ping') got.push(m.id);
+    });
+    conn.emit('data', '{"type":"ping","id":1000}');
+    expect(got).toEqual([...Array.from({ length: MAX_HELD_MESSAGES }, (_, id) => id), 1000]);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toBe('[bbt] held messages over the cap, dropping the rest');
   });
 
   it('drops held messages on a local close', async () => {

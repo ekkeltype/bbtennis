@@ -1,6 +1,6 @@
 import { seedRng, uniform } from '../core/rng';
 import type { Scheduler } from '../game/clock';
-import { decodeMsg, encodeWithBytes, type EncodedMsg, type NetMsg } from './protocol';
+import { decodeMsg, encodeWithBytes, msgBytes, type EncodedMsg, type NetMsg } from './protocol';
 
 /** A reliable, ordered message channel to the other player (spec §5.3). */
 export interface Transport {
@@ -11,7 +11,8 @@ export interface Transport {
   send(msg: NetMsg): void;
   /**
    * Adds a listener for incoming messages; messages that fail `parseMsg` are dropped. Messages that
-   * arrive before the first listener is added are held and handed to it when it is added.
+   * arrive before the first listener is added are held and handed to it when it is added, up to
+   * MAX_HELD_MESSAGES messages or MAX_HELD_BYTES bytes; later ones are dropped with a warning.
    */
   onMessage(cb: (m: NetMsg) => void): void;
   /**
@@ -36,16 +37,26 @@ export interface LoopbackOptions { latencyMs: number; jitterMs: number; seed: nu
 /** Reason reported by `onClose` when the other side closed the channel. */
 export const REMOTE_CLOSED = 'closed';
 
+/** Most messages a transport holds for its first message listener (see TransportListeners). */
+export const MAX_HELD_MESSAGES = 64;
+
+/** Most UTF-8 bytes of JSON (see msgBytes) of the messages a transport holds for its first message listener. */
+export const MAX_HELD_BYTES = 64 * 1024;
+
 /**
  * The message and close listeners of a transport. Until the first listener of each kind is added,
  * incoming messages and the close reason are held for it, so a listener added late misses nothing.
  * The close is reported only after every held message has been handed over, whichever listener
- * comes first.
+ * comes first. At most MAX_HELD_MESSAGES messages and MAX_HELD_BYTES bytes are held: the first
+ * message over either cap is dropped with one `[bbt]` warning, and so is every later one until the
+ * first message listener is added, so the held messages are always the first ones that arrived.
  */
 export class TransportListeners {
   private readonly messageCbs: ((m: NetMsg) => void)[] = [];
   private readonly closeCbs: ((reason: string) => void)[] = [];
   private held: NetMsg[] = [];
+  private heldBytes = 0;
+  private overflowed = false;
   private heldClose: string | null = null;
 
   /** Adds a message listener; the first one is handed the held messages at once (until dropHeld), then the held close goes out. */
@@ -53,6 +64,7 @@ export class TransportListeners {
     this.messageCbs.push(cb);
     if (this.messageCbs.length > 1) return;
     while (this.held.length > 0) cb(this.held.shift()!);
+    this.heldBytes = 0;
     this.releaseClose();
   }
 
@@ -62,9 +74,9 @@ export class TransportListeners {
     this.releaseClose();
   }
 
-  /** Hands an incoming message to the listeners, or holds it until there is one. */
+  /** Hands an incoming message to the listeners, or holds it until there is one (within the caps). */
   message(m: NetMsg): void {
-    if (this.messageCbs.length === 0) this.held.push(m);
+    if (this.messageCbs.length === 0) this.hold(m);
     else for (const cb of this.messageCbs) cb(m);
   }
 
@@ -85,6 +97,20 @@ export class TransportListeners {
   /** Drops the held messages; after a local close nothing more is delivered. */
   dropHeld(): void {
     this.held = [];
+    this.heldBytes = 0;
+  }
+
+  /** Holds `m` for the first message listener, or drops it once the held messages have reached a cap. */
+  private hold(m: NetMsg): void {
+    if (this.overflowed) return;
+    const bytes = msgBytes(m);
+    if (this.held.length < MAX_HELD_MESSAGES && this.heldBytes + bytes <= MAX_HELD_BYTES) {
+      this.held.push(m);
+      this.heldBytes += bytes;
+      return;
+    }
+    this.overflowed = true;
+    console.warn('[bbt] held messages over the cap, dropping the rest', this.held.length, this.heldBytes);
   }
 }
 

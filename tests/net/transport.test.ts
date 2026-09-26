@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VirtualScheduler } from '../../src/game/clock';
 import { MAX_SEND_BYTES, type NetMsg } from '../../src/net/protocol';
-import { loopbackPair, type Transport } from '../../src/net/transport';
+import { MAX_HELD_BYTES, MAX_HELD_MESSAGES, loopbackPair, type Transport } from '../../src/net/transport';
 
 const utf8 = new TextEncoder();
 
@@ -16,6 +16,17 @@ function helloOfBytes(bytes: number, pad = 'x'): Extract<NetMsg, { type: 'hello'
   expect(utf8.encode(JSON.stringify(m)).byteLength).toBe(bytes);
   return m;
 }
+
+/** A frame whose JSON is exactly `bytes` UTF-8 bytes; its event text keeps that size through parseMsg. */
+function frameOfBytes(bytes: number): Extract<NetMsg, { type: 'frame' }> {
+  const ev = { turn: 1, τ: 0, type: 'situation' as const, text: '' };
+  const m = { type: 'frame' as const, turn: 1, τ: 0, ev: [ev] };
+  ev.text = 'x'.repeat(bytes - utf8.encode(JSON.stringify(m)).byteLength);
+  expect(utf8.encode(JSON.stringify(m)).byteLength).toBe(bytes);
+  return m;
+}
+
+const HELD_WARNING = '[bbt] held messages over the cap, dropping the rest';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -302,6 +313,58 @@ describe('loopbackPair listeners added late', () => {
     b.onMessage((m) => log.push(m.type));
     b.onClose((r) => log.push(`late:${r}`));
     expect(log).toEqual(['leave', 'first:closed', 'second:closed']);
+  });
+
+  it(`holds at most MAX_HELD_MESSAGES (${MAX_HELD_MESSAGES}) messages and drops later ones with a single warning`, () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const ping = (id: number): NetMsg => ({ type: 'ping', id });
+    for (let id = 0; id < MAX_HELD_MESSAGES; id++) a.send(ping(id));
+    s.advance(10);
+    expect(warn).not.toHaveBeenCalled();
+    for (let id = MAX_HELD_MESSAGES; id < 100; id++) a.send(ping(id));
+    s.advance(10);
+    const heldBytes = Array.from({ length: MAX_HELD_MESSAGES }, (_, id) => utf8.encode(JSON.stringify(ping(id))).byteLength)
+      .reduce((sum, n) => sum + n, 0);
+    expect(warn.mock.calls).toEqual([[HELD_WARNING, MAX_HELD_MESSAGES, heldBytes]]);
+    const got = record(s, b);
+    a.send(ping(100));
+    s.advance(10);
+    expect(got.map((g) => g.id)).toEqual([...Array.from({ length: MAX_HELD_MESSAGES }, (_, id) => id), 100]);
+  });
+
+  it(`holds messages up to exactly MAX_HELD_BYTES (${MAX_HELD_BYTES}) UTF-8 bytes of JSON`, () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const frames = [frameOfBytes(MAX_SEND_BYTES), frameOfBytes(MAX_SEND_BYTES), frameOfBytes(MAX_HELD_BYTES - 2 * MAX_SEND_BYTES)];
+    for (const f of frames) a.send(f);
+    s.advance(10);
+    expect(warn).not.toHaveBeenCalled();
+    a.send({ type: 'ping', id: 1 });
+    s.advance(10);
+    expect(warn.mock.calls).toEqual([[HELD_WARNING, 3, MAX_HELD_BYTES]]);
+    const got: NetMsg[] = [];
+    b.onMessage((m) => got.push(m));
+    expect(got).toEqual(frames);
+  });
+
+  it('after the first dropped message drops every later one until a listener is added, so the held ones are a prefix', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = new VirtualScheduler();
+    const [a, b] = loopbackPair(s, { latencyMs: 10, jitterMs: 0, seed: 1 });
+    const kept = [frameOfBytes(MAX_SEND_BYTES), frameOfBytes(MAX_SEND_BYTES)];
+    for (const f of kept) a.send(f);
+    a.send(frameOfBytes(2000));
+    a.send({ type: 'ping', id: 1 });
+    s.advance(10);
+    expect(warn).toHaveBeenCalledOnce();
+    const got: NetMsg[] = [];
+    b.onMessage((m) => got.push(m));
+    a.send({ type: 'ping', id: 2 });
+    s.advance(10);
+    expect(got).toEqual([...kept, { type: 'ping', id: 2 }]);
   });
 
   it('drops held messages on a local close', () => {
