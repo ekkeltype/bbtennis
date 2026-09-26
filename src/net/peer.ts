@@ -141,12 +141,16 @@ function newPeer(d: Deps, id: string | null): Promise<PeerLike> {
   return new Promise((resolve, reject) => {
     const abort = (): void => reject(new NetError('cancelled', CANCELLED));
     signal?.addEventListener('abort', abort);
-    loadPeer(d, id)
-      .finally(() => signal?.removeEventListener('abort', abort))
-      .then((peer) => {
-        if (signal?.aborted) peer.destroy();
-        else resolve(peer);
-      }, reject);
+    loadPeer(d, id).then((peer) => {
+      signal?.removeEventListener('abort', abort);
+      if (signal?.aborted) {
+        peer.destroy();
+        abort();
+      } else resolve(peer);
+    }, (err: unknown) => {
+      signal?.removeEventListener('abort', abort);
+      reject(err);
+    });
   });
 }
 

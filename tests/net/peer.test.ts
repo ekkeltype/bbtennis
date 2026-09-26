@@ -97,6 +97,12 @@ function fakeNet() {
 /** Lets pending promise continuations run. */
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+/** Aborts `controller` after `depth` nested microtasks (0 = now). */
+function abortAfterMicrotasks(controller: AbortController, depth: number): void {
+  if (depth === 0) controller.abort();
+  else queueMicrotask(() => abortAfterMicrotasks(controller, depth - 1));
+}
+
 const peerError = (type: string) => ({ type, message: `fake ${type}` });
 
 const HELLO: NetMsg = { type: 'hello', proto: 1, app: 'bbtennis', name: 'Sam', look: { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 } };
@@ -690,6 +696,29 @@ describe('cancellation', () => {
     expect(await settled).toMatchObject({ kind: 'cancelled' });
     expect(peers).toHaveLength(1);
     expect(peers[0]!.destroyed).toBe(true);
+  });
+
+  it.each([
+    ['hostGame', (opts: PeerEnv) => hostGame(opts)],
+    ['joinGame', (opts: PeerEnv) => joinGame('K7TQM', opts)],
+  ] as const)('%s always settles as cancelled when the abort comes from a microtask right after the Peer is created', async (_name, start) => {
+    const depths = Array.from({ length: 13 }, (_, i) => i);
+    const outcomes: { depth: number; kind: unknown; destroyed: boolean | undefined }[] = [];
+    for (const depth of depths) {
+      const { peers, opts } = fakeNet();
+      const controller = new AbortController();
+      const createPeer: PeerFactory = async (id, options) => {
+        const peer = await opts.createPeer(id, options);
+        abortAfterMicrotasks(controller, depth);
+        return peer;
+      };
+      const settled = start({ ...opts, createPeer, signal: controller.signal }).then(() => 'resolved', (e: unknown) => e);
+      const outcome = await Promise.race([settled, tick().then(() => 'pending')]);
+      await tick();
+      const kind = outcome instanceof NetError ? outcome.kind : outcome;
+      outcomes.push({ depth, kind, destroyed: peers[0]?.destroyed });
+    }
+    expect(outcomes).toEqual(depths.map((depth) => ({ depth, kind: 'cancelled', destroyed: true })));
   });
 
   it('hostGame aborted while waiting for the broker destroys the peer, rejects and tries no other code', async () => {
