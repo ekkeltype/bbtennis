@@ -8,6 +8,8 @@ import {
   STILL_CONNECTING, errorKind, errorText, hostGame, joinGame, peerOptions,
   type BrokerOptions, type ConnLike, type NetErrorKind, type PeerFactory, type PeerLike,
 } from '../../src/net/peer';
+import * as netErrors from '../../src/net/netErrors';
+import * as peerConfig from '../../src/net/peerConfig';
 import { MAX_SEND_BYTES, type NetMsg } from '../../src/net/protocol';
 import type { Transport } from '../../src/net/transport';
 
@@ -133,102 +135,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('peerOptions', () => {
-  it('uses the PeerJS cloud broker and the spec ICE servers by default', () => {
-    expect(DEFAULT_ICE_SERVERS).toEqual([
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
-    ]);
-    expect(peerOptions({})).toEqual({ config: { iceServers: DEFAULT_ICE_SERVERS } });
-  });
-
-  it('applies every VITE_ override', () => {
-    const ice = [{ urls: ['turn:turn.example.com:3478'], username: 'u', credential: 'p' }, { urls: 'stun:stun.example.com' }];
-    expect(peerOptions({
-      VITE_PEER_HOST: 'peer.example.com',
-      VITE_PEER_PORT: '9000',
-      VITE_PEER_PATH: '/bbt',
-      VITE_PEER_KEY: 'secret',
-      VITE_ICE_SERVERS: JSON.stringify(ice),
-    })).toEqual({ host: 'peer.example.com', port: 9000, path: '/bbt', key: 'secret', config: { iceServers: ice } });
-  });
-
-  it('treats blank values as unset', () => {
-    expect(peerOptions({ VITE_PEER_HOST: '', VITE_PEER_PORT: ' ', VITE_PEER_PATH: '', VITE_PEER_KEY: '', VITE_ICE_SERVERS: '' }))
-      .toEqual({ config: { iceServers: DEFAULT_ICE_SERVERS } });
-  });
-
-  it('accepts an empty ICE list (host candidates only)', () => {
-    expect(peerOptions({ VITE_ICE_SERVERS: '[]' })).toEqual({ config: { iceServers: [] } });
-  });
-
-  it.each(['abc', '0', '70000', '80.5', '-1'])('ignores port %j with a warning', (port) => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(peerOptions({ VITE_PEER_PORT: port })).toEqual({ config: { iceServers: DEFAULT_ICE_SERVERS } });
-    expect(warn).toHaveBeenCalledOnce();
-    expect(String(warn.mock.calls[0]![0])).toContain('VITE_PEER_PORT');
-  });
-
-  it.each(['not json', '{"urls":"stun:x"}', '[{"urls":5}]', '[{"username":"u"}]', '[{"urls":["stun:x", 3]}]', '[{"urls":"stun:x","credential":7}]', '[null]'])(
-    'falls back to the default ICE servers for %j with a warning',
-    (json) => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      expect(peerOptions({ VITE_ICE_SERVERS: json })).toEqual({ config: { iceServers: DEFAULT_ICE_SERVERS } });
-      expect(warn).toHaveBeenCalledOnce();
-      expect(String(warn.mock.calls[0]![0])).toContain('VITE_ICE_SERVERS');
-    },
-  );
-});
-
-describe('errorKind', () => {
-  const table: [string, NetErrorKind][] = [
-    ['peer-unavailable', 'notFound'],
-    ['network', 'broker'],
-    ['socket-error', 'broker'],
-    ['socket-closed', 'broker'],
-    ['server-error', 'broker'],
-    ['unavailable-id', 'broker'],
-    ['invalid-key', 'broker'],
-    ['ssl-unavailable', 'broker'],
-    ['browser-incompatible', 'webrtc'],
-    ['webrtc', 'webrtc'],
-    ['negotiation-failed', 'nat'],
-    ['connection-closed', 'nat'],
-    ['something-new', 'broker'],
-  ];
-  it.each(table)('%s → %s', (type, kind) => {
-    expect(errorKind(type)).toBe(kind);
-  });
-});
-
-describe('errorText', () => {
-  it.each([
-    ['notFound', 'No game with code K7TQM'],
-    ['broker', "Can't reach the connection server"],
-    ['webrtc', 'Your browser has WebRTC disabled'],
-    ['nat', "Couldn't connect directly (firewall/NAT) — try another network"],
-    ['full', 'That game already has two players'],
-    ['timeout', "The game didn't answer — try again"],
-  ] as [NetErrorKind, string][])('%s → %s', (kind, text) => {
-    expect(errorText(new NetError(kind), 'K7TQM')).toBe(text);
-  });
-
-  it('names the code only when given one', () => {
-    expect(errorText(new NetError('notFound'))).toBe('No game with that code');
-  });
-
-  it('shows both protocol versions for a version mismatch', () => {
-    expect(errorText(new NetError('version', 'rejected', { host: 2, you: 1 })))
-      .toBe('Versions differ (host v2, you v1) — reload with Ctrl+Shift+R');
-    expect(errorText(new NetError('version'))).toBe('Versions differ — reload with Ctrl+Shift+R');
-  });
-
-  it('NetError is an Error carrying its kind', () => {
-    const e = new NetError('nat', 'ice failed');
-    expect(e).toBeInstanceOf(Error);
-    expect(e.name).toBe('NetError');
-    expect(e.kind).toBe('nat');
-    expect(e.message).toBe('ice failed');
+describe('peer.ts re-exports', () => {
+  it('re-exports the config and error API of peerConfig.ts and netErrors.ts', () => {
+    expect(DEFAULT_ICE_SERVERS).toBe(peerConfig.DEFAULT_ICE_SERVERS);
+    expect(peerOptions).toBe(peerConfig.peerOptions);
+    expect(NetError).toBe(netErrors.NetError);
+    expect(errorKind).toBe(netErrors.errorKind);
+    expect(errorText).toBe(netErrors.errorText);
   });
 });
 

@@ -1,16 +1,15 @@
 import { RealScheduler, type Scheduler } from '../game/clock';
 import { genCode, normalizeCode } from './codes';
+import { NetError, errorKind, type NetErrorKind } from './netErrors';
+import { peerOptions, type BrokerOptions, type PeerEnvVars } from './peerConfig';
 import { MAX_SEND_BYTES, msgBytes, parseMsg, type NetMsg } from './protocol';
 import { REMOTE_CLOSED, type Transport } from './transport';
 
+export { NetError, errorKind, errorText, type NetErrorKind } from './netErrors';
+export { DEFAULT_ICE_SERVERS, peerOptions, type BrokerOptions, type PeerEnvVars } from './peerConfig';
+
 /** Prefix of every host's PeerJS id; the rest is the game code. */
 export const PEER_ID_PREFIX = 'bbtennis-';
-
-/** ICE servers used unless VITE_ICE_SERVERS overrides them (spec §5.3). */
-export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
-];
 
 /** Codes a host tries when the broker says the id is taken (spec §5.3). */
 export const HOST_CODE_TRIES = 5;
@@ -29,24 +28,6 @@ export const RECONNECT_DELAY_MS = 2000;
 
 /** Status reported by joinGame after SLOW_STATUS_MS. */
 export const STILL_CONNECTING = 'Still connecting…';
-
-/** Build-time broker and ICE overrides (spec §5.3); values are strings as Vite provides them. */
-export interface PeerEnvVars {
-  VITE_PEER_HOST?: string;
-  VITE_PEER_PORT?: string;
-  VITE_PEER_PATH?: string;
-  VITE_PEER_KEY?: string;
-  VITE_ICE_SERVERS?: string;
-}
-
-/** Options for the PeerJS Peer constructor; absent fields keep the PeerJS cloud defaults. */
-export interface BrokerOptions {
-  host?: string;
-  port?: number;
-  path?: string;
-  key?: string;
-  config: { iceServers: RTCIceServer[] };
-}
 
 /** A PeerJS error: `type` is a PeerErrorType or connection error type string. */
 export interface PeerErrorLike { type: string; message: string }
@@ -92,18 +73,6 @@ export interface PeerEnv {
   onStatus?: (text: string) => void;
 }
 
-/** User-facing network failure classes (spec §5.4). */
-export type NetErrorKind = 'notFound' | 'broker' | 'webrtc' | 'nat' | 'version' | 'full' | 'timeout';
-
-/** A network failure; show it with errorText. `versions` are protocol versions for kind 'version'. */
-export class NetError extends Error {
-  override readonly name = 'NetError';
-
-  constructor(readonly kind: NetErrorKind, message: string = kind, readonly versions?: { host: number; you: number }) {
-    super(message);
-  }
-}
-
 /** A registered host waiting for guests. */
 export interface HostHandle {
   /** The 5-character game code guests type. */
@@ -112,88 +81,6 @@ export interface HostHandle {
   onGuest(cb: (t: Transport) => void): void;
   /** Closes every guest transport (with flush) and releases the code. */
   close(): void;
-}
-
-const warnEnv = (name: string, value: string, fallback: string): void => {
-  console.warn(`[bbt] ignoring ${name}=${JSON.stringify(value)}; ${fallback}`);
-};
-
-const isStringList = (v: unknown): boolean => Array.isArray(v) && v.every((u) => typeof u === 'string');
-
-function isIceServer(v: unknown): v is RTCIceServer {
-  if (typeof v !== 'object' || v === null) return false;
-  const s = v as Record<string, unknown>;
-  const optionalString = (x: unknown): boolean => x === undefined || typeof x === 'string';
-  return (typeof s.urls === 'string' || isStringList(s.urls)) && optionalString(s.username) && optionalString(s.credential);
-}
-
-function parseIceServers(json: string): RTCIceServer[] | null {
-  try {
-    const v: unknown = JSON.parse(json);
-    return Array.isArray(v) && v.every(isIceServer) ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Broker options from VITE_PEER_* / VITE_ICE_SERVERS; blank values are unset, invalid ones are ignored with a warning. */
-export function peerOptions(env: PeerEnvVars): BrokerOptions {
-  const value = (v: string | undefined): string | null => (v !== undefined && v.trim() !== '' ? v.trim() : null);
-  const options: BrokerOptions = { config: { iceServers: DEFAULT_ICE_SERVERS } };
-  const host = value(env.VITE_PEER_HOST);
-  if (host !== null) options.host = host;
-  const port = value(env.VITE_PEER_PORT);
-  if (port !== null) {
-    const n = Number(port);
-    if (Number.isInteger(n) && n >= 1 && n <= 65535) options.port = n;
-    else warnEnv('VITE_PEER_PORT', port, 'using the default port');
-  }
-  const path = value(env.VITE_PEER_PATH);
-  if (path !== null) options.path = path;
-  const key = value(env.VITE_PEER_KEY);
-  if (key !== null) options.key = key;
-  const ice = value(env.VITE_ICE_SERVERS);
-  if (ice !== null) {
-    const servers = parseIceServers(ice);
-    if (servers) options.config = { iceServers: servers };
-    else warnEnv('VITE_ICE_SERVERS', ice, 'expected a JSON array of RTCIceServer; using the default ICE servers');
-  }
-  return options;
-}
-
-const ERROR_KINDS: Record<string, NetErrorKind> = {
-  'peer-unavailable': 'notFound',
-  'browser-incompatible': 'webrtc',
-  webrtc: 'webrtc',
-  'negotiation-failed': 'nat',
-  'connection-closed': 'nat',
-};
-
-/** Maps a PeerJS error type to a NetErrorKind (spec §5.4); anything unlisted is a broker problem. */
-export function errorKind(type: string): NetErrorKind {
-  return Object.hasOwn(ERROR_KINDS, type) ? ERROR_KINDS[type]! : 'broker';
-}
-
-/** The message shown for `e` (spec §5.4); `code` is the game code the user tried. */
-export function errorText(e: NetError, code?: string): string {
-  switch (e.kind) {
-    case 'notFound':
-      return code ? `No game with code ${code}` : 'No game with that code';
-    case 'broker':
-      return "Can't reach the connection server";
-    case 'webrtc':
-      return 'Your browser has WebRTC disabled';
-    case 'nat':
-      return "Couldn't connect directly (firewall/NAT) — try another network";
-    case 'version':
-      return e.versions
-        ? `Versions differ (host v${e.versions.host}, you v${e.versions.you}) — reload with Ctrl+Shift+R`
-        : 'Versions differ — reload with Ctrl+Shift+R';
-    case 'full':
-      return 'That game already has two players';
-    case 'timeout':
-      return "The game didn't answer — try again";
-  }
 }
 
 /** The real PeerJS constructor, imported lazily so the library loads only for online play. */
