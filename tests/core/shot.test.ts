@@ -109,10 +109,10 @@ describe('flightTimeMs', () => {
     expect(at(5)).toBeCloseTo(1806.25, 9);
   });
 
-  it('serve: place 1 for every tier plus the 500 + 500·pace reading allowance', () => {
-    expect(flightTimeMs({ pace: 1.5, chaseLen: 4, v: 1, tier: 'hard', isServe: true, n: 0 })).toBeCloseTo(5150, 9);
+  it('serve: place 1 for every tier plus the 250 + 750·pace reading allowance', () => {
+    expect(flightTimeMs({ pace: 1.5, chaseLen: 4, v: 1, tier: 'hard', isServe: true, n: 0 })).toBeCloseTo(5275, 9);
     for (const tier of TIERS) {
-      expect(flightTimeMs({ pace: 1, chaseLen: 10, v: 0.8, tier, isServe: true, n: 0 })).toBeCloseTo(5000, 9); // 3200/0.8 + 500 + 500
+      expect(flightTimeMs({ pace: 1, chaseLen: 10, v: 0.8, tier, isServe: true, n: 0 })).toBeCloseTo(5000, 9); // 3200/0.8 + 250 + 750
     }
   });
 
@@ -138,8 +138,8 @@ describe('flightTimeMs', () => {
 describe('graceMs', () => {
   it('is 400 ms × pace', () => {
     expect(graceMs(1)).toBeCloseTo(400, 9);
-    expect(graceMs(PACE_MULT.relaxed)).toBeCloseTo(600, 9);
-    expect(graceMs(PACE_MULT.lightning)).toBeCloseTo(240, 9);
+    expect(graceMs(PACE_MULT.relaxed)).toBeCloseTo(560, 9);
+    expect(graceMs(PACE_MULT.lightning)).toBeCloseTo(280, 9);
   });
 });
 

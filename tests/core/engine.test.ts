@@ -103,7 +103,7 @@ describe('Engine: construction', () => {
       serveClockMs: TUNING.serveClockMs,
       tossApexMs: TUNING.tossApexMs,
       catchMs: TUNING.catchMs,
-      pace: 1.5,
+      pace: 1.4,
       freezeFirst: false,
     });
     expect(d.wordSets).toHaveLength(2);

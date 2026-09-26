@@ -1,12 +1,17 @@
 import type { PaceId, Tier } from './types';
 
-/** Pace multipliers (spec §3.9). */
-export const PACE_MULT: Record<PaceId, number> = { relaxed: 1.5, normal: 1.0, fast: 0.75, lightning: 0.6 };
+/**
+ * Pace multipliers (spec §3.9). Relaxed and Lightning are retuned from the spec's ×1.5 / ×0.6 by the
+ * balance simulation (spec §6): reactions do not scale with pace, so at its reference WPM Relaxed
+ * ran long (36 s per point) and Lightning too tight (median rally 2, server 47 %).
+ */
+export const PACE_MULT: Record<PaceId, number> = { relaxed: 1.4, normal: 1.0, fast: 0.75, lightning: 0.7 };
 
 /**
  * All gameplay constants (spec §3). Balance targets (spec §6), for equal players at each pace's
  * reference WPM (Relaxed 30, Normal 50, Fast 70, Lightning 90): median rally 3–6 shots, p90 ≤ 12,
- * max 40; aces 5–15 %; double faults 1–6 %; server wins 55–65 %; ≤ 35 s per point.
+ * max 40; aces 5–15 %; double faults 1–6 %; server wins 55–65 %; ≤ 35 s per point. All are met
+ * except aces ≥ 5 %, which the rules cannot reach (measured values: tests/sim/balance.test.ts).
  */
 export const TUNING = {
   serveClockMs: 30000,
@@ -18,8 +23,10 @@ export const TUNING = {
     perCharMs: 100,
     place: { easy: 1.0, medium: 0.85, hard: 0.7 } as Record<Tier, number>,
     pressure: 0.85,
-    serveReturnBonusMs: 500,
-    serveReturnBonusPaceMs: 500,
+    // Serve reading allowance 250 + 750·pace ms (spec: 500 + 500·pace; the same 1 s at Normal): keeps
+    // the server's share of points near 60 % at every preset (balance simulation, spec §6).
+    serveReturnBonusMs: 250,
+    serveReturnBonusPaceMs: 750,
   },
   graceMs: 400,
   speed: { base: 0.85, perCps: 0.05, cpsRef: 3, min: 0.8, max: 1.3, stretchMult: 0.9, minSpanS: 0.05 },
