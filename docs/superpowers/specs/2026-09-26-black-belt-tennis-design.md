@@ -299,8 +299,8 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
 - **Screen zones**: HUD band y 0–21; far prompt band y 22–38; near-half choice band tops at
   netY + 6; near player's chase plate 4 px above its head.
 - **Layers**: backdrop → court → net (mesh as 50 % checker dither, opaque tape/posts) → shadows →
-  players/ball (depth-sorted) → effects → court-space UI (rings, leaders, markers; always above the
-  net) → plates → HUD → banners.
+  players/ball and ground rings (depth-sorted together) → effects → court-space UI (leaders, markers;
+  always above the net) → plates → HUD → banners.
 - **Ball**: 3×3 core + 1 px dark outline (5×5), ground shadow 3×1 dark dash, motion trail when
   fast, bounce puff, clay marks.
 - **Players** (rig-built pixel art):
@@ -346,9 +346,10 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
     x = 90 / 240 / 390; easy always in the centre slot, medium and hard in the left/right slot on
     their target's side. Each plate joins its ground ring with a 1 px tier-coloured leader
     (1 px dark outline).
-  - Serve plates: near server → vertical stack (easy, medium, hard top to bottom, 2 px gaps), bottom
-    4 px above the head. Far server → horizontal row in the far band centred on the server's x,
-    clamped to x 4–476.
+  - Serve plates never cover the toss column (the ball rises above the server's head): near server →
+    vertical stack (easy, medium, hard top to bottom, 3 px gaps) beside the head on the side toward
+    the screen centre; far server → horizontal row in the far band centred on the server's x with a
+    ≥ 12 px gap over the server, clamped to x 4–476.
   - Chase plates appear 4 px above the owner's head where it stood when the turn began (they don't follow).
   - **Large words** option: 2× applies only to single prompts and to a locked word (redrawn at 2× in
     place, clamped to x 4–476). Unlocked options stay 1×.
@@ -459,7 +460,7 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
   cps, stretch, τ} → resolved shot via the pure `shot` module; or fault/catch/miss/call at τ).
   The engine uses it for the active turn; an online guest runs its own copy for its own turns.
 - **Engine API**: `input(player, key, τ)` (key = letter or `toss`; dropped unless `player` owns the
-  current turn and τ ≥ the turn's latest τ) and `clock(player, τ)` (the owner confirms its turn
+  current turn; a τ below the turn's latest τ is clamped to it) and `clock(player, τ)` (the owner confirms its turn
   clock reached τ; deadlines ≤ τ are processed). A new turn's τ starts at the owner's first
   `clock(owner, 0)`. The engine owns everything between turns: word picking, drawing a turn's
   randomness, scoring, creating the next turn's start data. It emits events stamped with
