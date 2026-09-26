@@ -443,11 +443,6 @@ export class LobbyLink {
     return this.link.rttMs;
   }
 
-  /** How the other side went away, or null while it is there. */
-  get gone(): Departure | null {
-    return this.link.gone;
-  }
-
   /** Sends `m` while the other side is there and the lobby has the transport. */
   send(m: NetMsg): void {
     this.link.send(m);

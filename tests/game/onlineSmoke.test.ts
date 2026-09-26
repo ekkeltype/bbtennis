@@ -8,7 +8,7 @@ import { VirtualScheduler } from '../../src/game/clock';
 import { DisplayQueue } from '../../src/game/displayQueue';
 import { GuestSession } from '../../src/game/guestSession';
 import { FrameFit, HostSession } from '../../src/game/hostSession';
-import { KeyRate, LobbyLink, OnlineLifecycle, TransportSwitch } from '../../src/game/onlineLink';
+import { KeyRate, LobbyLink, OnlineLifecycle, Scoreboards, TransportSwitch } from '../../src/game/onlineLink';
 import type { Session } from '../../src/game/session';
 import { MAX_SEND_BYTES, msgBytes, type NetMsg } from '../../src/net/protocol';
 import { loopbackPair, type Transport } from '../../src/net/transport';
@@ -680,6 +680,31 @@ describe('online sessions: frames', () => {
     expect(msgBytes(small)).toBeLessThanOrEqual(MAX_SEND_BYTES);
     fit.fit(small);
     expect(small.s!.lastTurn!.log).toHaveLength(300);
+  });
+});
+
+describe('Scoreboards: the scoreboard each displayed turn carries', () => {
+  it('shows the front entry\'s scoreboard as it was when noted, as the view\'s own copy; with no front the view keeps its own', () => {
+    const state = new Engine({ config: TIEBREAK, players: [HOST, GUEST], seed: 1 }).state;
+    const entry = new DisplayQueue(0).push(state.turn!, true);
+    const boards = new Scoreboards();
+    boards.note(entry, state);
+    state.score.points = [3, 1];
+    state.stats[0].pointsWon = 3;
+    state.status = 'over';
+    const pub = redact(state, 0);
+    boards.show(pub, entry);
+    expect(pub.score.points).toEqual([0, 0]);
+    expect(pub.stats[0].pointsWon).toBe(0);
+    expect(pub.status).toBe('playing');
+    pub.score.points[0] = 9;
+    const again = redact(state, 0);
+    boards.show(again, entry);
+    expect(again.score.points).toEqual([0, 0]);
+    const latest = redact(state, 0);
+    boards.show(latest, null);
+    expect(latest.score.points).toEqual([3, 1]);
+    expect(latest.status).toBe('over');
   });
 });
 
