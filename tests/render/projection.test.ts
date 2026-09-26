@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { COURT } from '../../src/core/court';
 import type { PlayerId, Vec3 } from '../../src/core/types';
+import { FLOOR } from '../../src/render/court';
 import { H, W, netScreenY, project, scaleAt, unprojectGround } from '../../src/render/projection';
 
 const VIEWERS: (PlayerId | 'spectator')[] = [0, 1, 'spectator'];
@@ -117,6 +118,29 @@ describe('scaleAt', () => {
       const a = project({ x: 0, y: 5.2, z: 0 }, v);
       const b = project({ x: 1, y: 5.2, z: 0 }, v);
       expect(Math.abs(b.x - a.x)).toBeCloseTo(scaleAt(5.2, v), 9);
+    }
+  });
+});
+
+describe('stadium floor (court layer extent)', () => {
+  it('has side edges that are straight walls parallel to the court, mirrored left/right', () => {
+    const walls = [FLOOR.top, 100, 160, 200].map((sy) => ({
+      left: unprojectGround(FLOOR.edge - sy, sy, 0).x,
+      right: unprojectGround(W - FLOOR.edge + sy, sy, 0).x,
+    }));
+    for (const w of walls) {
+      expect(w.left).toBeCloseTo(walls[0]!.left, 9);
+      expect(w.right).toBeCloseTo(-w.left, 9);
+    }
+  });
+
+  it('holds every player position of spec §3.0 (≤ 1.2 m behind a baseline, |x| ≤ 5.8)', () => {
+    expect(unprojectGround(W / 2, FLOOR.top, 0).y).toBeGreaterThan(HL + 1.2);
+    expect(-unprojectGround(FLOOR.edge - FLOOR.top, FLOOR.top, 0).x).toBeGreaterThan(5.8);
+    for (const v of [0, 1] as const) {
+      const far = project({ x: 5.8, y: v === 0 ? HL + 1.2 : -HL - 1.2, z: 0 }, v);
+      expect(far.y).toBeGreaterThan(FLOOR.top);
+      expect(far.x).toBeLessThan(W - 1 - FLOOR.edge + far.y);
     }
   });
 });
