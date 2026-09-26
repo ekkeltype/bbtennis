@@ -8,16 +8,19 @@ browser (Chrome, Edge, Firefox) with a physical keyboard, with nothing to instal
 
 ## Screenshots
 
-_Placeholders until screenshots are committed._ `npm run e2e` saves fresh ones as
-`artifacts/e2e/*.png` (git-ignored, never committed). They cover the start gate and title, every
-screen at 960×540 and 1920×1080, Training's first point, a vs-CPU match at the serve, toss, chase,
-shot choice, point call and results, and both sides of an online match when the PeerJS broker is
-reachable. To show some here, copy them into a tracked folder such as `docs/screenshots/` and link
-them in place of these cells.
+No screenshots are committed. `npm run e2e` (see [below](#end-to-end-run-npm-run-e2e)) plays the
+production build and saves fresh ones to `artifacts/e2e/`, which is git-ignored and cleared on each
+run:
 
-| Title | Rally | Results |
-|---|---|---|
-| _(title screenshot)_ | _(rally screenshot)_ | _(results screenshot)_ |
+| File in `artifacts/e2e/` | What it shows |
+|---|---|
+| `1-gate.png`, `1-title.png` | The start gate, then the title over the attract demo (CPU vs CPU) |
+| `2-<screen>-960x540.png`, `2-<screen>-1920x1080.png` | Every screen at both sizes: `gate`, `title`, `mainMenu`, `cpuSetup`, `customize`, `options`, `howTo`, `match`, `pause`, `training`, `results`, `host` and `join` |
+| `3-training-preServe.png`, `3-training-toss.png`, `3-training-pointCall.png` | Training's first lesson: the coach's SPACE prompt, the toss with its serve words, the point call |
+| `4-match-preServe.png`, `4-match-toss.png` | A vs-CPU match: waiting to serve, then the toss with the three serve words |
+| `4-match-chase.png`, `4-match-choice.png` | The return: retyping the opponent's word to run, then picking a shot by its first letter |
+| `4-match-pointCall.png`, `4-match-results.png` | The umpire's call at the end of a point, and the Results after the match |
+| `5-online-host-*.png`, `5-online-guest-*.png` | Both sides of an online match (`lobby`, `chase`, `pointCall`, `2points`), when the PeerJS broker is reachable |
 
 ## How to play
 
@@ -45,8 +48,10 @@ your shot word raises the chance of hitting the net or out, most of all on hard 
 chase word only cost time. A shot typed without a slip and struck in time never goes out or into
 the net.
 
-**Scoring** is real tennis scoring. Formats: Tiebreak (first to 7), Short set (the default: first to
-4 games, tiebreak at 4–4), Full set (first to 6 games) and Best of 3 short sets. At deuce, play
+**Scoring** is real tennis scoring. Formats: Tiebreak (a single tiebreak to 7, win by 2), Short set
+(first to 4 games, tiebreak at 4–4), Full set (first to 6 games, tiebreak at 6–6) and Best of 3 short
+sets. A new player's first vs-CPU setup is a White belt at Relaxed pace in the Tiebreak format. After
+that, setup remembers the format you last picked, and the host lobby starts from it. At deuce, play
 Advantage or a Golden point.
 
 ## Controls
@@ -104,11 +109,13 @@ deep, and so on), so a word never contradicts where the ball actually goes.
   (or none) and racket, with a live preview.
 
 Settings, profile and career are stored in `localStorage` under `bbtennis:v1:`. In a browser mode
-that blocks storage, the game says once that progress can't be saved and plays on with defaults.
+that blocks storage, or once a save fails (a full quota), the game says once that progress can't be
+saved and plays on.
 
 ## Development
 
-You need Node 22.12 or newer (the `engines` field in `package.json`; CI uses Node 24) and npm.
+You need npm and Node `^22.22.2 || ^24.15.0 || >=26.0.0`, the versions both Vitest 5 and jsdom 30
+support (the `engines` field in `package.json`; CI uses Node 24). Node 23 and 25 are not supported.
 `art:export` and `e2e` also need a locally installed Google Chrome, which they drive through
 `playwright-core` (no browser download).
 
