@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pickerRow, slider, spinner } from '../../src/ui/controls';
 import { focusables, h } from '../../src/ui/dom';
 
-function press(target: Element, key: string): KeyboardEvent {
-  const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+function press(target: Element, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+  const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
   target.dispatchEvent(e);
   return e;
 }
@@ -98,6 +98,17 @@ describe('spinner', () => {
     press(s.el, 'ArrowLeft');
     expect(s.value()).toBe('fast');
     expect(s.el.querySelector('.value')?.textContent).toBe('FAST');
+  });
+
+  it('a held Enter / Space steps once (their auto-repeats are ignored); a held arrow keeps stepping', () => {
+    const s = make('relaxed');
+    press(s.el, 'Enter');
+    press(s.el, 'Enter', { repeat: true });
+    press(s.el, ' ', { repeat: true });
+    expect(s.value()).toBe('normal');
+    expect(s.set).toHaveBeenCalledOnce();
+    press(s.el, 'ArrowRight', { repeat: true });
+    expect(s.value()).toBe('fast');
   });
 
   it('the arrow buttons step with the mouse', () => {

@@ -20,8 +20,9 @@ function isStartKey(e: KeyboardEvent): boolean {
 }
 
 /**
- * The start gate (spec §4.6): "Click to start" (on a top-level page also "or press any key"). The
- * gesture focuses the window, creates the AudioContext and unlocks speech through `openGate`.
+ * The start gate (spec §4.6): "Click to start" (on a top-level page also "or press any key", a fresh
+ * press: auto-repeats of a held key are ignored). The gesture focuses the window, creates the
+ * AudioContext and unlocks speech through `openGate`.
  */
 export function gateScreen(ctx: UiContext): ScreenFactory {
   return () => {
@@ -33,7 +34,7 @@ export function gateScreen(ctx: UiContext): ScreenFactory {
       ctx.openGate();
     };
     const onKey = (e: KeyboardEvent): void => {
-      if (!isStartKey(e)) return;
+      if (e.repeat || !isStartKey(e)) return;
       e.preventDefault();
       open();
     };

@@ -1,4 +1,4 @@
-import { h, type Child } from './dom';
+import { h, isHeldActionKey, type Child } from './dom';
 import { icon } from './icons';
 
 /** One value of a spinner: what it stores, what it shows and an optional short hint beside it. */
@@ -23,7 +23,10 @@ export function panel(title: string, cls: string, ...children: Child[]): HTMLEle
   return h('section', { class: `panel ${cls}`.trim() }, h('h2', { class: 'panel-title' }, title), ...children);
 }
 
-/** The row frame: label, the control, an optional note; keys go to `onKey`, which returns true when it used the key. */
+/**
+ * The row frame: label, the control, an optional note; keys go to `onKey`, which returns true when it
+ * used the key. A held Enter/Space acts once: its auto-repeats are left to the Router, which swallows them.
+ */
 function row(o: RowOptions, cls: string, role: string, control: HTMLElement, onKey: (key: string) => boolean): HTMLElement {
   const el = h(
     'div',
@@ -33,7 +36,7 @@ function row(o: RowOptions, cls: string, role: string, control: HTMLElement, onK
     o.note === undefined ? null : h('span', { class: 'note' }, o.note),
   );
   el.addEventListener('keydown', (e) => {
-    if (o.disabled === true || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (o.disabled === true || e.ctrlKey || e.altKey || e.metaKey || isHeldActionKey(e)) return;
     if (onKey(e.key)) e.preventDefault();
   });
   return el;
@@ -48,7 +51,8 @@ function arrowButton(dir: 'left' | 'right', disabled: boolean, onClick: () => vo
 
 /**
  * A "◀ VALUE ▶" row: ArrowRight, Enter and Space step to the next choice, ArrowLeft to the previous
- * one, both wrapping; the arrow buttons do the same with the mouse. `get` is read after every change.
+ * one, both wrapping (a held arrow keeps stepping, a held Enter/Space steps once); the arrow buttons
+ * do the same with the mouse. `get` is read after every change.
  */
 export function spinner<T>(o: RowOptions & { choices: readonly Choice<T>[]; get(): T; set(v: T): void }): HTMLElement {
   const value = h('span', { class: 'value' });

@@ -1,4 +1,4 @@
-import { FOCUSABLE, focusables, isTextField, moveFocus } from './dom';
+import { FOCUSABLE, focusables, isHeldActionKey, isTextField, moveFocus } from './dom';
 
 /**
  * A shown screen: its root element and lifecycle hooks. `onBack` replaces the default Esc action
@@ -16,8 +16,10 @@ interface Entry { name: string; params: unknown }
  * `go` to a screen already in the history returns to it (dropping what came after), so the history
  * stays short; `back` re-creates the previous screen with its params. Menu keys work on every
  * screen (spec §4.6): Arrow keys move the focus (Left/Right stay with a focused text field), Esc goes
- * back; keys another handler has already taken (`defaultPrevented`) are left alone. `onChange` hears
- * the name of every screen shown.
+ * back; keys another handler has already taken (`defaultPrevented`) are left alone. Auto-repeats of a
+ * held Esc, Enter or Space are swallowed (default prevented, nothing done), so a key held from the
+ * match or the previous screen can neither resume from the pause menu nor click a newly focused
+ * button; held arrows still repeat. `onChange` hears the name of every screen shown.
  */
 export class Router {
   private readonly factories = new Map<string, ScreenFactory>();
@@ -81,6 +83,10 @@ export class Router {
   }
 
   private readonly keydown = (e: KeyboardEvent): void => {
+    if (isHeldActionKey(e)) {
+      e.preventDefault();
+      return;
+    }
     const screen = this.shown;
     if (screen === null || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
     const active = this.root.ownerDocument.activeElement;

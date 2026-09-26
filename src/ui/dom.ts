@@ -69,6 +69,14 @@ export function isTextField(el: Element | null): boolean {
   return el.tagName === 'INPUT' && (el as HTMLInputElement).type !== 'button' && (el as HTMLInputElement).type !== 'checkbox';
 }
 
+/**
+ * True for an auto-repeated Esc, Enter or Space. Menus act on the first press of these keys only, so
+ * a held key cannot click on through the screens that follow (Review Focus 1); held arrows repeat.
+ */
+export function isHeldActionKey(e: KeyboardEvent): boolean {
+  return e.repeat && (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ');
+}
+
 /** Shows `text` in a pixel toast at the bottom of `host` for `ms`, then removes it. */
 export function toast(host: HTMLElement, text: string, ms = 4000): void {
   const el = h('div', { class: 'toast', role: 'status' }, text);

@@ -160,6 +160,34 @@ describe('Router keys', () => {
     expect(router.current).toBe('c');
   });
 
+  it('a held Esc (auto-repeat) does not call onBack; only a fresh press does', () => {
+    const onBack = vi.fn();
+    router.register('c', screen('c', 1, { onBack }).factory);
+    router.go('c');
+    const held = press('Escape', { repeat: true });
+    press('Escape', { repeat: true });
+    expect(onBack).not.toHaveBeenCalled();
+    expect(held.defaultPrevented).toBe(true);
+    press('Escape');
+    expect(onBack).toHaveBeenCalledOnce();
+  });
+
+  it('a held Esc does not go back either', () => {
+    press('Escape', { repeat: true });
+    expect(router.current).toBe('b');
+  });
+
+  it.each(['Enter', ' '])('a held %j is swallowed so it cannot click the focused button; a fresh press is left to it', (key) => {
+    expect(press(key, { repeat: true }).defaultPrevented).toBe(true);
+    expect(press(key).defaultPrevented).toBe(false);
+  });
+
+  it('held arrow keys still repeat through the menu', () => {
+    press('ArrowDown', { repeat: true });
+    press('ArrowDown', { repeat: true });
+    expect(focused()).toBe('b2');
+  });
+
   it('ignores keys another handler already took (defaultPrevented), e.g. the match keyboard capture', () => {
     const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
     e.preventDefault();

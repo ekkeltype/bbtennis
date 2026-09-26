@@ -44,8 +44,8 @@ function fakeContext(settings: Partial<Settings> = {}) {
 
 const labels = (): string[] => [...root.querySelectorAll('button.btn')].map((b) => b.textContent ?? '');
 const focused = (): string | null | undefined => document.activeElement?.textContent;
-const press = (key: string, target: EventTarget = document.activeElement ?? document.body): KeyboardEvent => {
-  const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+const press = (key: string, target: EventTarget = document.activeElement ?? document.body, init: KeyboardEventInit = {}): KeyboardEvent => {
+  const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
   target.dispatchEvent(e);
   return e;
 };
@@ -96,6 +96,16 @@ describe('start gate', () => {
     const e = press(key, document.body);
     expect(ctx.openGate).not.toHaveBeenCalled();
     expect(e.defaultPrevented).toBe(false);
+  });
+
+  it.each(['a', 'Enter'])('a held %j (auto-repeat) does not open it; only a fresh press does', (key) => {
+    const ctx = fakeContext();
+    router.register('gate', gateScreen(ctx));
+    router.go('gate');
+    press(key, document.body, { repeat: true });
+    expect(ctx.openGate).not.toHaveBeenCalled();
+    press(key, document.body);
+    expect(ctx.openGate).toHaveBeenCalledOnce();
   });
 
   it('Esc does not open it either', () => {
@@ -193,6 +203,16 @@ describe('in-match menu', () => {
     expect(focused()).toBe('RESUME');
     press('Escape');
     expect(ctx.resumeMatch).toHaveBeenCalledOnce();
+  });
+
+  it('a held Esc does not resume: the repeats of the Esc that paused the match are ignored', () => {
+    const ctx = fakeContext();
+    router.register('pause', pauseScreen(ctx));
+    router.go('pause', { kind: 'cpu' });
+    press('Escape', undefined, { repeat: true });
+    press('Escape', undefined, { repeat: true });
+    expect(ctx.resumeMatch).not.toHaveBeenCalled();
+    expect(router.current).toBe('pause');
   });
 
   it('online: Resume / Forfeit (+ Fullscreen)', () => {
