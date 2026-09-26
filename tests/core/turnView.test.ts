@@ -244,4 +244,16 @@ describe('turnViewAt', () => {
     view.prompts[0]!.options[0]!.word = 'zzz';
     expect(t.prompts[0]!.options[0]!.word).toBe('ball');
   });
+
+  it('returns copies of the outcome and strike, so mutating the view leaves the turn alone', () => {
+    const { t } = run(rallyReturn(), [...keys('ball', 100), ...keys('drop', 600), ...at(3000)]);
+    const before = JSON.parse(JSON.stringify(t.outcome)) as unknown;
+    const view = turnViewAt(t, 3000);
+    expect(view.outcome).toEqual(before);
+    expect(view.strike).not.toBeNull();
+    view.strike!.word.word = 'zzz';
+    view.strike!.flight.T = 0;
+    view.outcome!.endτ = 0;
+    expect(t.outcome).toEqual(before);
+  });
 });

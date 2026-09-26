@@ -37,13 +37,13 @@ interface Replay {
 
 /**
  * Derives what a viewer sees at τ from start data + result log (works on redacted turns). Typing is
- * rebuilt from the log alone (letters are never read) into fresh prompt views; the outcome and strike
- * (the turn's own objects, read-only) appear once the turn has ended and τ has reached its end
- * (for a queued strike, T: the strike moment).
+ * rebuilt from the log alone (letters are never read); the outcome and strike appear once the turn
+ * has ended and τ has reached its end (for a queued strike, T: the strike moment). The view holds
+ * fresh copies only, so mutating it never changes the turn.
  */
 export function turnViewAt(t: TurnState, τ: number): TurnView {
   const r = replay(t, τ);
-  const outcome = t.ended && t.outcome !== null && τ >= t.outcome.endτ ? t.outcome : null;
+  const outcome = t.ended && t.outcome !== null && τ >= t.outcome.endτ ? copy(t.outcome) : null;
   const d = t.data;
   let { tossAt, catchAt } = r;
   const last = r.prompts.length > 0 ? r.prompts.length - 1 : null;
@@ -156,4 +156,8 @@ function replay(t: TurnState, τ: number): Replay {
 function progressOf(p: PromptView): number {
   const word = p.locked === null ? undefined : p.options[p.locked];
   return word === undefined ? 0 : p.typed / word.len;
+}
+
+function copy<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v)) as T;
 }
