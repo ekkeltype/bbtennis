@@ -113,7 +113,7 @@ describe('scoreboard', () => {
     expect(rows.map((r) => r.serving)).toEqual([false, true]);
   });
 
-  it("shows a set won in a tiebreak with the loser's points as a superscript beside their games", () => {
+  it("shows a set won in a tiebreak with the loser's points as a superscript beside the winner's games", () => {
     const score: ScoreState = {
       ...createScore('bo3', 'advantage', 0),
       setGames: [[4, 5], [5, 4]],
@@ -124,8 +124,8 @@ describe('scoreboard', () => {
     const rows = scoreRows(matchState(null, null, { score }));
     expect(rows.map((r) => r.sets)).toEqual([[4, 5], [5, 4]]);
     expect(rows.map((r) => r.setCells)).toEqual([
-      [{ value: 4, sup: 3 }, { value: 5, sup: null }],
-      [{ value: 5, sup: null }, { value: 4, sup: 5 }],
+      [{ value: 4, sup: null }, { value: 5, sup: 5 }],
+      [{ value: 5, sup: 3 }, { value: 4, sup: null }],
     ]);
   });
 
@@ -389,7 +389,7 @@ describe('Hud.draw', () => {
     return out;
   };
 
-  it("draws the tiebreak loser's points as a small 3×5 superscript digit beside their games, top-aligned with them", () => {
+  it("draws the tiebreak loser's points as a small 3×5 superscript digit beside the winner's games, top-aligned with them", () => {
     const score: ScoreState = {
       ...createScore('full', 'advantage', 0),
       setGames: [[7, 6]],
@@ -403,13 +403,13 @@ describe('Hud.draw', () => {
     const want = new Set<string>();
     ['###', '#..', '###', '..#', '###'].forEach((row, dy) =>
       [...row].forEach((c, dx) => {
-        if (c === '#') want.add(`${x0 + dx},${rowTop(1) + 1 + dy}`);
+        if (c === '#') want.add(`${x0 + dx},${rowTop(0) + 1 + dy}`);
       }),
     );
     expect(pixels).toEqual(want);
-    // One px right of the loser's 6, left of the games column (x 125).
-    const six = images.filter((b) => b.y === rowTop(1) && b.x + b.w + 1 === x0);
-    expect(six).toHaveLength(1);
+    // One px right of the winner's 7 (row 0), left of the games column (x 125).
+    const seven = images.filter((b) => b.y === rowTop(0) && b.x + b.w + 1 === x0);
+    expect(seven).toHaveLength(1);
     expect(x0 + 3).toBeLessThan(125);
   });
 

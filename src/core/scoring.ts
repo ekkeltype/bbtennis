@@ -145,8 +145,8 @@ export interface SetCell { value: number; sup: number | null }
 
 /**
  * The completed sets as a score line shows them, one row per player (spec §3.6, §4.3): each set's
- * games, with the tiebreak loser's points as a superscript beside the loser's games for a set decided
- * in a tiebreak (7 over 6⁵); in the Tiebreak format, its tiebreak points (7 over 5) instead of 1–0.
+ * games, with the tiebreak loser's points as a superscript beside the set winner's games for a set
+ * decided in a tiebreak (7⁵ over 6); in the Tiebreak format, its tiebreak points (7 over 5) instead of 1–0.
  */
 export function setLine(s: ScoreState): [SetCell[], SetCell[]] {
   const tiebreaks = tiebreaksOf(s);
@@ -155,7 +155,7 @@ export function setLine(s: ScoreState): [SetCell[], SetCell[]] {
       const tb = tiebreaks[i] ?? null;
       if (tb === null) return { value: games[p], sup: null };
       if (s.format === 'tiebreak') return { value: tb[p], sup: null };
-      return { value: games[p], sup: tb[p] < tb[other(p)] ? tb[p] : null };
+      return { value: games[p], sup: tb[p] > tb[other(p)] ? tb[other(p)] : null };
     });
   return [row(0), row(1)];
 }

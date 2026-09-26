@@ -10,7 +10,8 @@ type MatchResults = Extract<ResultsParams, { kind: 'cpu' | 'online' }>;
 
 /**
  * The score line, as the scoreboard shows it: one row per player with the games of each set (or the
- * points of a tiebreak), and a set won in a tiebreak carries the loser's tiebreak points as a superscript.
+ * points of a tiebreak), and a set won in a tiebreak carries the loser's tiebreak points as a superscript
+ * beside the winner's games.
  */
 function scoreTable(p: MatchResults): HTMLElement {
   const { head, rows } = setScores(p.result);

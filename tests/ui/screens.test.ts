@@ -275,7 +275,7 @@ describe('results', () => {
     expect(ctx.quitMatch).toHaveBeenCalledOnce();
   });
 
-  it("shows the scoreboard's score line: games per set with the tiebreak loser's points as a superscript", () => {
+  it("shows the scoreboard's score line: games per set with the tiebreak loser's points as a superscript beside the winner's games", () => {
     const ctx = fakeContext();
     router.register('results', resultsScreen(ctx));
     /** Each score-table row as [number, superscript or null] per cell. */
@@ -289,8 +289,8 @@ describe('results', () => {
     router.go('results', { kind: 'cpu', result: sets, viewer: 0, newBelt: null, canRematch: true });
     expect([...root.querySelectorAll('.score thead th')].map((th) => th.textContent)).toEqual(['', 'SET 1', 'SET 2', 'SET 3']);
     expect(line()).toEqual([
-      [['4', null], ['4', '5'], ['5', null]],
-      [['2', null], ['5', null], ['4', '3']],
+      [['4', null], ['4', null], ['5', '3']],
+      [['2', null], ['5', '5'], ['4', null]],
     ]);
     const tiebreak = finished();
     tiebreak.score = { ...tiebreak.score, setGames: [[1, 0]], setTiebreaks: [[7, 5]], inTiebreak: false, setsWon: [1, 0], winner: 0 };

@@ -352,7 +352,7 @@ describe('setLine', () => {
     expect(setLine(createScore('tiebreak', 'advantage', 0))).toStrictEqual([[], []]);
   });
 
-  it("shows each completed set's games, and the tiebreak loser's points as a superscript on their games", () => {
+  it("shows each completed set's games, and the tiebreak loser's points as a superscript beside the set winner's games", () => {
     const s = createScore('bo3', 'advantage', 0);
     playGames(s, '0000');
     playGames(s, '10101010');
@@ -360,16 +360,16 @@ describe('setLine', () => {
     expect(s.setGames).toStrictEqual([[4, 0], [4, 5]]);
     expect(s.setTiebreaks).toStrictEqual([null, [6, 8]]);
     expect(setLine(s)).toStrictEqual([
-      [{ value: 4, sup: null }, { value: 4, sup: 6 }],
-      [{ value: 0, sup: null }, { value: 5, sup: null }],
+      [{ value: 4, sup: null }, { value: 4, sup: null }],
+      [{ value: 0, sup: null }, { value: 5, sup: 6 }],
     ]);
   });
 
-  it('shows a full set won 7-6 in a 7-5 tiebreak as 7 over 6 with a superscript 5', () => {
+  it('shows a full set won 7-6 in a 7-5 tiebreak as 7⁵ over 6', () => {
     const s = createScore('full', 'advantage', 1);
     playGames(s, '010101010101');
     play(s, '01010101010' + '0');
-    expect(setLine(s)).toStrictEqual([[{ value: 7, sup: null }], [{ value: 6, sup: 5 }]]);
+    expect(setLine(s)).toStrictEqual([[{ value: 7, sup: 5 }], [{ value: 6, sup: null }]]);
   });
 
   it('shows the Tiebreak format by its final tiebreak points instead of a 1-0 set', () => {
@@ -654,11 +654,16 @@ describe('random matches (property)', () => {
       }
       const tiebreaks = s.setTiebreaks ?? [];
       if (tiebreaks.length !== s.setGames.length) problems.push(`${where}: ${tiebreaks.length} tiebreaks for ${s.setGames.length} sets`);
+      const line = setLine(s);
       s.setGames.forEach((g, i) => {
         const tb = tiebreaks[i] ?? null;
         const setWinner = g[0] > g[1] ? 0 : 1;
         if ((tb !== null) !== legalTiebreakSet(format, g)) problems.push(`${where}: set ${i} tiebreak ${JSON.stringify(tb)} for ${g.join('-')}`);
         if (tb !== null && !legalTiebreak(tb[setWinner], tb[other(setWinner)])) problems.push(`${where}: illegal tiebreak ${tb.join('-')}`);
+        // Only a tiebreak set outside the Tiebreak format carries a superscript: the loser's points, beside the winner's games.
+        const wantSup = tb !== null && format !== 'tiebreak' ? tb[other(setWinner)] : null;
+        const sups = [line[setWinner][i]?.sup, line[other(setWinner)][i]?.sup];
+        if (sups[0] !== wantSup || sups[1] !== null) problems.push(`${where}: set ${i} superscripts ${JSON.stringify(sups)}, want [${wantSup}, null]`);
       });
       const setsTakenByWinner = s.setGames.filter(([a, b]) => (a > b ? 0 : 1) === winner).length;
       if (setsTakenByWinner !== s.setsWon[winner]) problems.push(`${where}: setGames disagree with setsWon`);
