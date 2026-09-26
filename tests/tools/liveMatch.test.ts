@@ -4,11 +4,21 @@ import { turnViewAt, type PromptView, type TurnView } from '../../src/core/turnV
 import type { Surface, TurnState, ViewModel } from '../../src/core/types';
 import { bannerFor } from '../../src/render/hud';
 import { worldFrame } from '../../src/render/world';
-import { LIVE_MOMENTS, LIVE_VIEWER, liveSetup, matchFrames, planShots, viewAs, type LiveFrame, type ShotPlan } from './liveMatch';
-
-// Run with `npx vitest run --root tools/art` (the project's vitest config only includes tests/**).
+import {
+  LIVE_MOMENTS,
+  LIVE_VIEWER,
+  liveSetup,
+  matchFrames,
+  planShots,
+  viewAs,
+  type LiveFrame,
+  type Moment,
+  type ShotPlan,
+} from '../../tools/art/liveMatch';
 
 const SURFACES: readonly Surface[] = ['hard', 'clay', 'grass', 'dojo'];
+/** Timeout for the steps that play whole live matches (about 0.6 s each when the machine is idle). */
+const SLOW_MS = 30_000;
 
 /** The spectator frames of a fresh run of `surface`'s live match at `frames`, keyed by frame index. */
 function framesAt(surface: Surface, frames: readonly number[]): Map<number, LiveFrame> {
@@ -52,7 +62,7 @@ describe('live match moments', () => {
     plans = planShots(liveSetup('hard'), LIVE_MOMENTS);
     frames = framesAt('hard', plans.flatMap((p) => [p.at - 1, p.at, p.from - 1, p.from].filter((i) => i >= 0)));
     for (const p of plans) seen.set(p.moment.name, viewAs(frames.get(p.at)!.vm, LIVE_VIEWER));
-  });
+  }, SLOW_MS);
 
   const shot = (name: string): ViewModel => {
     const vm = seen.get(name);
@@ -67,10 +77,10 @@ describe('live match moments', () => {
   });
 
   it('finds every moment on every surface, on the same frames (the surface is cosmetic)', () => {
-    const at = (s: Surface): number[] => planShots(liveSetup(s), LIVE_MOMENTS).map((p) => p.at);
-    const hard = plans.map((p) => p.at);
-    for (const s of SURFACES) expect(at(s)).toEqual(hard);
-  });
+    const frameNos = (ps: readonly ShotPlan[]): number[][] => ps.map((p) => [p.at, p.from]);
+    const hard = frameNos(plans);
+    for (const s of SURFACES.filter((s) => s !== 'hard')) expect(frameNos(planShots(liveSetup(s), LIVE_MOMENTS))).toEqual(hard);
+  }, SLOW_MS);
 
   it('a replay reaches each moment on its planned frame and not one frame earlier', () => {
     for (const p of plans) {
@@ -161,9 +171,23 @@ describe('live match moments', () => {
 });
 
 describe('planShots', () => {
-  it('throws, naming the moment, when a moment never comes', () => {
-    const never = { name: 'never', label: 'never happens', shows: (): boolean => false };
-    expect(() => planShots(liveSetup('hard'), [LIVE_MOMENTS[0]!, never])).toThrow(/no never within \d+ frames/);
+  const toss = LIVE_MOMENTS[0]!;
+  const never: Moment = { name: 'never', label: 'never happens', shows: () => false };
+  let tossAt: number;
+
+  beforeAll(() => {
+    tossAt = planShots(liveSetup('hard'), [toss])[0]!.at;
+  });
+
+  it('throws after maxFrames frames, naming only the moments it did not find', () => {
+    expect(() => planShots(liveSetup('hard'), [toss, never], tossAt + 1)).toThrow(
+      `live match (hard): no never within ${tossAt + 1} frames`,
+    );
+  });
+
+  it('looks at exactly the first maxFrames frames', () => {
+    expect(planShots(liveSetup('hard'), [toss], tossAt + 1).map((p) => p.at)).toEqual([tossAt]);
+    expect(() => planShots(liveSetup('hard'), [toss], tossAt)).toThrow(`live match (hard): no toss within ${tossAt} frames`);
   });
 });
 

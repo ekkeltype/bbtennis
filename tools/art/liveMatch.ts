@@ -40,7 +40,7 @@ const SEED = 7;
 const POINT_BANNER_AT_MS = 750;
 /** How far into PRE_SERVE the MATCH POINT banner is captured: slid in, before the CPU's toss. */
 const MATCH_POINT_AT_MS = 300;
-/** Frames planShots plays before giving up on a moment: 10 minutes of game time. */
+/** Frames planShots plays by default before giving up on a moment: 10 minutes of game time. */
 const MAX_FRAMES = 36000;
 
 /**
@@ -76,23 +76,24 @@ export function* matchFrames(setup: LiveSetup): Generator<LiveFrame, never> {
  * Plays `setup` and finds the first frame of each moment. A moment's renderer starts at the first frame
  * of the point before the moment's point (frame 0 in the first two points), so the frame shows the
  * players where the last rally left them and the crowd and effects as they were. Throws when a moment
- * is not found within ten minutes of game time.
+ * is not found in the first `maxFrames` frames (by default ten minutes of game time).
  */
-export function planShots(setup: LiveSetup, moments: readonly Moment[]): ShotPlan[] {
+export function planShots(setup: LiveSetup, moments: readonly Moment[], maxFrames = MAX_FRAMES): ShotPlan[] {
   const found = new Map<Moment, ShotPlan>();
   const pointStarts: number[] = [];
   let i = 0;
   for (const f of matchFrames(setup)) {
+    if (i >= maxFrames) break;
     const point = f.vm.pub.pointNo;
     pointStarts[point] ??= i;
     for (const m of moments) {
       if (!found.has(m) && m.shows(f)) found.set(m, { moment: m, at: i, from: pointStarts[Math.max(0, point - 1)] ?? 0 });
     }
     if (found.size === moments.length) return moments.map((m) => found.get(m)!);
-    if (++i >= MAX_FRAMES) break;
+    i++;
   }
   const missing = moments.filter((m) => !found.has(m)).map((m) => m.name);
-  throw new Error(`live match (${setup.config.surface}): no ${missing.join(', ')} within ${MAX_FRAMES} frames`);
+  throw new Error(`live match (${setup.config.surface}): no ${missing.join(', ')} within ${maxFrames} frames`);
 }
 
 /** `vm`, a spectator's view model, as `viewer` sees it: state and events redacted for that player. */

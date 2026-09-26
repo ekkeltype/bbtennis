@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bannerFor, Hud, scoreRows, serveClockSeconds, speedReadout } from '../../src/render/hud';
-import { bannerSamples, readoutSample, scoreboardSamples, serveClockSamples } from './hudStates';
-
-// Run with `npx vitest run --root tools/art` (the project's vitest config only includes tests/**).
+import { bannerSamples, readoutSample, scoreboardSamples, serveClockSamples } from '../../tools/art/hudStates';
 
 const PREFS = { largeWords: false, reduceEffects: false, showWpm: true };
 
