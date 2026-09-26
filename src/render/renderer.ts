@@ -21,8 +21,8 @@ const sameLook = (a: Look, b: Look): boolean => LOOK_KEYS.every((k) => a[k] === 
 
 /**
  * Draws the match (spec §4.1–§4.3) into the screen's 480×270 buffer and presents it. Layers:
- * backdrop → court → net → shadows → players/ball → effects (shaken together on an ACE/WINNER) →
- * court-space UI → plates → HUD → banners. Players wear the looks given to `setLooks`, else their
+ * backdrop → court → net → shadows → players/ball and ground rings (depth-sorted) → effects (shaken
+ * together on an ACE/WINNER) → leaders and markers → plates → HUD → banners. Players wear the looks given to `setLooks`, else their
  * own from the match state.
  */
 export class Renderer {
@@ -58,6 +58,9 @@ export class Renderer {
     this.effects.update(f, poses, dt, prefs.reduceEffects);
     this.hud.update(f);
 
+    const turnStart = [this.animator.turnStartFeet(0), this.animator.turnStartFeet(1)] as const;
+    const prompts = promptScene(f, poses, { prefs, looks, turnStart, pop: this.popNow(f) });
+
     const g = this.screen.buf;
     const shake = this.effects.shake();
     g.save();
@@ -66,10 +69,10 @@ export class Renderer {
       g.fillRect(0, 0, W, H);
       g.translate(shake.x, shake.y);
     }
-    drawWorld(g, f, { poses, ball, sheets: this.sheetsFor(looks), effects: this.effects, clockMs: this.clockMs });
+    const sheets = this.sheetsFor(looks);
+    drawWorld(g, f, { poses, ball, rings: prompts.rings, sheets, effects: this.effects, clockMs: this.clockMs });
     g.restore();
-    const turnStart = [this.animator.turnStartFeet(0), this.animator.turnStartFeet(1)] as const;
-    drawPrompts(g, promptScene(f, poses, { prefs, looks, turnStart, pop: this.popNow(f) }));
+    drawPrompts(g, prompts);
     this.hud.draw(g, f, prefs);
     this.screen.present();
   }

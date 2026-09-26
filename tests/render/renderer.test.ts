@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { serverSpot } from '../../src/core/court';
+import { receiverSpot, serverSpot } from '../../src/core/court';
 import { createScore } from '../../src/core/scoring';
 import { ballAt, tossZ } from '../../src/core/trajectory';
 import { createTurn, startTurn, turnClock, turnInput } from '../../src/core/turn';
@@ -12,15 +12,21 @@ import type {
   Overlay,
   PlayerId,
   PlayerStats,
+  Tier,
   TurnState,
+  Vec2,
   ViewModel,
 } from '../../src/core/types';
 import { ballView, BALL_MAX_Z } from '../../src/render/ball';
 import { Effects } from '../../src/render/effects';
+import { TIER_COLOR } from '../../src/render/palette';
 import { PlayerAnimator, type PlayerPose } from '../../src/render/players';
+import { project } from '../../src/render/projection';
+import type { RingMark } from '../../src/render/prompts';
 import { PAUSE_ICON_RECT, Renderer } from '../../src/render/renderer';
 import type { Screen } from '../../src/render/screen';
-import { worldFrame, type WorldFrame } from '../../src/render/world';
+import type { SpriteSheet } from '../../src/render/sprites/sheet';
+import { drawWorld, worldFrame, type WorldFrame } from '../../src/render/world';
 import { RALLY_IN, RALLY_OUT, opt, returnData, serveData } from '../core/turnFixtures';
 
 const LOOK: Look = { skin: 1, hairStyle: 2, hair: 3, shirt: 6, shorts: 7, headband: 5, racket: 2 };
@@ -130,6 +136,68 @@ describe('worldFrame', () => {
     expect(f.near).toBe(0);
     expect(f.local).toBe(0);
     expect(worldFrame(view(matchState(next, out), 250, 'spectator')).local).toBeNull();
+  });
+});
+
+describe('drawWorld', () => {
+  beforeEach(() => vi.stubGlobal('OffscreenCanvas', FakeCanvas));
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Paints the world for viewer 0 with player 0 (near) and player 1 (far) standing at `feet` and `rings` on the ground. */
+  function paint(feet: [Vec2, Vec2], rings: RingMark[]): { ops: Op[]; sheets: [SpriteSheet, SpriteSheet] } {
+    const t = createTurn(serveData());
+    startTurn(t);
+    turnClock(t, 2600);
+    const f = worldFrame(view(matchState(t), 2600, 0));
+    const sheet = (): SpriteSheet => ({ canvas: new FakeCanvas(48, 48) as unknown as OffscreenCanvas, frame: () => ({ sx: 0, sy: 0 }) });
+    const sheets: [SpriteSheet, SpriteSheet] = [sheet(), sheet()];
+    const pose = (p: PlayerId): PlayerPose => ({ feet: feet[p], anim: 'idle', frame: 0, view: p === 0 ? 'near' : 'far', flip: false });
+    const { ctx, ops } = opLog();
+    drawWorld(ctx, f, { poses: [pose(0), pose(1)], ball: null, rings, sheets, effects: new Effects(), clockMs: 0 });
+    return { ops, sheets };
+  }
+
+  /** Index of the first pixel of `ring` painted in its tier colour, or -1. */
+  const firstRingPixel = (ops: Op[], ring: RingMark): number =>
+    ops.findIndex(
+      (o) =>
+        o.name === 'fillRect' && o.style === TIER_COLOR[ring.tier] &&
+        Math.abs(Number(o.args[0]) - ring.x) <= 7 && Math.abs(Number(o.args[1]) - ring.y) <= 4,
+    );
+
+  const spriteOf = (ops: Op[], sheet: SpriteSheet): number => ops.findIndex((o) => o.name === 'drawImage' && o.args[0] === sheet.canvas);
+
+  it('lets a player whose feet are nearer the camera occlude a ground ring behind them (R33)', () => {
+    const near = serverSpot(0, 'deuce');
+    const far = receiverSpot(1, 'deuce');
+    const at = (p: Vec2, tier: Tier): RingMark => ({ tier, ...project({ ...p, z: 0 }, 0), alpha: 1 });
+    // 2 m in front of the near player (toward the net), inside the sprite's 48 px cell on screen.
+    const front = at({ x: near.x, y: near.y + 2 }, 'hard');
+    const feetY = project({ ...near, z: 0 }, 0).y;
+    expect(feetY - front.y).toBeGreaterThan(10);
+    expect(feetY - front.y).toBeLessThan(40);
+    // 1 m behind the near player, nearer the camera: drawn over the player.
+    const behind = at({ x: near.x, y: near.y - 1 }, 'easy');
+    const { ops, sheets } = paint([near, far], [front, behind]);
+    const nearSprite = spriteOf(ops, sheets[0]);
+    const farSprite = spriteOf(ops, sheets[1]);
+    expect(nearSprite).toBeGreaterThan(-1);
+    expect(firstRingPixel(ops, front)).toBeGreaterThan(-1);
+    expect(firstRingPixel(ops, front)).toBeLessThan(nearSprite);
+    expect(firstRingPixel(ops, front)).toBeGreaterThan(farSprite);
+    expect(firstRingPixel(ops, behind)).toBeGreaterThan(nearSprite);
+  });
+
+  it('skips fully faded rings and paints the others at their opacity', () => {
+    const near = serverSpot(0, 'deuce');
+    const ring = (x: number, alpha: number): RingMark => ({ tier: 'medium', ...project({ x, y: 3, z: 0 }, 0), alpha });
+    const shown = ring(-2, 0.5);
+    const gone = ring(2, 0);
+    const { ops } = paint([near, receiverSpot(1, 'deuce')], [shown, gone]);
+    const i = firstRingPixel(ops, shown);
+    expect(i).toBeGreaterThan(-1);
+    expect(ops[i]!.alpha).toBe(0.5);
+    expect(firstRingPixel(ops, gone)).toBe(-1);
   });
 });
 
@@ -288,6 +356,31 @@ function fakeContext(canvas: { width: number; height: number }): CanvasRendering
       return true;
     },
   }) as unknown as CanvasRenderingContext2D;
+}
+
+/** One recorded context call: its name, arguments, and the fill style and opacity at the time. */
+interface Op { name: string; args: unknown[]; style: string; alpha: number }
+
+/** A 2D context stand-in that records every call in order, with the fill style and alpha it ran under. */
+function opLog(): { ctx: CanvasRenderingContext2D; ops: Op[] } {
+  const ops: Op[] = [];
+  const state: Record<string, unknown> = { fillStyle: '#000000', globalAlpha: 1, canvas: { width: 480, height: 270 } };
+  const stack: Record<string, unknown>[] = [];
+  const ctx = new Proxy(state, {
+    get(t, key: string) {
+      if (key in t) return t[key];
+      return (...args: unknown[]) => {
+        if (key === 'save') stack.push({ fillStyle: t.fillStyle, globalAlpha: t.globalAlpha });
+        if (key === 'restore') Object.assign(t, stack.pop() ?? {});
+        ops.push({ name: key, args, style: String(t.fillStyle), alpha: Number(t.globalAlpha) });
+      };
+    },
+    set(t, key: string, value) {
+      t[key] = value;
+      return true;
+    },
+  }) as unknown as CanvasRenderingContext2D;
+  return { ctx, ops };
 }
 
 class FakeCanvas {

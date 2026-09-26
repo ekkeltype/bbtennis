@@ -4,8 +4,10 @@ import { drawBall, drawBallShadow, type BallView } from './ball';
 import { checker, drawCourt } from './court';
 import type { Effects } from './effects';
 import { OUTLINE, PAL } from './palette';
+import { drawTierRing } from './plates';
 import type { PlayerPose } from './players';
 import { netScreenY, project, viewerEnd } from './projection';
+import type { RingMark } from './prompts';
 import { drawBackdrop, drawNet, drawUmpire, type SceneState } from './scene';
 import { drawPlayer, type SpriteSheet } from './sprites/sheet';
 
@@ -65,12 +67,16 @@ export function groundAt(f: WorldFrame, p: Vec2): { x: number; y: number } {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Scene and actors: backdrop → court → net → shadows → players/ball → effects (spec §4.1).
+// Scene and actors: backdrop → court → net → shadows → players/ball and ground rings → effects (spec §4.1).
 
-/** What `drawWorld` paints on top of the scene: poses, ball, the players' sheets, effects and the scene clock. */
+/**
+ * What `drawWorld` paints on top of the scene: poses, ball, the prompt layer's ground rings (depth-sorted
+ * with the players, R33), the players' sheets, effects and the scene clock.
+ */
 export interface WorldActors {
   poses: readonly [PlayerPose, PlayerPose];
   ball: BallView | null;
+  rings: readonly RingMark[];
   sheets: readonly [SpriteSheet, SpriteSheet];
   effects: Effects;
   clockMs: number;
@@ -120,32 +126,47 @@ function drawShadow(ctx: CanvasRenderingContext2D, at: { x: number; y: number })
   });
 }
 
+/** Something in the depth-sorted pass: its ground row on screen, its rank on a tie and how to draw it. */
+interface DepthItem { y: number; rank: number; draw: () => void }
+
+/** Tie order on the same ground row: a ring lies under a player standing on it; the ball passes over both. */
+const RANK = { ring: 0, player: 1, ball: 2 } as const;
+const PLAYERS = [0, 1] as const;
+
+function drawRing(ctx: CanvasRenderingContext2D, r: RingMark): void {
+  ctx.save();
+  ctx.globalAlpha = r.alpha;
+  drawTierRing(ctx, r.tier, r.x, r.y);
+  ctx.restore();
+}
+
+/**
+ * Players, the ball and the ground rings, far to near by their ground row (spec §4.1, R33): a player
+ * whose feet are nearer the camera than a ring occludes it. A held ball goes on its holder.
+ */
 function drawActors(ctx: CanvasRenderingContext2D, f: WorldFrame, a: WorldActors): void {
   const viewer = f.vm.viewer;
-  const feet = a.poses.map((p) => groundAt(f, p.feet));
-  const order: PlayerId[] = feet[0]!.y <= feet[1]!.y ? [0, 1] : [1, 0];
   const ball = a.ball;
-  const ballY = ball?.kind === 'air' ? groundAt(f, ball.pos).y : null;
-  let ballDone = ball === null;
-  for (const p of order) {
-    if (!ballDone && ballY !== null && ballY < feet[p]!.y) {
-      drawBall(ctx, ball!, viewer, a.poses);
-      ballDone = true;
-    }
+  const items: DepthItem[] = [];
+  for (const r of a.rings) if (r.alpha > 0) items.push({ y: r.y, rank: RANK.ring, draw: () => drawRing(ctx, r) });
+  for (const p of PLAYERS) {
     const pose = a.poses[p];
-    drawPlayer(ctx, a.sheets[p], pose.anim, pose.view, pose.frame, feet[p]!.x, feet[p]!.y, pose.flip);
-    if (!ballDone && ball?.kind === 'held' && ball.player === p) {
-      drawBall(ctx, ball, viewer, a.poses);
-      ballDone = true;
-    }
+    const at = groundAt(f, pose.feet);
+    const draw = (): void => {
+      drawPlayer(ctx, a.sheets[p], pose.anim, pose.view, pose.frame, at.x, at.y, pose.flip);
+      if (ball?.kind === 'held' && ball.player === p) drawBall(ctx, ball, viewer, a.poses);
+    };
+    items.push({ y: at.y, rank: RANK.player, draw });
   }
-  if (!ballDone) drawBall(ctx, ball!, viewer, a.poses);
+  if (ball?.kind === 'air') items.push({ y: groundAt(f, ball.pos).y, rank: RANK.ball, draw: () => drawBall(ctx, ball, viewer, a.poses) });
+  items.sort((i, j) => i.y - j.y || i.rank - j.rank);
+  for (const item of items) item.draw();
 }
 
 /**
  * Paints the world layers (spec §4.1): stadium, court, net and the umpire's chair, then shadows (clay
- * marks, the local player's pulsing ring, player and ball shadows), the players and the ball
- * depth-sorted far to near, and the effects.
+ * marks, the local player's pulsing ring, player and ball shadows), the players, the ball and the
+ * ground rings depth-sorted far to near, and the effects.
  */
 export function drawWorld(ctx: CanvasRenderingContext2D, f: WorldFrame, a: WorldActors): void {
   const viewer = f.vm.viewer;

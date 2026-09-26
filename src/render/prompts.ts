@@ -15,7 +15,7 @@ import { drawText, textWidth } from './font';
 import { beltColor } from './hud';
 import { layoutChoice, layoutServeFar, layoutServeNear, layoutSingle, type PlateBox } from './layout';
 import { OUTLINE, PAL } from './palette';
-import { drawLeader, drawPlate, drawTierRing, drawTimingBar, type PlateDraw, type PlateStyle } from './plates';
+import { drawLeader, drawPlate, drawTimingBar, type PlateDraw, type PlateStyle } from './plates';
 import type { PlayerPose } from './players';
 import { createLayer, type Layer } from './screen';
 import { CELL, type View } from './sprites/animations';
@@ -44,7 +44,7 @@ export function headHeight(look: Look, view: View): number {
   return h;
 }
 
-/** A ground ring at screen (x, y); `alpha` 0–1. */
+/** A ground ring at screen (x, y); `alpha` 0–1. The world pass draws it, depth-sorted with the players (R33). */
 export interface RingMark { tier: Tier; x: number; y: number; alpha: number }
 /** A leader from a plate's bottom edge to its ring centre. */
 export interface LeaderMark { from: { x: number; y: number }; to: { x: number; y: number }; tier: Tier; alpha: number }
@@ -418,15 +418,12 @@ function drawTags(ctx: CanvasRenderingContext2D, tags: TagMark[]): void {
 const PLATE_FILL = PAL.night;
 
 /**
- * Draws the prompt layer: rings, leaders, plates (faded and unlocked first, locked last), the timing
- * bar, the reveal flip, the 2-frame white border pop and the tags.
+ * Draws the prompt layer over the world: leaders, plates (faded and unlocked first, locked last), the
+ * timing bar, the reveal flip, the 2-frame white border pop and the tags. The ground rings are not
+ * drawn here: `drawWorld` depth-sorts them with the players (R33).
  */
 export function drawPrompts(ctx: CanvasRenderingContext2D, s: PromptScene): void {
   ctx.save();
-  for (const r of s.rings) {
-    ctx.globalAlpha = r.alpha;
-    if (r.alpha > 0) drawTierRing(ctx, r.tier, r.x, r.y);
-  }
   for (const l of s.leaders) {
     ctx.globalAlpha = l.alpha;
     if (l.alpha > 0) drawLeader(ctx, l.from, l.to, l.tier);

@@ -16,9 +16,10 @@ import type {
 import { textWidth } from '../../src/render/font';
 import { beltColor } from '../../src/render/hud';
 import { BANDS, layoutServeNear } from '../../src/render/layout';
+import { TIER_COLOR } from '../../src/render/palette';
 import { PlayerAnimator, type PlayerPose } from '../../src/render/players';
 import { project } from '../../src/render/projection';
-import { headHeight, promptScene, type PromptScene } from '../../src/render/prompts';
+import { drawPrompts, headHeight, promptScene, type PromptScene } from '../../src/render/prompts';
 import { worldFrame } from '../../src/render/world';
 import { CHOICE, RALLY_IN, flight, opt, returnData, serveData } from '../core/turnFixtures';
 
@@ -319,5 +320,42 @@ describe('promptScene', () => {
     turnClock(t, 2700);
     const s = scene(view(matchState(t), 2700, 0, { overlay: { ...OVERLAY, wait: true, hintSpace: true } }));
     expect(s.tags.map((g) => g.kind).sort()).toEqual(['space', 'wait']);
+  });
+});
+
+/** A 2D context stand-in that records every filled rectangle with its fill style. */
+function recordingContext(): { ctx: CanvasRenderingContext2D; rects: { x: number; y: number; style: string }[] } {
+  const rects: { x: number; y: number; style: string }[] = [];
+  const state: Record<string, unknown> = {
+    fillStyle: '#000000',
+    globalAlpha: 1,
+    fillRect(x: number, y: number) {
+      rects.push({ x, y, style: String(state.fillStyle) });
+    },
+  };
+  const ctx = new Proxy(state, {
+    get: (t, key: string) => (key in t ? t[key] : () => undefined),
+    set: (t, key: string, value) => {
+      t[key] = value;
+      return true;
+    },
+  }) as unknown as CanvasRenderingContext2D;
+  return { ctx, rects };
+}
+
+describe('drawPrompts', () => {
+  const empty = (): PromptScene => ({ plates: [], rings: [], leaders: [], bar: null, flip: null, pops: [], tags: [] });
+
+  it('leaves the ground rings to the depth-sorted world pass and keeps the leaders on top (R33)', () => {
+    const ring = { tier: 'hard' as const, x: 200, y: 180, alpha: 1 };
+    const { ctx, rects } = recordingContext();
+    drawPrompts(ctx, { ...empty(), rings: [ring] });
+    expect(rects).toEqual([]);
+    const leader = { from: { x: 150, y: 150 }, to: { x: ring.x, y: ring.y }, tier: ring.tier, alpha: 1 };
+    drawPrompts(ctx, { ...empty(), rings: [ring], leaders: [leader] });
+    const ink = rects.filter((r) => r.style === TIER_COLOR.hard);
+    expect(ink.length).toBeGreaterThan(20);
+    // Every tier-coloured pixel is on the leader, none on the ring around (200, 180).
+    expect(ink.every((r) => Math.abs(r.x - ring.x) > 3 || Math.abs(r.y - ring.y) > 2)).toBe(true);
   });
 });
