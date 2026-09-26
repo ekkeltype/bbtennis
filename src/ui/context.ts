@@ -1,4 +1,5 @@
 import type { MatchState, PlayerId } from '../core/types';
+import type { Departure } from '../game/onlineLink';
 import type { Router } from './router';
 import type { Belt, Career, Profile, Settings } from './settings';
 
@@ -6,11 +7,21 @@ import type { Belt, Career, Profile, Settings } from './settings';
 export type MatchKind = 'cpu' | 'training' | 'online';
 
 /**
- * Params of the Results screen: a finished match, or how a Training session ended. `opponentLeft`
- * (online): the opponent has gone, so Rematch is disabled and an "OPPONENT LEFT" note shows.
+ * Params of the Results screen: a finished match, or how a Training session ended. Online:
+ * `opponentGone`, the opponent has gone ('left' or 'disconnect'), so Rematch is disabled and a note
+ * says "OPPONENT LEFT" / "OPPONENT DISCONNECTED"; `endedBy`, their going cut the match short, so the
+ * banner says it instead of a winner (spec §5.3).
  */
 export type ResultsParams =
-  | { kind: 'cpu' | 'online'; result: MatchState; viewer: PlayerId; newBelt: Belt | null; canRematch: boolean; opponentLeft?: boolean }
+  | {
+      kind: 'cpu' | 'online';
+      result: MatchState;
+      viewer: PlayerId;
+      newBelt: Belt | null;
+      canRematch: boolean;
+      opponentGone?: Departure;
+      endedBy?: Departure;
+    }
   | { kind: 'training'; done: boolean };
 
 /** Params of the in-match menu. */
@@ -47,7 +58,7 @@ export interface UiContext {
   resumeMatch(): void;
   /** Restarts the current local match: new seed and coin toss, same config. */
   restartMatch(): void;
-  /** Leaves the current match (not recorded) and returns to the main menu. */
+  /** Leaves the current match (one still being played is not recorded) and returns to the main menu. */
   quitMatch(): void;
   /** Online: gives the match up. */
   forfeitMatch(): void;

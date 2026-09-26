@@ -9,7 +9,7 @@ export function testable(q: URLSearchParams): boolean {
 /**
  * Dev/E2E (`?screen=`): jumps straight to screen `name` with sample data, skipping the start gate:
  * through Title and Main menu, then a match, the pause menu, Training, sample Results
- * (`&sample=training|retry|left`), Join (`&join=CODE`) or any other registered screen.
+ * (`&sample=training|retry|left|disconnect`), Join (`&join=CODE`) or any other registered screen.
  */
 export function showDevScreen(ctx: UiContext, name: string, q: URLSearchParams): void {
   const r = ctx.router;

@@ -49,10 +49,29 @@ function sampleMatch(profile: Profile): MatchState {
   return s;
 }
 
-/** Results params for the dev `?screen=results[&sample=training|retry|left]` preview (`left`: online, the opponent gone). */
+/** The sample match cut short in its third set, the way a dropped connection leaves it. */
+function sampleCutShort(profile: Profile): MatchState {
+  const s = sampleMatch(profile);
+  s.status = 'playing';
+  s.winner = null;
+  s.score.winner = null;
+  s.score.setGames = s.score.setGames.slice(0, 2);
+  s.score.setTiebreaks = s.score.setTiebreaks.slice(0, 2);
+  s.score.games = [2, 1];
+  s.score.setsWon = [1, 1];
+  return s;
+}
+
+/**
+ * Results params for the dev `?screen=results[&sample=training|retry|left|disconnect]` preview
+ * (`left`: online, the opponent gone after the match; `disconnect`: online, cut short by a drop).
+ */
 export function sampleResults(profile: Profile, sample: string | null): ResultsParams {
   if (sample === 'training') return { kind: 'training', done: true };
   if (sample === 'retry') return { kind: 'training', done: false };
-  if (sample === 'left') return { kind: 'online', result: sampleMatch(profile), viewer: 0, newBelt: null, canRematch: true, opponentLeft: true };
+  if (sample === 'left') return { kind: 'online', result: sampleMatch(profile), viewer: 0, newBelt: null, canRematch: true, opponentGone: 'left' };
+  if (sample === 'disconnect') {
+    return { kind: 'online', result: sampleCutShort(profile), viewer: 0, newBelt: null, canRematch: false, opponentGone: 'disconnect', endedBy: 'disconnect' };
+  }
   return { kind: 'cpu', result: sampleMatch(profile), viewer: 0, newBelt: 'green', canRematch: true };
 }

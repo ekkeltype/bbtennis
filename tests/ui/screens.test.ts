@@ -311,23 +311,41 @@ describe('results', () => {
     expect(b.disabled).toBe(true);
   });
 
-  it('online, the opponent gone: Rematch disabled, an OPPONENT LEFT note, Menu focused', () => {
+  it.each([
+    ['left', 'OPPONENT LEFT'],
+    ['disconnect', 'OPPONENT DISCONNECTED'],
+  ] as const)('online, played out, then the opponent gone (%s): the winner banner, Rematch disabled, a note, Menu focused', (gone, note) => {
     const ctx = fakeContext();
     router.register('results', resultsScreen(ctx));
-    router.go('results', { kind: 'online', result: finished(), viewer: 0, newBelt: null, canRematch: true, opponentLeft: true });
+    router.go('results', { kind: 'online', result: finished(), viewer: 0, newBelt: null, canRematch: true, opponentGone: gone });
+    expect(root.querySelector('.panel-title')?.textContent).toBe('YOU WIN!');
     const rematch = [...root.querySelectorAll<HTMLButtonElement>('button.btn')].find((b) => b.textContent === 'REMATCH')!;
     expect(rematch.disabled).toBe(true);
-    expect(root.querySelector('.opponent-left')?.textContent).toBe('OPPONENT LEFT');
+    expect(root.querySelector('.opponent-gone')?.textContent).toBe(note);
     expect(focused()).toBe('MENU');
     rematch.click();
     expect(ctx.rematch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['disconnect', 'OPPONENT DISCONNECTED'],
+    ['left', 'OPPONENT LEFT'],
+  ] as const)('online, cut short by the opponent going (%s): the banner says so instead of a winner, no note, Menu alone', (gone, banner) => {
+    const ctx = fakeContext();
+    router.register('results', resultsScreen(ctx));
+    const unfinished: MatchState = { ...finished(), status: 'playing', winner: null };
+    router.go('results', { kind: 'online', result: unfinished, viewer: 0, newBelt: null, canRematch: false, opponentGone: gone, endedBy: gone });
+    expect(root.querySelector('.panel-title')?.textContent).toBe(banner);
+    expect(root.querySelector('.opponent-gone')).toBeNull();
+    expect(labels()).toEqual(['MENU']);
+    expect(focused()).toBe('MENU');
   });
 
   it('online with the opponent still there: no note', () => {
     const ctx = fakeContext();
     router.register('results', resultsScreen(ctx));
     router.go('results', { kind: 'online', result: finished(), viewer: 0, newBelt: null, canRematch: true });
-    expect(root.querySelector('.opponent-left')).toBeNull();
+    expect(root.querySelector('.opponent-gone')).toBeNull();
   });
 
   it('no Rematch when the match cannot be replayed, and no belt line without a new belt', () => {

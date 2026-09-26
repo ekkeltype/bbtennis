@@ -1,7 +1,7 @@
 import type { KeyClass } from '../../core/typing';
 import type { MatchState, ViewModel } from '../../core/types';
 import { RealScheduler, type Scheduler } from '../../game/clock';
-import type { Departure, Ticker } from '../../game/onlineLink';
+import type { Departure, EndReason, Ticker } from '../../game/onlineLink';
 import type { Session } from '../../game/session';
 import { hostGame, joinGame, type HostHandle, type PeerEnv } from '../../net/peer';
 import type { Transport } from '../../net/transport';
@@ -12,11 +12,18 @@ import { joinScreen } from './join';
 import { hostLobbyScreen } from './lobby';
 
 /**
- * What an online match hands the app besides its session: how to forfeit, and how to ask for a
- * rematch. `rematch` is there only while a rematch can still happen: it reads undefined once the
- * opponent has left or the connection is lost.
+ * What an online match hands the app besides its session: how to forfeit, how to ask for a rematch,
+ * and how the match and the opponent are doing. `rematch` is there only while a rematch can still
+ * happen: it reads undefined once the opponent has left or the connection is lost.
  */
-export interface OnlineControls { forfeit(): void; rematch?(): void }
+export interface OnlineControls {
+  forfeit(): void;
+  rematch?(): void;
+  /** Why the match ended, or null while it is played. */
+  readonly endReason: EndReason | null;
+  /** How the opponent went away, or null while connected. */
+  readonly opponentGone: Departure | null;
+}
 
 /** What the online screens need from the app. */
 export interface OnlineDeps {
@@ -54,6 +61,7 @@ export interface OnlineSession extends Session {
   forfeit(): void;
   rematch(): void;
   leave(): void;
+  readonly endReason: EndReason | null;
   readonly opponentGone: Departure | null;
 }
 
@@ -164,6 +172,12 @@ export function registerOnlineScreens(router: Router, deps: OnlineDeps, env: Onl
       forfeit: () => session.forfeit(),
       get rematch() {
         return session.opponentGone === null ? () => session.rematch() : undefined;
+      },
+      get endReason() {
+        return session.endReason;
+      },
+      get opponentGone() {
+        return session.opponentGone;
       },
     };
     deps.startMatch(new OnlineMatch(session, release), controls);

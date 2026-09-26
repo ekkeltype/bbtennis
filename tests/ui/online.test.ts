@@ -745,6 +745,16 @@ describe('online match hand-off', () => {
     expect(e.defaultPrevented).toBe(false);
   });
 
+  it('the controls say why the match ended and how the opponent went: a guest leaving mid-match ends it as left', async () => {
+    const { host, guest } = await match();
+    run(host.session, guest.session, 500);
+    expect([host.controls.endReason, host.controls.opponentGone]).toEqual([null, null]);
+    guest.session.dispose();
+    run(host.session, guest.session, 100);
+    expect(host.session.over).toBe(true);
+    expect([host.controls.endReason, host.controls.opponentGone]).toEqual(['left', 'left']);
+  });
+
   it('the controls forfeit the match, and offer a rematch only while the opponent is there', async () => {
     const { host, guest } = await match();
     run(host.session, guest.session, 500);
@@ -758,5 +768,6 @@ describe('online match hand-off', () => {
     run(host.session, guest.session, 100);
     expect(host.controls.rematch).toBeUndefined();
     expect(guest.controls.rematch).toBeTypeOf('function');
+    expect([host.controls.endReason, host.controls.opponentGone]).toEqual(['forfeit', 'left']);
   });
 });

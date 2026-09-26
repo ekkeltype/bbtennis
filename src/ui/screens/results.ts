@@ -1,4 +1,5 @@
 import { setLine } from '../../core/scoring';
+import type { Departure } from '../../game/onlineLink';
 import { BELT_COLOR, RAMPS } from '../../render/palette';
 import { button, panel, swatch } from '../controls';
 import type { ResultsParams, UiContext } from '../context';
@@ -7,6 +8,9 @@ import type { ScreenFactory } from '../router';
 import { headline, setScores, statRows } from '../summary';
 
 type MatchResults = Extract<ResultsParams, { kind: 'cpu' | 'online' }>;
+
+/** What Results say of an opponent who has gone (spec §5.3). */
+const GONE: Readonly<Record<Departure, string>> = { left: 'OPPONENT LEFT', disconnect: 'OPPONENT DISCONNECTED' };
 
 /**
  * The score line, as the scoreboard shows it: one row per player with the games of each set (or the
@@ -47,8 +51,8 @@ function statTable(p: MatchResults): HTMLElement {
   );
 }
 
-/** Rematch: vs CPU starts at once; online asks the opponent and waits, and is disabled once the opponent has left (spec §5.3). */
-function rematchButton(ctx: UiContext, p: MatchResults, opponentLeft: boolean): HTMLButtonElement {
+/** Rematch: vs CPU starts at once; online asks the opponent and waits, and is disabled once the opponent has gone (spec §5.3). */
+function rematchButton(ctx: UiContext, p: MatchResults, opponentGone: boolean): HTMLButtonElement {
   const b = button(
     'REMATCH',
     () => {
@@ -59,28 +63,29 @@ function rematchButton(ctx: UiContext, p: MatchResults, opponentLeft: boolean): 
     },
     'primary',
   );
-  b.disabled = opponentLeft;
+  b.disabled = opponentGone;
   return b;
 }
 
 function matchResults(ctx: UiContext, p: MatchResults): HTMLElement {
   const won = p.result.winner === p.viewer;
   const belt = p.newBelt;
-  const left = p.kind === 'online' && p.opponentLeft === true;
+  const gone = p.kind === 'online' ? (p.opponentGone ?? null) : null;
+  const endedBy = p.kind === 'online' ? (p.endedBy ?? null) : null;
   return panel(
-    headline(p.result, p.viewer),
+    endedBy !== null ? GONE[endedBy] : headline(p.result, p.viewer),
     `results ${won ? 'win' : 'loss'}`,
     scoreTable(p),
     statTable(p),
     belt === null
       ? null
       : h('p', { class: 'belt-earned' }, swatch(RAMPS.cloth[BELT_COLOR[belt]]), `NEW BELT EARNED: ${belt.toUpperCase()}!`),
-    left ? h('p', { class: 'note opponent-left' }, 'OPPONENT LEFT') : null,
+    gone !== null && gone !== endedBy ? h('p', { class: 'note opponent-gone' }, GONE[gone]) : null,
     h(
       'div',
       { class: 'actions' },
-      p.canRematch ? rematchButton(ctx, p, left) : null,
-      button('MENU', () => ctx.quitMatch(), p.canRematch && !left ? '' : 'primary'),
+      p.canRematch ? rematchButton(ctx, p, gone !== null) : null,
+      button('MENU', () => ctx.quitMatch(), p.canRematch && gone === null ? '' : 'primary'),
     ),
   );
 }
@@ -117,8 +122,9 @@ function trainingResults(ctx: UiContext, done: boolean): HTMLElement {
 
 /**
  * Results (spec §4.6): winner banner, score line, stat table, belt earned, Rematch / Menu (online:
- * Rematch disabled with an "OPPONENT LEFT" note once the opponent has gone); or the Training panel.
- * Esc goes to the menu.
+ * Rematch disabled with an "OPPONENT LEFT" / "OPPONENT DISCONNECTED" note once the opponent has gone,
+ * or that as the banner when their going cut the match short); or the Training panel. Esc goes to
+ * the menu.
  */
 export function resultsScreen(ctx: UiContext): ScreenFactory {
   return (params) => {

@@ -929,6 +929,7 @@ body {
 #ui .results .panel-title {
   align-self: center;
   font-size: calc(16 * var(--u));
+  text-align: center;
 }
 
 #ui .results.win .panel-title {
@@ -1040,7 +1041,7 @@ body {
   color: var(--mist);
 }
 
-#ui .results .opponent-left {
+#ui .results .opponent-gone {
   text-align: center;
   color: var(--yellow);
 }

@@ -16,7 +16,17 @@ import type { ResultsParams, UiContext } from './ui/context';
 import { showDevScreen, testable } from './ui/devScreen';
 import { blurActive } from './ui/dom';
 import { localKeyResults } from './ui/keySounds';
-import { hintsOn, mayPause, PLAY_SCREENS, resultsAfterLeave, trainingEnd, type Match } from './ui/matchLifecycle';
+import {
+  decided,
+  hintsOn,
+  mayPause,
+  onlineEnd,
+  PLAY_SCREENS,
+  recordWhenDecided,
+  resultsAfterLeave,
+  trainingEnd,
+  type Match,
+} from './ui/matchLifecycle';
 import { Overlay } from './ui/overlay';
 import { PlayerStore } from './ui/playerStore';
 import { cpuPlayer, humanPlayer } from './ui/players';
@@ -49,7 +59,7 @@ export interface AppElements { root: HTMLElement; canvas: HTMLCanvasElement; ui:
  */
 export class App implements UiContext {
   readonly router: Router;
-  private readonly store = new PlayerStore();
+  private readonly store = new PlayerStore(() => this.storageNotice());
   private readonly root: HTMLElement;
   private readonly overlay: Overlay;
   private readonly screen: Screen;
@@ -65,6 +75,7 @@ export class App implements UiContext {
   private gateOpen = false;
   private blurred = false;
   private readyIn: number | null = null;
+  private storageNoticeShown = false;
 
   constructor(el: AppElements) {
     this.root = el.root;
@@ -119,7 +130,7 @@ export class App implements UiContext {
     const screen = testable(q) ? q.get('screen') : null;
     if (screen === null) this.router.go('gate');
     else showDevScreen(this, screen, q);
-    if (!storageOk()) this.overlay.notice(NOTICE_STORAGE);
+    if (!storageOk()) this.storageNotice();
     if (testable(q)) this.readyIn = SHOT_READY_FRAMES;
   }
 
@@ -160,7 +171,9 @@ export class App implements UiContext {
     this.umpire.enabled = this.settings.umpireVoice;
     this.router.go('title');
     const code = new URLSearchParams(location.search).get('join');
-    if (code !== null) this.router.go('join', { code });
+    if (code === null) return;
+    this.router.go('mainMenu');
+    this.router.go('join', { code });
   }
 
   startCpuMatch(): void {
@@ -242,13 +255,20 @@ export class App implements UiContext {
   /** Starts showing a match (replacing any other) on its play screen. */
   private begin(m: Pick<Match, 'kind' | 'session'> & Partial<Match>): void {
     this.endMatch();
-    this.match = { make: null, level: null, controls: null, ...m, sinceDoneMs: null, results: null, frozen: false };
+    this.match = { make: null, level: null, controls: null, ...m, sinceDoneMs: null, results: null, frozen: false, recorded: null };
     this.router.go(m.kind === 'training' ? 'training' : 'match');
   }
 
   /** Online screens hand their started session over here. */
   private startOnline(session: Session, controls: OnlineControls): void {
     this.begin({ kind: 'online', session, controls });
+  }
+
+  /** Says once per visit that progress can't be saved: at boot (the storage probe), or at the first save that fails. */
+  private storageNotice(): void {
+    if (this.storageNoticeShown) return;
+    this.storageNoticeShown = true;
+    this.overlay.notice(NOTICE_STORAGE);
   }
 
   private endMatch(): void {
@@ -259,15 +279,16 @@ export class App implements UiContext {
   /** Opens the in-match menu (pausing a local match) when `mayPause` allows it; `auto`: blur, hidden tab or fullscreen exit. */
   private openMenu(auto: boolean): void {
     const m = this.match;
-    if (!m || !mayPause({ kind: m.kind, finished: m.results !== null, over: m.session.over }, this.router.current, auto)) return;
+    if (!m || !mayPause({ kind: m.kind, finished: m.results !== null, over: decided(m.session) }, this.router.current, auto)) return;
     m.session.pause();
     this.router.go('pause', { kind: m.kind });
   }
 
   /**
    * Moves on to Results once the match is over (Training: once its lessons are done, or it ended
-   * without them). Online Results go back to the match when a rematch starts, and show again with
-   * Rematch disabled once the opponent has left.
+   * without them); a vs-CPU match is in the career from the frame it is decided. Online Results say
+   * at once when the opponent's going ended the match, go back to the match when a rematch starts,
+   * and show again with Rematch disabled once the opponent goes after the match.
    */
   private checkEnd(m: Match, vm: ViewModel, dt: number): void {
     if (m.results !== null) {
@@ -277,17 +298,19 @@ export class App implements UiContext {
         this.router.go('match');
         return;
       }
-      const again = resultsAfterLeave(m.results, m.controls?.rematch !== undefined);
+      const again = resultsAfterLeave(m.results, m.controls?.opponentGone ?? null);
       if (again !== null) this.finish(m, again, false);
       return;
     }
     if (m.kind === 'training') return this.checkTraining(m, vm, dt);
+    recordWhenDecided(m, vm.pub, (level, r) => this.store.recordCpuMatch(level, r));
     const result = m.session.over ? m.session.result : null;
     if (result === null) return;
     const viewer = m.session.view?.viewer === 1 ? 1 : 0;
-    const newBelt = m.kind === 'cpu' ? this.store.recordCpuMatch(m.level ?? 0, result) : null;
+    const newBelt = m.recorded?.newBelt ?? null;
     const canRematch = m.make !== null || m.controls?.rematch !== undefined;
-    this.finish(m, { kind: m.kind, result, viewer, newBelt, canRematch }, false);
+    const online = m.kind === 'online' && m.controls !== null ? onlineEnd(m.controls) : {};
+    this.finish(m, { kind: m.kind, result, viewer, newBelt, canRematch, ...online }, false);
   }
 
   /** Training's end: `trainingDone` is stored as the last lesson is done; Results follow (see `trainingEnd`). */

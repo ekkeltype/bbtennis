@@ -1,21 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CPU_LEVELS } from '../../src/core/cpu';
 import { Engine } from '../../src/core/engine';
-import type { MatchState, PlayerId } from '../../src/core/types';
+import { TUNING } from '../../src/core/tuning';
+import type { MatchState, PlayerId, ViewModel } from '../../src/core/types';
+import { VirtualScheduler } from '../../src/game/clock';
+import { LocalSession } from '../../src/game/localSession';
+import type { Session } from '../../src/game/session';
 import { BELT_COLOR } from '../../src/render/palette';
-import type { ResultsParams } from '../../src/ui/context';
+import type { MatchKind, ResultsParams } from '../../src/ui/context';
 import {
   FIRST_MATCHES_WITH_HINTS,
   TRAINING_END_MS,
+  decided,
   hintsOn,
   mayPause,
+  onlineEnd,
   recordCpuMatch,
+  recordWhenDecided,
   resultsAfterLeave,
   trainingEnd,
   type CareerState,
+  type Match,
   type TrainingFrame,
 } from '../../src/ui/matchLifecycle';
-import { DEFAULT_CAREER, DEFAULT_PROFILE, type Career } from '../../src/ui/settings';
+import { attractPlayers } from '../../src/ui/players';
+import { DEFAULT_CAREER, DEFAULT_PROFILE, type Belt, type Career } from '../../src/ui/settings';
 
 const WHITE = CPU_LEVELS.findIndex((l) => l.belt === 'white' && l.stripes === 0);
 const WHITE_STRIPE = CPU_LEVELS.findIndex((l) => l.belt === 'white' && l.stripes === 1);
@@ -74,6 +83,113 @@ describe('mayPause (in-match menu gating)', () => {
     expect(mayPause({ ...playing, kind: 'training' }, 'training', true)).toBe(true);
     expect(mayPause({ ...playing, kind: 'online' }, 'match', true)).toBe(false);
   });
+});
+
+/** A CPU-vs-CPU tiebreak on a virtual clock, played frame by frame up to the frame whose state says it is over. */
+function playedToTheEnd(): { clock: VirtualScheduler; session: LocalSession } {
+  const clock = new VirtualScheduler();
+  const session = new LocalSession({
+    config: { format: 'tiebreak', pace: 'normal', surface: 'hard', wordPack: 'everyday', deuceRule: 'advantage', training: null },
+    players: attractPlayers(() => 0.5),
+    seed: 11,
+    human: null,
+    scheduler: clock,
+  });
+  let vm = session.frame(0);
+  for (let i = 0; i < 20_000 && vm.pub.status !== 'over'; i++) {
+    clock.advance(250);
+    vm = session.frame(250);
+  }
+  return { clock, session };
+}
+
+describe('decided (the MATCH_OVER celebration counts as a finished match)', () => {
+  it('is false before the first frame and while the match is played', () => {
+    const view = (status: 'playing' | 'over'): ViewModel => ({ pub: { status } }) as unknown as ViewModel;
+    expect(decided({ over: false, view: null })).toBe(false);
+    expect(decided({ over: false, view: view('playing') })).toBe(false);
+    expect(decided({ over: false, view: view('over') })).toBe(true);
+    expect(decided({ over: true, view: view('over') })).toBe(true);
+  });
+
+  it('from the frame the final point is decided, through the celebration: no in-match menu (its Quit or Restart would drop the match)', () => {
+    const { clock, session } = playedToTheEnd();
+    expect(session.view?.pub.status).toBe('over');
+    expect(session.over).toBe(false);
+    expect(decided(session)).toBe(true);
+    for (const auto of [false, true]) {
+      expect(mayPause({ kind: 'cpu', finished: false, over: decided(session) }, 'match', auto)).toBe(false);
+      expect(mayPause({ kind: 'cpu', finished: false, over: session.over }, 'match', auto)).toBe(true);
+    }
+    let celebrating = 0;
+    while (!session.over && celebrating < 10_000) {
+      expect(decided(session)).toBe(true);
+      clock.advance(250);
+      session.frame(250);
+      celebrating += 250;
+    }
+    expect(session.over).toBe(true);
+    expect(celebrating).toBeGreaterThanOrEqual(TUNING.leadIn.matchOverMs - 250);
+    expect(decided(session)).toBe(true);
+  }, 60_000);
+});
+
+describe('recordWhenDecided (vs CPU: the career is written as the final point is decided)', () => {
+  const LEVEL = 4;
+  const match = (kind: MatchKind): Match => ({
+    kind,
+    session: {} as Session,
+    make: null,
+    level: kind === 'cpu' ? LEVEL : null,
+    controls: null,
+    sinceDoneMs: null,
+    results: null,
+    frozen: false,
+    recorded: null,
+  });
+  const playing = (): MatchState => ({ ...finished(0), status: 'playing', winner: null });
+
+  it('records a decided vs-CPU match exactly once, at its level with its final state, and keeps the earned belt for Results', () => {
+    const record = vi.fn((_level: number, _r: MatchState): Belt | null => 'white');
+    const m = match('cpu');
+    recordWhenDecided(m, playing(), record);
+    expect(record).not.toHaveBeenCalled();
+    expect(m.recorded).toBeNull();
+    const end = finished(0);
+    for (let i = 0; i < 5; i++) recordWhenDecided(m, end, record);
+    expect(record).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledWith(LEVEL, end);
+    expect(m.recorded).toEqual({ newBelt: 'white' });
+  });
+
+  it('a match that earned no belt is recorded once too', () => {
+    const record = vi.fn((): Belt | null => null);
+    const m = match('cpu');
+    recordWhenDecided(m, finished(1), record);
+    recordWhenDecided(m, finished(1), record);
+    expect(record).toHaveBeenCalledOnce();
+    expect(m.recorded).toEqual({ newBelt: null });
+  });
+
+  it('never records Training or online matches', () => {
+    const record = vi.fn((): Belt | null => null);
+    for (const kind of ['training', 'online'] as const) {
+      const m = match(kind);
+      recordWhenDecided(m, finished(0), record);
+      expect(m.recorded).toBeNull();
+    }
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('records a real match on the frame its state says over, 3 s before session.over hands its result to Results', () => {
+    const { session } = playedToTheEnd();
+    const record = vi.fn((): Belt | null => null);
+    const m = { ...match('cpu'), session };
+    recordWhenDecided(m, session.view!.pub, record);
+    expect(session.over).toBe(false);
+    expect(record).toHaveBeenCalledOnce();
+    expect(record.mock.calls[0]).toEqual([LEVEL, session.view!.pub]);
+  }, 60_000);
 });
 
 describe('trainingEnd (Training complete vs Try again)', () => {
@@ -160,7 +276,29 @@ describe('recordCpuMatch (career, matches played, headband default)', () => {
   });
 });
 
-describe('resultsAfterLeave (online Results once the opponent has left)', () => {
+describe('onlineEnd (what online Results say about the opponent)', () => {
+  it('says nothing while the opponent is there (played out or forfeited)', () => {
+    expect(onlineEnd({ endReason: 'finished', opponentGone: null })).toEqual({});
+    expect(onlineEnd({ endReason: 'forfeit', opponentGone: null })).toEqual({});
+  });
+
+  it('a match cut short by the opponent disconnecting or leaving ends by it: the banner says so at once (spec §5.3)', () => {
+    expect(onlineEnd({ endReason: 'disconnect', opponentGone: 'disconnect' })).toEqual({ opponentGone: 'disconnect', endedBy: 'disconnect' });
+    expect(onlineEnd({ endReason: 'left', opponentGone: 'left' })).toEqual({ opponentGone: 'left', endedBy: 'left' });
+  });
+
+  it('an opponent gone after the match ended only disables Rematch (with a note)', () => {
+    expect(onlineEnd({ endReason: 'finished', opponentGone: 'disconnect' })).toEqual({ opponentGone: 'disconnect' });
+    expect(onlineEnd({ endReason: 'forfeit', opponentGone: 'left' })).toEqual({ opponentGone: 'left' });
+  });
+
+  it('a match this side left first is not blamed on the opponent', () => {
+    expect(onlineEnd({ endReason: 'left', opponentGone: null })).toEqual({});
+    expect(onlineEnd({ endReason: 'left', opponentGone: 'disconnect' })).toEqual({ opponentGone: 'disconnect' });
+  });
+});
+
+describe('resultsAfterLeave (online Results once the opponent has gone)', () => {
   const online = (over: Partial<Extract<ResultsParams, { kind: 'cpu' | 'online' }>> = {}): ResultsParams => ({
     kind: 'online',
     result: finished(0),
@@ -170,23 +308,24 @@ describe('resultsAfterLeave (online Results once the opponent has left)', () => 
     ...over,
   });
 
-  it('stays as it is while a rematch can still happen', () => {
-    expect(resultsAfterLeave(online(), true)).toBeNull();
+  it('stays as it is while the opponent is there', () => {
+    expect(resultsAfterLeave(online(), null)).toBeNull();
   });
 
-  it('shows the Results again with the opponent gone (Rematch disabled, OPPONENT LEFT) once the rematch is off', () => {
+  it('shows the Results again with the opponent gone (Rematch disabled, a note saying how)', () => {
     const shown = online();
-    expect(resultsAfterLeave(shown, false)).toEqual({ ...shown, opponentLeft: true });
+    expect(resultsAfterLeave(shown, 'left')).toEqual({ ...shown, opponentGone: 'left' });
     const noRematch = online({ canRematch: false });
-    expect(resultsAfterLeave(noRematch, false)).toEqual({ ...noRematch, opponentLeft: true });
+    expect(resultsAfterLeave(noRematch, 'disconnect')).toEqual({ ...noRematch, opponentGone: 'disconnect' });
   });
 
-  it('only once: Results that already say so stay', () => {
-    expect(resultsAfterLeave(online({ opponentLeft: true }), false)).toBeNull();
+  it('only once: Results that already say the opponent has gone stay (a match cut short by it is shown right the first time)', () => {
+    expect(resultsAfterLeave(online({ opponentGone: 'left' }), 'left')).toBeNull();
+    expect(resultsAfterLeave(online({ opponentGone: 'disconnect', endedBy: 'disconnect' }), 'disconnect')).toBeNull();
   });
 
   it('leaves vs-CPU and Training results alone', () => {
-    expect(resultsAfterLeave({ kind: 'cpu', result: finished(0), viewer: 0, newBelt: null, canRematch: true }, false)).toBeNull();
-    expect(resultsAfterLeave({ kind: 'training', done: true }, false)).toBeNull();
+    expect(resultsAfterLeave({ kind: 'cpu', result: finished(0), viewer: 0, newBelt: null, canRematch: true }, 'left')).toBeNull();
+    expect(resultsAfterLeave({ kind: 'training', done: true }, 'left')).toBeNull();
   });
 });

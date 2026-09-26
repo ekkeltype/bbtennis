@@ -1,5 +1,6 @@
 import { averageWpm } from '../core/engine';
 import type { MatchState } from '../core/types';
+import type { Departure, EndReason } from '../game/onlineLink';
 import type { Session } from '../game/session';
 import { BELT_COLOR } from '../render/palette';
 import type { MatchKind, ResultsParams } from './context';
@@ -28,6 +29,8 @@ export interface Match {
   results: ResultsParams | null;
   /** The session is no longer advanced or drawn (a Training session left running when complete). */
   frozen: boolean;
+  /** vs CPU: the match is in the career (recorded once, as it was decided), with the belt it earned; null before. */
+  recorded: { newBelt: Belt | null } | null;
 }
 
 /** True while a player with `matchesPlayed` vs-CPU matches behind them still gets the hints. */
@@ -36,9 +39,18 @@ export function hintsOn(matchesPlayed: number): boolean {
 }
 
 /**
- * True when the in-match menu may open over `m` now: a match still being played (not finished or
- * over) on its play screen `screen`. An `auto` pause (window blur, hidden tab, leaving fullscreen)
- * is for local matches only: online play never pauses.
+ * True once the match's result is known: its latest frame's state says it is over, from the frame
+ * its final point is decided, through the MATCH_OVER celebration (after which `over` is true too).
+ */
+export function decided(session: Pick<Session, 'over' | 'view'>): boolean {
+  return session.over || session.view?.pub.status === 'over';
+}
+
+/**
+ * True when the in-match menu may open over `m` now: a match still being played (not finished, and
+ * not `over`: pass `decided`, so no menu opens over the MATCH_OVER celebration, whose Quit or Restart
+ * would drop a finished match) on its play screen `screen`. An `auto` pause (window blur, hidden tab,
+ * leaving fullscreen) is for local matches only: online play never pauses.
  */
 export function mayPause(m: { kind: MatchKind; finished: boolean; over: boolean }, screen: string, auto: boolean): boolean {
   if (m.finished || m.over || !PLAY_SCREENS.has(screen)) return false;
@@ -82,6 +94,17 @@ export interface CareerState {
   headbandChosen: boolean;
 }
 
+/**
+ * vs CPU: puts the match into the career through `record` (see PlayerStore.recordCpuMatch) the first
+ * time its state `pub` says it is over, the frame its final point is decided, not 3 s later when the
+ * celebration has played and Results show: whatever the player does meanwhile (a menu opened in the
+ * same frame, a closed tab) keeps the result. Once per match; the earned belt waits in `m.recorded`.
+ */
+export function recordWhenDecided(m: Match, pub: MatchState, record: (level: number, result: MatchState) => Belt | null): void {
+  if (m.kind !== 'cpu' || m.recorded !== null || pub.status !== 'over') return;
+  m.recorded = { newBelt: record(m.level ?? 0, pub) };
+}
+
 /** A finished vs-CPU match's effect on the player's progress, plus the belt it earned (or null). */
 export interface CpuMatchRecord { career: Career; matchesPlayed: number; headband: number | null; newBelt: Belt | null }
 
@@ -102,12 +125,27 @@ export function recordCpuMatch(s: CareerState, level: number, result: MatchState
   };
 }
 
+/** Online Results' word on the opponent (see ResultsParams). */
+export interface OnlineEnd { opponentGone?: Departure; endedBy?: Departure }
+
 /**
- * Online Results already showing (`shown`) once the rematch is no longer open (the opponent has left
- * or dropped): the params to show them again with, Rematch disabled and "OPPONENT LEFT"; null when
- * they stay as they are (a rematch is still open, they already say so, or not an online match).
+ * What an online match's Results say about the opponent, from the session's `endReason` and
+ * `opponentGone`: nothing while they are there; `opponentGone` once they have left or dropped; and
+ * `endedBy` too when that is what ended the match (not a match this side left first), so the first
+ * Results already read "OPPONENT DISCONNECTED" or "OPPONENT LEFT" (spec §5.3).
  */
-export function resultsAfterLeave(shown: ResultsParams, rematchOpen: boolean): ResultsParams | null {
-  if (shown.kind !== 'online' || rematchOpen || shown.opponentLeft === true) return null;
-  return { ...shown, opponentLeft: true };
+export function onlineEnd(c: { endReason: EndReason | null; opponentGone: Departure | null }): OnlineEnd {
+  const gone = c.opponentGone;
+  if (gone === null) return {};
+  return c.endReason === gone ? { opponentGone: gone, endedBy: gone } : { opponentGone: gone };
+}
+
+/**
+ * Online Results already showing (`shown`) once the opponent has gone (`gone`: left or dropped after
+ * the match ended): the params to show them again with, Rematch disabled and a note saying how; null
+ * when they stay as they are (the opponent is there, they already say so, or not an online match).
+ */
+export function resultsAfterLeave(shown: ResultsParams, gone: Departure | null): ResultsParams | null {
+  if (shown.kind !== 'online' || gone === null || shown.opponentGone !== undefined) return null;
+  return { ...shown, opponentGone: gone };
 }
