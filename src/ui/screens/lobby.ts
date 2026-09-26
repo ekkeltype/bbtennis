@@ -16,6 +16,8 @@ import type { OnlineContext, OnlineEnv } from './online';
 
 /** How often a lobby screen refreshes the round trip it shows. */
 export const PING_REFRESH_MS = 500;
+/** A connected guest that has not said hello this long is closed (the join screen waits as long for its answer). */
+const HELLO_DEADLINE_MS = 10_000;
 
 type HelloMsg = Extract<NetMsg, { type: 'hello' }>;
 
@@ -145,16 +147,19 @@ function execCopy(text: string): boolean {
 }
 
 /**
- * Copies `text` to the clipboard (spec §8): with the Clipboard API; without it, from a hidden
- * textarea with execCommand('copy') inside the same click; when the API refuses, execCommand still.
- * Resolves false when nothing worked (the caller then selects the text for Ctrl+C).
+ * Copies `text` to the clipboard (spec §8). Without the Clipboard API: from a hidden textarea with
+ * execCommand('copy'), inside the click. In a framed page (itch.io), which may allow execCommand only
+ * synchronously inside the click, that goes first and the API follows if it refuses. Elsewhere the API
+ * goes first, and execCommand follows if it refuses. Resolves false when nothing worked (the caller
+ * then selects the text for Ctrl+C).
  */
-function copyText(text: string): Promise<boolean> {
+function copyText(text: string, framed: boolean): Promise<boolean> {
   const api = navigator.clipboard as Clipboard | undefined;
   if (typeof api?.writeText !== 'function') return Promise.resolve(execCopy(text));
+  if (framed && execCopy(text)) return Promise.resolve(true);
   return api.writeText(text).then(
     () => true,
-    () => execCopy(text),
+    () => !framed && execCopy(text),
   );
 }
 
@@ -194,7 +199,8 @@ export interface HostLobbyOptions {
  * config; each change clears both Ready flags, and every change of config or Ready reaches the guest
  * as `lobby{config, ready}`. Once both are ready the guest's transport goes to a new HostSession,
  * which sends `start` itself; the lobby hears nothing more from it. The code stays registered during
- * the match, turning later guests away, until `release`.
+ * the match, turning later guests away, until `release`. A connection that goes away before its
+ * hello, or says none within 10 s, is closed.
  */
 export class HostLobby {
   phase: HostPhase = 'opening';
@@ -211,8 +217,8 @@ export class HostLobby {
   private handle: HostHandle | null = null;
   /** The admitted guest's link. */
   private link: LobbyLink | null = null;
-  /** Guests that have not said hello yet. */
-  private readonly pending = new Set<LobbyLink>();
+  /** Guests that have not said hello yet, each with what cancels its hello deadline. */
+  private readonly pending = new Map<LobbyLink, () => void>();
 
   constructor(private readonly o: HostLobbyOptions) {
     this.config = { ...o.config };
@@ -277,27 +283,41 @@ export class HostLobby {
 
   private close(): void {
     this.abort?.abort();
-    for (const l of this.pending) l.close();
-    this.pending.clear();
+    for (const l of [...this.pending.keys()]) this.dropPending(l);
     this.link?.close();
     this.link = null;
     this.handle?.close();
     this.handle = null;
   }
 
-  /** A guest's connection is open: it has a lobby link until its hello is answered. */
+  /** A guest's connection is open: it has a lobby link, pending until its hello (due within 10 s) is answered. */
   private admit(t: Transport): void {
-    const link: LobbyLink = new LobbyLink(t, this.o.env.scheduler, {
+    const scheduler = this.o.env.scheduler;
+    const link: LobbyLink = new LobbyLink(t, scheduler, {
       message: (m) => this.onMessage(link, m),
       gone: () => this.onGone(link),
     });
-    this.pending.add(link);
+    this.pending.set(link, scheduler.after(HELLO_DEADLINE_MS, () => this.dropPending(link)));
     link.open();
+  }
+
+  /** Takes `link` off the pending guests, cancelling its hello deadline; false when it was not pending. */
+  private takePending(link: LobbyLink): boolean {
+    const cancel = this.pending.get(link);
+    if (cancel === undefined) return false;
+    cancel();
+    this.pending.delete(link);
+    return true;
+  }
+
+  /** A pending guest is let go (no hello in time, gone, or the lobby closes): its link closes, which stops its heartbeat. */
+  private dropPending(link: LobbyLink): void {
+    if (this.takePending(link)) link.close();
   }
 
   private onMessage(link: LobbyLink, m: NetMsg): void {
     if (m.type === 'hello') {
-      if (this.pending.delete(link)) this.hello(link, m);
+      if (this.takePending(link)) this.hello(link, m);
       return;
     }
     if (link !== this.link || this.phase !== 'joined' || m.type !== 'ready') return;
@@ -323,9 +343,9 @@ export class HostLobby {
     this.o.onChange();
   }
 
-  /** A guest went away: a pending one is forgotten; the admitted one frees the lobby for the next. */
+  /** A guest went away: a pending one is closed; the admitted one frees the lobby for the next. */
   private onGone(link: LobbyLink): void {
-    this.pending.delete(link);
+    this.dropPending(link);
     if (link !== this.link || this.phase !== 'joined') return;
     link.close();
     this.link = null;
@@ -381,7 +401,7 @@ export function hostLobbyScreen(ctx: OnlineContext): ScreenFactory {
     const link = h('span', { class: 'invite-url selectable', hidden: true });
     const note = h('p', { class: 'copy-note' });
     const copy = (text: string, el: HTMLElement, done: string): void => {
-      void copyText(text).then((ok) => {
+      void copyText(text, env.framed).then((ok) => {
         link.hidden = ok || el !== link;
         if (ok) {
           note.textContent = done;

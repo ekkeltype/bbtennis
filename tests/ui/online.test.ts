@@ -122,6 +122,33 @@ function collect(t: Transport): NetMsg[] {
 
 const hello = (p: Profile, proto = PROTO): NetMsg => ({ type: 'hello', proto, app: APP_ID, name: p.name, look: p.look });
 
+/** Counts `sch`'s timers from now on that may still run: a repeating one until cancelled, a one-shot one until it runs or is cancelled. */
+function liveTimers(sch: VirtualScheduler): () => number {
+  let live = 0;
+  const track =
+    (add: (ms: number, fn: () => void) => () => void, once: boolean) =>
+    (ms: number, fn: () => void): (() => void) => {
+      live++;
+      let on = true;
+      const off = (): void => {
+        if (on) live--;
+        on = false;
+      };
+      const cancel = add(ms, () => {
+        if (once) off();
+        fn();
+      });
+      return () => {
+        off();
+        cancel();
+      };
+    };
+  const [every, after] = [track(sch.every.bind(sch), false), track(sch.after.bind(sch), true)];
+  vi.spyOn(sch, 'every').mockImplementation(every);
+  vi.spyOn(sch, 'after').mockImplementation(after);
+  return () => live;
+}
+
 beforeEach(() => {
   // jsdom has no 2D canvas; the look previews simply stay blank.
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
@@ -225,6 +252,31 @@ describe('host lobby: the code', () => {
     expect(exec).toHaveBeenCalledWith('copy');
     expect(window.getSelection()?.toString()).toBe('K7TQM');
     expect(root.querySelector('.copy-note')?.textContent).toBe('Press Ctrl+C to copy');
+  });
+
+  it.each([
+    ['execCommand copies', true, 0],
+    ['execCommand refuses, so the Clipboard API copies', false, 1],
+  ])('in an iframe, tries execCommand("copy") first, inside the click, before the Clipboard API: %s', async (_what, execWorks, apiCalls) => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    let copied = '';
+    const exec = vi.fn(() => {
+      copied = (document.activeElement as HTMLTextAreaElement).value;
+      return execWorks;
+    });
+    Object.defineProperty(document, 'execCommand', { value: exec, configurable: true });
+    const { root, router } = screen(deps(HANA), env({ framed: true }));
+    router.go('host');
+    await flush();
+    click(root, 'COPY CODE');
+    // Synchronously, in the click itself, before any promise has run.
+    expect(exec).toHaveBeenCalledWith('copy');
+    expect(copied).toBe('K7TQM');
+    await flush();
+    expect(writeText).toHaveBeenCalledTimes(apiCalls);
+    expect(exec).toHaveBeenCalledOnce();
+    expect(root.querySelector('.copy-note')?.textContent).toBe('Code copied');
   });
 
   it('shows a network error with Retry and Back; Retry registers again', async () => {
@@ -336,6 +388,92 @@ describe('host lobby: the guest', () => {
     expect(text(root)).toContain('Waiting for opponent…');
     joined(handle, { name: 'Ann', look: LOOK });
     expect(root.querySelector('.opponent .name')?.textContent).toBe('ANN');
+  });
+
+  it.each(['goes silent for 8 s', 'closes its connection'] as const)('a guest who %s frees the lobby: waiting again', async (how) => {
+    const { root, handle } = await hosting();
+    const g = handle.arrive();
+    // A silent guest answers no ping and sends nothing after its hello.
+    if (how === 'goes silent for 8 s') g.onMessage(() => {});
+    else collect(g);
+    g.send(hello(GUS));
+    s.advance(30);
+    expect(shown(root.querySelector('.opponent'))).toBe(true);
+    if (how === 'closes its connection') {
+      g.close();
+      s.advance(30);
+    } else {
+      s.advance(7800);
+      expect(shown(root.querySelector('.opponent'))).toBe(true);
+      s.advance(500);
+    }
+    expect(shown(root.querySelector('.opponent'))).toBe(false);
+    expect(text(root)).toContain('Waiting for opponent…');
+  });
+
+  it('a guest that goes before its hello (a leave or a closed connection) is closed, and leaves no heartbeat running', async () => {
+    const timers = liveTimers(s);
+    const { root, handle } = await hosting();
+    const idle = timers();
+    const leaver = handle.arrive();
+    const closes: string[] = [];
+    leaver.onClose((r) => closes.push(r));
+    collect(leaver);
+    s.advance(300);
+    expect(timers()).toBeGreaterThan(idle);
+    leaver.send({ type: 'leave' });
+    s.advance(1000);
+    expect(closes).toEqual(['closed']);
+    expect(timers()).toBe(idle);
+
+    const closer = handle.arrive();
+    collect(closer);
+    s.advance(300);
+    closer.close();
+    s.advance(1000);
+    expect(timers()).toBe(idle);
+    expect(text(root)).toContain('Waiting for opponent…');
+  });
+
+  it('a guest that says no hello within 10 s is closed; one that says it in time is welcomed and stays', async () => {
+    const timers = liveTimers(s);
+    const { root, handle } = await hosting();
+    const idle = timers();
+    // Both answer pings, so neither goes silent; only one says hello, just in time.
+    const mute = handle.arrive();
+    const closes: string[] = [];
+    mute.onClose((r) => closes.push(r));
+    collect(mute);
+    const late = handle.arrive();
+    const got = collect(late);
+    s.advance(9900);
+    expect(closes).toEqual([]);
+    late.send(hello(GUS));
+    s.advance(200);
+    expect(closes).toEqual(['closed']);
+    expect(got.filter((m) => m.type === 'welcome')).toHaveLength(1);
+    s.advance(5000);
+    expect(root.querySelector('.opponent .name')?.textContent).toBe('GUS');
+    // What runs now is the admitted guest's heartbeat alone.
+    expect(timers()).toBe(idle + 1);
+  });
+
+  it("a guest who arrives once the match has started is rejected with 'in-match' and closed", async () => {
+    const { root, handle, d } = await hosting();
+    const { g } = joined(handle);
+    g.send({ type: 'ready', on: true });
+    s.advance(30);
+    click(root, 'READY');
+    expect(d.startMatch).toHaveBeenCalledOnce();
+    const late = handle.arrive();
+    const got = collect(late);
+    const closes: string[] = [];
+    late.onClose((r) => closes.push(r));
+    late.send(hello({ name: 'Zed', look: LOOK }));
+    s.advance(1000);
+    expect(got[0]).toEqual({ type: 'reject', reason: 'in-match', proto: PROTO, app: APP_ID });
+    expect(closes).toEqual(['closed']);
+    d.started[0]!.session.dispose();
   });
 
   it('starts once both are ready: a HostSession on the handed-over transport, which alone sends start; the lobby hears nothing more', async () => {
