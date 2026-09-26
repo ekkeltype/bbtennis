@@ -1,0 +1,1018 @@
+/*
+ * Black Belt Tennis DOM overlay (spec §4.6). Every size is a whole number of game pixels:
+ * calc(n * var(--u)), where --u = one 480×270 buffer pixel in CSS px (set by the app from the
+ * canvas scale). Colours come from the render palette (src/render/palette.ts).
+ */
+:root {
+  --ink: #0d0b14;
+  --night: #131523;
+  --shadow: #29243a;
+  --slate: #4a4760;
+  --grey: #7b7c94;
+  --silver: #b5b8c9;
+  --mist: #d9dbe5;
+  --cream: #f5f2e8;
+  --white: #ffffff;
+  --gold: #e0a83e;
+  --sky: #56b4e9;
+  --yellow: #f0e442;
+  --ball: #ddf050;
+  --head: 'Press Start 2P', ui-monospace, monospace;
+  --body: 'Pixelify Sans', system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ink);
+}
+
+#app {
+  outline: none;
+}
+
+#game {
+  display: block;
+}
+
+#ui {
+  --u: 2px;
+  position: fixed;
+  z-index: 1;
+  overflow: hidden;
+  font-family: var(--head);
+  font-size: calc(8 * var(--u));
+  line-height: 1;
+  color: var(--cream);
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+}
+
+#ui *,
+#ui *::before,
+#ui *::after {
+  box-sizing: border-box;
+}
+
+#ui .screens,
+#ui .screen {
+  position: absolute;
+  inset: 0;
+}
+
+#ui .screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#ui .screen.dim {
+  background: rgb(13 11 20 / 0.8);
+}
+
+#ui p,
+#ui h2,
+#ui h3,
+#ui figure {
+  margin: 0;
+}
+
+#ui .icon {
+  display: block;
+  flex: none;
+  width: calc(var(--iw) * var(--u));
+  height: calc(var(--ih) * var(--u));
+}
+
+/* Blinking prompts step on and off like a console cursor (no fades). */
+@keyframes bbt-blink {
+  50% {
+    visibility: hidden;
+  }
+}
+
+#ui .blink {
+  animation: bbt-blink 1.2s steps(1) infinite;
+}
+
+/* ---------- Panels: a dark box with a double pixel frame and a hard drop shadow ---------- */
+
+#ui .panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: calc(3 * var(--u));
+  padding: calc(8 * var(--u)) calc(10 * var(--u)) calc(8 * var(--u));
+  background: var(--night);
+  border: var(--u) solid var(--mist);
+  box-shadow:
+    0 0 0 var(--u) var(--ink),
+    inset 0 0 0 var(--u) var(--ink),
+    inset 0 0 0 calc(2 * var(--u)) var(--slate),
+    calc(4 * var(--u)) calc(4 * var(--u)) 0 var(--u) rgb(13 11 20 / 0.6);
+}
+
+#ui .panel-title {
+  margin: 0 0 calc(3 * var(--u));
+  font-size: calc(8 * var(--u));
+  font-weight: normal;
+  color: var(--gold);
+  text-shadow: var(--u) var(--u) 0 var(--ink);
+}
+
+#ui h3.group {
+  margin: calc(3 * var(--u)) 0 0;
+  padding-bottom: calc(2 * var(--u));
+  border-bottom: var(--u) solid var(--shadow);
+  font-size: calc(8 * var(--u));
+  font-weight: normal;
+  color: var(--grey);
+}
+
+#ui .actions {
+  display: flex;
+  gap: calc(6 * var(--u));
+  justify-content: center;
+  margin-top: calc(4 * var(--u));
+}
+
+#ui .message,
+#ui .note,
+#ui .record,
+#ui .legend {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  line-height: calc(11 * var(--u));
+  color: var(--silver);
+}
+
+/* ---------- Menu buttons: a gold bar with a pixel cursor on the focused one ---------- */
+
+#ui .btn {
+  all: unset;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(4 * var(--u));
+  height: calc(14 * var(--u));
+  padding: 0 calc(8 * var(--u)) 0 calc(14 * var(--u));
+  font-family: var(--head);
+  font-size: calc(8 * var(--u));
+  line-height: 1;
+  color: var(--cream);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#ui .btn:focus,
+#ui .btn:focus-visible {
+  outline: none;
+  background: var(--gold);
+  color: var(--ink);
+  box-shadow: 0 var(--u) 0 0 #9a6a1e;
+}
+
+#ui .btn:focus::before,
+#ui .row:focus::before {
+  content: '';
+  position: absolute;
+  left: calc(5 * var(--u));
+  top: calc(50% - 4 * var(--u));
+  width: calc(4 * var(--u));
+  height: calc(7 * var(--u));
+  background: currentColor;
+  clip-path: polygon(0 0, 25% 0, 25% 14.28%, 50% 14.28%, 50% 28.57%, 75% 28.57%, 75% 42.85%, 100% 42.85%, 100% 57.14%, 75% 57.14%, 75% 71.42%, 50% 71.42%, 50% 85.71%, 25% 85.71%, 25% 100%, 0 100%);
+  animation: bbt-blink 1s steps(1) infinite;
+}
+
+#ui .btn.primary:not(:focus) {
+  color: var(--gold);
+}
+
+#ui .actions .btn {
+  padding-right: calc(10 * var(--u));
+}
+
+#ui .menu {
+  display: flex;
+  flex-direction: column;
+  gap: calc(1 * var(--u));
+}
+
+#ui .submenu {
+  display: flex;
+  flex-direction: column;
+  gap: calc(1 * var(--u));
+}
+
+#ui .submenu[hidden] {
+  display: none;
+}
+
+#ui .btn.sub {
+  padding-left: calc(24 * var(--u));
+  color: var(--silver);
+}
+
+#ui .btn.sub:focus {
+  color: var(--ink);
+}
+
+#ui .btn.sub:focus::before {
+  left: calc(15 * var(--u));
+}
+
+#ui .btn .icon {
+  margin-left: calc(-2 * var(--u));
+}
+
+/* ---------- Setting rows: label on the left, the control on the right ---------- */
+
+#ui .row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  min-height: calc(14 * var(--u));
+  padding: 0 calc(6 * var(--u)) 0 calc(14 * var(--u));
+  outline: none;
+  cursor: default;
+}
+
+#ui .row .label {
+  flex: none;
+  width: calc(var(--label-w, 104) * var(--u));
+  color: var(--silver);
+}
+
+#ui .row:focus {
+  background: var(--shadow);
+  box-shadow: inset calc(2 * var(--u)) 0 0 var(--gold);
+}
+
+#ui .row:focus::before {
+  color: var(--gold);
+}
+
+#ui .row:focus .label {
+  color: var(--gold);
+}
+
+#ui .row.disabled {
+  opacity: 0.45;
+}
+
+#ui .row .ctl {
+  display: flex;
+  align-items: center;
+  gap: calc(3 * var(--u));
+}
+
+#ui .row .note {
+  font-size: calc(10 * var(--u));
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--grey);
+}
+
+#ui .arrow {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(8 * var(--u));
+  height: calc(10 * var(--u));
+  color: var(--grey);
+  cursor: pointer;
+}
+
+#ui .row:focus .arrow {
+  color: var(--gold);
+}
+
+#ui .arrow:disabled {
+  cursor: default;
+}
+
+#ui .spin .value {
+  min-width: calc(var(--value-w, 104) * var(--u));
+  text-align: center;
+  color: var(--cream);
+}
+
+#ui .spin .hint {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  color: var(--grey);
+}
+
+#ui .slider .segs {
+  display: flex;
+  gap: var(--u);
+  padding: 0 calc(2 * var(--u));
+}
+
+#ui .slider .seg {
+  width: calc(6 * var(--u));
+  height: calc(8 * var(--u));
+  background: var(--shadow);
+  box-shadow: inset 0 0 0 var(--u) var(--ink);
+  cursor: pointer;
+}
+
+#ui .slider .seg.on {
+  background: var(--sky);
+  box-shadow:
+    inset 0 0 0 var(--u) var(--ink),
+    inset 0 calc(2 * var(--u)) 0 0 #9bd3f2;
+}
+
+#ui .row:focus .slider .seg.on,
+#ui .slider:focus .seg.on {
+  background: var(--gold);
+  box-shadow:
+    inset 0 0 0 var(--u) var(--ink),
+    inset 0 calc(2 * var(--u)) 0 0 #f2cf86;
+}
+
+#ui .slider .value {
+  width: calc(16 * var(--u));
+  text-align: right;
+  color: var(--cream);
+}
+
+/* Picker rows: swatches, belts and head icons; the selected one is framed. */
+#ui .picker .items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--u);
+}
+
+#ui .picker .item {
+  display: flex;
+  padding: var(--u);
+  cursor: pointer;
+}
+
+#ui .picker .item.on {
+  box-shadow: inset 0 0 0 var(--u) var(--cream);
+}
+
+#ui .row:focus .picker .item.on,
+#ui .picker:focus .item.on {
+  box-shadow: inset 0 0 0 var(--u) var(--gold);
+}
+
+#ui .swatch {
+  display: block;
+  flex: none;
+  width: calc(9 * var(--u));
+  height: calc(9 * var(--u));
+  background: var(--c, var(--shadow));
+  box-shadow:
+    inset 0 0 0 var(--u) var(--ink),
+    inset calc(2 * var(--u)) calc(2 * var(--u)) 0 0 var(--hi, transparent),
+    inset calc(-2 * var(--u)) calc(-2 * var(--u)) 0 0 var(--lo, transparent);
+}
+
+#ui .swatch.none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--grey);
+}
+
+/* ---------- Notices ---------- */
+
+#ui .notices {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(8 * var(--u));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(4 * var(--u));
+  pointer-events: none;
+}
+
+#ui .toast {
+  padding: calc(4 * var(--u)) calc(8 * var(--u));
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  color: var(--cream);
+  background: var(--night);
+  border: var(--u) solid var(--gold);
+  box-shadow: 0 0 0 var(--u) var(--ink);
+}
+
+/* ---------- Logo ---------- */
+
+#ui .logo {
+  display: block;
+  width: calc(264 * var(--u));
+  height: calc(126 * var(--u));
+  image-rendering: pixelated;
+}
+
+#ui .logo-wrap.small .logo {
+  width: calc(132 * var(--u));
+  height: calc(63 * var(--u));
+}
+
+/* ---------- Start gate ---------- */
+
+#ui .gate {
+  flex-direction: column;
+  gap: calc(10 * var(--u));
+  background:
+    radial-gradient(ellipse at 50% 40%, rgb(74 71 96 / 0.35), transparent 70%),
+    var(--ink);
+  cursor: pointer;
+}
+
+#ui .gate .start {
+  margin-top: calc(14 * var(--u));
+  color: var(--cream);
+  text-shadow: var(--u) var(--u) 0 var(--slate);
+}
+
+#ui .gate .sub {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  color: var(--grey);
+}
+
+/* ---------- Title: the logo on a dark band over the top of the attract demo ---------- */
+
+#ui .title {
+  flex-direction: column;
+  justify-content: flex-start;
+  cursor: pointer;
+}
+
+#ui .title-band {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding: calc(14 * var(--u)) 0 calc(12 * var(--u));
+  background: rgb(13 11 20 / 0.97);
+  box-shadow:
+    0 var(--u) 0 0 var(--slate),
+    0 calc(2 * var(--u)) 0 0 var(--ink);
+  pointer-events: none;
+}
+
+#ui .title .press {
+  margin-top: calc(40 * var(--u));
+  padding: 0 calc(12 * var(--u)) 0 calc(20 * var(--u));
+  background: rgb(13 11 20 / 0.85);
+  box-shadow:
+    0 0 0 var(--u) var(--ink),
+    inset 0 0 0 var(--u) var(--slate);
+}
+
+#ui .title .press:focus {
+  background: var(--gold);
+  box-shadow:
+    0 0 0 var(--u) var(--ink),
+    0 calc(2 * var(--u)) 0 0 #9a6a1e;
+}
+
+#ui .title .press:focus::before {
+  left: calc(8 * var(--u));
+}
+
+#ui .corner {
+  position: absolute;
+  right: calc(6 * var(--u));
+  bottom: calc(6 * var(--u));
+  background: rgb(13 11 20 / 0.85);
+}
+
+#ui .demo-tag {
+  position: absolute;
+  left: calc(6 * var(--u));
+  bottom: calc(9 * var(--u));
+  padding: calc(2 * var(--u)) calc(4 * var(--u));
+  font-size: calc(8 * var(--u));
+  color: var(--ink);
+  background: var(--gold);
+  box-shadow: 0 0 0 var(--u) var(--ink);
+  pointer-events: none;
+}
+
+/* ---------- Main menu ---------- */
+
+#ui .main-menu {
+  justify-content: flex-start;
+  align-items: stretch;
+}
+
+#ui .main-menu .side {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(6 * var(--u));
+  width: calc(164 * var(--u));
+  padding: calc(8 * var(--u)) calc(10 * var(--u));
+  background: rgb(13 11 20 / 0.94);
+  box-shadow:
+    var(--u) 0 0 0 var(--slate),
+    calc(2 * var(--u)) 0 0 0 var(--ink);
+}
+
+#ui .main-menu .logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: calc(2 * var(--u));
+}
+
+#ui .main-menu .player-tag {
+  margin-top: auto;
+}
+
+#ui .menu-panel {
+  padding: calc(6 * var(--u)) calc(4 * var(--u));
+}
+
+#ui .player-tag {
+  display: flex;
+  align-items: center;
+  gap: calc(5 * var(--u));
+  padding: calc(4 * var(--u)) calc(6 * var(--u));
+  background: rgb(13 11 20 / 0.85);
+  box-shadow:
+    0 0 0 var(--u) var(--ink),
+    inset 0 0 0 var(--u) var(--slate);
+}
+
+#ui .player-tag .lines {
+  display: flex;
+  flex-direction: column;
+  gap: calc(3 * var(--u));
+}
+
+#ui .player-tag .what {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  color: var(--silver);
+}
+
+/* ---------- vs CPU setup ---------- */
+
+#ui .setup {
+  width: calc(420 * var(--u));
+  --label-w: 64;
+  --value-w: 112;
+}
+
+#ui .belts {
+  flex-wrap: wrap;
+  padding-top: calc(3 * var(--u));
+  padding-bottom: calc(3 * var(--u));
+}
+
+#ui .belts .ctl {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(4 * var(--u));
+}
+
+#ui .belts .items {
+  gap: 0;
+  flex-wrap: nowrap;
+}
+
+#ui .belts .value {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  color: var(--cream);
+}
+
+#ui .belt {
+  position: relative;
+  display: flex;
+  margin-top: calc(6 * var(--u));
+}
+
+#ui .belt .belt-body {
+  width: calc(15 * var(--u));
+  height: calc(9 * var(--u));
+}
+
+#ui .belt .tip {
+  display: flex;
+  gap: var(--u);
+  align-items: stretch;
+  justify-content: center;
+  width: calc(8 * var(--u));
+  height: calc(9 * var(--u));
+  padding: var(--u);
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--slate);
+}
+
+#ui .belt .tip .bar {
+  width: var(--u);
+  background: var(--cream);
+}
+
+#ui .belt .tip.dan .bar {
+  background: var(--gold);
+}
+
+#ui .belt .mark {
+  position: absolute;
+  top: calc(-7 * var(--u));
+  left: calc(9 * var(--u));
+  color: var(--gold);
+}
+
+#ui .belt .earned {
+  position: absolute;
+  top: calc(2 * var(--u));
+  left: calc(4 * var(--u));
+  color: var(--ink);
+}
+
+#ui .picker.belts .item.on .belt {
+  transform: translateY(calc(-2 * var(--u)));
+}
+
+#ui .legend {
+  display: flex;
+  align-items: center;
+  gap: calc(2 * var(--u));
+  padding-left: calc(14 * var(--u));
+  color: var(--grey);
+}
+
+#ui .legend .icon {
+  color: var(--gold);
+}
+
+#ui .legend .gap {
+  width: calc(8 * var(--u));
+}
+
+#ui .record {
+  padding-left: calc(14 * var(--u));
+}
+
+/* ---------- Customize ---------- */
+
+#ui .customize {
+  width: calc(472 * var(--u));
+  padding-left: calc(8 * var(--u));
+  padding-right: calc(8 * var(--u));
+  --label-w: 48;
+}
+
+#ui .customize .split {
+  display: flex;
+  gap: calc(6 * var(--u));
+}
+
+#ui .customize .row {
+  gap: calc(5 * var(--u));
+  min-height: calc(13 * var(--u));
+  padding: 0 calc(3 * var(--u)) 0 calc(8 * var(--u));
+}
+
+#ui .customize .row:focus::before {
+  left: calc(2 * var(--u));
+  width: calc(3 * var(--u));
+  clip-path: polygon(0 0, 33% 0, 33% 14.28%, 66% 14.28%, 66% 28.57%, 100% 28.57%, 100% 71.42%, 66% 71.42%, 66% 85.71%, 33% 85.71%, 33% 100%, 0 100%);
+}
+
+#ui .customize .swatch {
+  width: calc(8 * var(--u));
+  height: calc(8 * var(--u));
+}
+
+#ui .customize .picker .items {
+  gap: 0;
+}
+
+#ui .customize .head {
+  display: block;
+  width: calc(16 * var(--u));
+  height: calc(14 * var(--u));
+  image-rendering: pixelated;
+}
+
+#ui .customize .stage {
+  display: flex;
+  gap: calc(4 * var(--u));
+  padding: calc(4 * var(--u));
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--shadow);
+  align-self: flex-start;
+}
+
+#ui .customize figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(3 * var(--u));
+}
+
+#ui .customize figcaption {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  color: var(--grey);
+}
+
+#ui .preview {
+  display: block;
+  width: calc(120 * var(--u));
+  height: calc(144 * var(--u));
+  image-rendering: pixelated;
+}
+
+#ui .customize .rows {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  flex: 1;
+  min-width: 0;
+}
+
+#ui .customize .picker .value {
+  display: none;
+}
+
+#ui .name-row {
+  cursor: text;
+}
+
+#ui .name-field {
+  all: unset;
+  width: calc(108 * var(--u));
+  height: calc(12 * var(--u));
+  padding: 0 calc(3 * var(--u));
+  font-family: var(--head);
+  font-size: calc(8 * var(--u));
+  line-height: calc(12 * var(--u));
+  color: var(--cream);
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--slate);
+  caret-color: var(--gold);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#ui .name-field:focus {
+  box-shadow: inset 0 0 0 var(--u) var(--gold);
+}
+
+#ui .name-row:focus-within {
+  background: var(--shadow);
+  box-shadow: inset calc(2 * var(--u)) 0 0 var(--gold);
+}
+
+#ui .name-row:focus-within .label {
+  color: var(--gold);
+}
+
+/* ---------- Options ---------- */
+
+#ui .options {
+  width: calc(360 * var(--u));
+  gap: calc(1 * var(--u));
+  --label-w: 120;
+  --value-w: 112;
+}
+
+/* ---------- How to Play ---------- */
+
+#ui .how-to {
+  width: calc(468 * var(--u));
+  gap: calc(4 * var(--u));
+  padding: calc(6 * var(--u)) calc(8 * var(--u));
+}
+
+#ui .how-to .panel-title {
+  margin-bottom: 0;
+}
+
+#ui .cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(4 * var(--u)) calc(6 * var(--u));
+}
+
+#ui .card {
+  display: grid;
+  grid-template-columns: calc(116 * var(--u)) 1fr;
+  grid-template-rows: auto 1fr;
+  gap: calc(3 * var(--u)) calc(5 * var(--u));
+  padding: calc(4 * var(--u));
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--shadow);
+}
+
+#ui .card h3 {
+  grid-column: 1 / -1;
+  font-size: calc(8 * var(--u));
+  font-weight: normal;
+  color: var(--gold);
+}
+
+#ui .illustration {
+  display: block;
+  width: calc(116 * var(--u));
+  height: calc(56 * var(--u));
+  image-rendering: pixelated;
+}
+
+#ui .card p {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  line-height: calc(11 * var(--u));
+  color: var(--mist);
+}
+
+#ui .keys {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  line-height: calc(12 * var(--u));
+  color: var(--silver);
+  white-space: pre;
+}
+
+#ui kbd {
+  padding: 0 calc(2 * var(--u));
+  font-family: var(--head);
+  font-size: calc(8 * var(--u));
+  color: var(--night);
+  background: var(--mist);
+  box-shadow:
+    0 0 0 var(--u) var(--ink),
+    inset 0 calc(-2 * var(--u)) 0 0 var(--silver);
+}
+
+#ui .credits {
+  font-family: var(--body);
+  font-size: calc(9 * var(--u));
+  line-height: calc(10 * var(--u));
+  color: var(--grey);
+}
+
+#ui .how-to .actions {
+  margin-top: 0;
+}
+
+/* ---------- Pause ---------- */
+
+#ui .pause {
+  background: rgb(13 11 20 / 0.35);
+}
+
+#ui .pause-panel {
+  min-width: calc(168 * var(--u));
+}
+
+#ui .pause-panel .panel-title {
+  align-self: center;
+}
+
+#ui .pause-panel .note {
+  max-width: calc(150 * var(--u));
+}
+
+/* ---------- Results ---------- */
+
+#ui .results {
+  width: calc(340 * var(--u));
+  align-items: stretch;
+}
+
+#ui .results .panel-title {
+  align-self: center;
+  font-size: calc(16 * var(--u));
+}
+
+#ui .results.win .panel-title {
+  color: var(--ball);
+}
+
+#ui .results.loss .panel-title {
+  color: var(--cream);
+}
+
+#ui .results table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+#ui .results th,
+#ui .results td {
+  padding: calc(1 * var(--u)) calc(3 * var(--u));
+  font-weight: normal;
+  text-align: right;
+  white-space: nowrap;
+}
+
+#ui .results th:first-child {
+  text-align: left;
+}
+
+#ui .score {
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--shadow);
+}
+
+#ui .score thead th {
+  font-family: var(--body);
+  font-size: calc(9 * var(--u));
+  color: var(--grey);
+}
+
+#ui .score tbody th,
+#ui .score tbody td {
+  height: calc(12 * var(--u));
+}
+
+#ui .score tr.won th,
+#ui .score tr.won td {
+  color: var(--ball);
+}
+
+#ui .stats thead th {
+  height: calc(12 * var(--u));
+  color: var(--gold);
+}
+
+#ui .stats tbody th {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  color: var(--silver);
+}
+
+#ui .stats tbody td {
+  height: calc(10 * var(--u));
+  color: var(--cream);
+}
+
+#ui .stats tbody tr:nth-child(odd) {
+  background: rgb(41 36 58 / 0.6);
+}
+
+#ui .stats td[colspan] {
+  text-align: center;
+}
+
+#ui .belt-earned {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(5 * var(--u));
+  padding: calc(3 * var(--u));
+  color: var(--ball);
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--gold);
+}
+
+#ui .results.training {
+  width: calc(340 * var(--u));
+}
+
+#ui .results.training .message {
+  text-align: center;
+  color: var(--mist);
+}
+
+/* ---------- Online placeholder ---------- */
+
+#ui .online {
+  width: calc(260 * var(--u));
+}
+
+#ui .online .message {
+  text-align: center;
+}
+
+/* ---------- Match overlay ---------- */
+
+#ui .play {
+  cursor: default;
+}
+
+#ui .pause-hit {
+  all: unset;
+  position: absolute;
+  left: calc(var(--x) * var(--u));
+  top: calc(var(--y) * var(--u));
+  width: calc(var(--w) * var(--u));
+  height: calc(var(--h) * var(--u));
+  cursor: pointer;
+}
