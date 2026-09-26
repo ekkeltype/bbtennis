@@ -10,6 +10,7 @@ import {
   turnClock,
   turnInput,
 } from '../../src/core/turn';
+import { serveClockτ } from '../../src/core/turnServe';
 import type {
   GameEvent,
   ReturnTurnData,
@@ -553,6 +554,47 @@ describe('training freeze', () => {
     expect(tags(turnClock(t, 8399))).toEqual(['bounce@6800']);
     expect(tags(turnClock(t, 8400))).toEqual(['turnEnd@8400']);
     expect(t.outcome).toEqual({ kind: 'miss', endτ: 8400, ace: false });
+  });
+
+  it('serve: a short serve clock stands still while frozen and resumes shifted by the frozen time', () => {
+    // A serve freeze ends only with a lock, and a locked toss ends in a strike or a dropped ball
+    // whatever the clock says, so the shifted expiry is checked on the clock itself.
+    const data = serveData({ freezeFirst: true, serveClockMs: 1000 });
+    const t = started(createTurn(data));
+    turnClock(t, 3000);
+    turnInput(t, 'toss', 3000);
+    expect(turnClock(t, 7500)).toEqual([]);
+    turnInput(t, 'b', 8000);
+    expect(t.frozenMs).toBe(5000);
+    expect(serveClockτ(t, data)).toBe(2500 + 1000 + 5000);
+    type(t, 'all', 8100);
+    expect(strikeOf(t).τ).toBe(8300);
+  });
+
+  it('return: a stretch strike after freezes is struck from the ball at the unfrozen simulation time', () => {
+    const t = started(createTurn(returnData({ freezeFirst: true })));
+    type(t, 'ball', 1000);
+    turnInput(t, 'd', 2300);
+    expect(t.frozenMs).toBe(2000);
+    type(t, 'rop', 5100);
+    const s = strikeOf(t);
+    expect(s.τ).toBe(5300);
+    expect(s.stretch).toBe(true);
+    expect(s.flight.p0).toEqual(ballAt(RALLY_IN, 3300));
+  });
+
+  it('return: an OUT ball is called at its bounce shifted by the frozen time', () => {
+    const t = started(createTurn(returnData({ incoming: RALLY_OUT, freezeFirst: true })));
+    expect(turnClock(t, 4000)).toEqual([]);
+    turnInput(t, 'b', 5000);
+    expect(nextDeadline(t)).toBe(6800);
+    expect(turnClock(t, 6799)).toEqual([]);
+    expect(turnClock(t, 6800)).toEqual([
+      { turn: 8, τ: 6800, type: 'bounce', at: RALLY_OUT.landing, inCourt: false },
+      { turn: 8, τ: 6800, type: 'call', call: 'out', player: 0 },
+      { turn: 8, τ: 6800, type: 'turnEnd', endτ: 6800 },
+    ]);
+    expect(t.outcome).toEqual({ kind: 'call', endτ: 6800, call: 'out' });
   });
 
   it('return: the choice prompt freezes again; a queued strike lands at T + all frozen time', () => {
