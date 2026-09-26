@@ -1,0 +1,319 @@
+import { describe, expect, it } from 'vitest';
+import { APP_ID, MAX_MSG_CHARS, PROTO, parseMsg, type NetMsg } from '../../src/net/protocol';
+import { sanitizeName } from '../../src/core/text';
+import type { GameEvent, Look, MatchConfig, PlayerStats, Profile, PublicState } from '../../src/core/types';
+
+const look: Look = { skin: 2, hairStyle: 1, hair: 3, shirt: 4, shorts: 5, headband: 6, racket: 1 };
+const noBand: Look = { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 };
+const config: MatchConfig = { format: 'short', pace: 'normal', surface: 'clay', wordPack: 'mixed', deuceRule: 'golden', training: null };
+const trainingConfig: MatchConfig = {
+  format: 'tiebreak',
+  pace: 'relaxed',
+  surface: 'dojo',
+  wordPack: 'tennis',
+  deuceRule: 'advantage',
+  training: { serveClock: false, freezeUntilFirstKey: true, fixedWords: { serve: [['ace', 'volley', 'backspinner']], choice: [['net', 'return', 'overheadsmash']] } },
+};
+const host: Profile = { name: 'ALEX', look };
+const guest: Profile = { name: 'Sam-2', look: noBand };
+
+const zeroStats = (): PlayerStats => ({
+  pointsWon: 0, aces: 0, doubleFaults: 0, winners: 0, errors: 0, wordsCompleted: 0,
+  intervalSum: 0, typingMs: 0, topWpm: 0, correctKeys: 0, wrongKeys: 0, fastestServeKmh: 0,
+});
+
+function publicState(names: [string, string] = ['ALEX', 'Sam-2']): PublicState {
+  return {
+    v: 1,
+    config,
+    players: [
+      { name: names[0], look, kind: 'human', cpuLevel: null },
+      { name: names[1], look: noBand, kind: 'remote', cpuLevel: null },
+    ],
+    score: {
+      format: 'short', deuceRule: 'golden', setGames: [], games: [1, 0], points: [2, 3], inTiebreak: false,
+      setsWon: [0, 0], firstServerOfMatch: 1, gameServer: 0, winner: null,
+    },
+    stats: [zeroStats(), zeroStats()],
+    turn: null,
+    lastTurn: null,
+    rallyStrikes: 0,
+    longestRally: 4,
+    pointNo: 7,
+    status: 'playing',
+    winner: null,
+    forfeitBy: null,
+    nextTurnId: 12,
+    nextPromptBase: 30,
+    rng: null,
+    picker: null,
+  };
+}
+
+const events: GameEvent[] = [
+  { turn: 11, τ: 0, type: 'turnStart', owner: 1, kind: 'serve' },
+  { turn: 11, τ: 812.5, type: 'strike', player: 1, word: 'volley', tier: 'medium', kmh: 151, isServe: true, stretch: false, forehand: true },
+];
+
+/** One valid sample of every message type (some types more than once). */
+const samples: NetMsg[] = [
+  { type: 'hello', proto: PROTO, app: APP_ID, name: 'Sam-2', look: noBand },
+  { type: 'welcome', proto: PROTO, hostProfile: host, config },
+  { type: 'welcome', proto: PROTO, hostProfile: host, config: trainingConfig },
+  { type: 'reject', reason: 'version', proto: PROTO, app: APP_ID },
+  { type: 'reject', reason: 'full', proto: PROTO, app: APP_ID },
+  { type: 'reject', reason: 'in-match', proto: PROTO, app: APP_ID },
+  { type: 'lobby', config, ready: [true, false] },
+  { type: 'ready', on: true },
+  { type: 'start', config, hostProfile: host, guestProfile: guest },
+  { type: 'input', seq: 0, turn: 11, k: 'q', τ: 431.25 },
+  { type: 'input', seq: 17, turn: 11, k: 'toss', τ: 0 },
+  { type: 'clock', turn: 11, τ: 1250 },
+  { type: 'frame', turn: 11, τ: 50 },
+  { type: 'frame', turn: 11, τ: 812.5, ev: events },
+  { type: 'frame', turn: 11, τ: 900, s: publicState() },
+  { type: 'frame', turn: 11, τ: 900, ev: [], s: publicState() },
+  { type: 'ping', id: 3 },
+  { type: 'pong', id: 3 },
+  { type: 'rematch', want: false },
+  { type: 'forfeit' },
+  { type: 'leave' },
+];
+
+/** Simulates the wire: JSON out, JSON in. */
+const wire = (m: unknown): unknown => JSON.parse(JSON.stringify(m));
+
+/** A deep copy of `m` with `mutate` applied, sent over the wire. */
+function tampered<T>(m: T, mutate: (x: Record<string, any>) => void): unknown {
+  const copy = wire(m) as Record<string, any>;
+  mutate(copy);
+  return copy;
+}
+
+const find = <K extends NetMsg['type']>(type: K): Extract<NetMsg, { type: K }> =>
+  samples.find((m) => m.type === type) as Extract<NetMsg, { type: K }>;
+
+describe('constants', () => {
+  it('protocol version is 1 and messages are capped at 32 KB of JSON', () => {
+    expect(PROTO).toBe(1);
+    expect(MAX_MSG_CHARS).toBe(32 * 1024);
+  });
+});
+
+describe('parseMsg round trip', () => {
+  it('the samples cover every message type', () => {
+    const types = new Set(samples.map((m) => m.type));
+    expect([...types].sort()).toEqual(
+      ['clock', 'forfeit', 'frame', 'hello', 'input', 'leave', 'lobby', 'ping', 'pong', 'ready', 'reject', 'rematch', 'start', 'welcome'],
+    );
+  });
+
+  it.each(samples.map((m, i) => [`${i}:${m.type}`, m] as const))('%s survives the wire unchanged', (_label, m) => {
+    expect(parseMsg(wire(m))).toEqual(m);
+  });
+
+  it('a frame without ev/s has no ev/s keys', () => {
+    const parsed = parseMsg(wire(find('frame')));
+    expect(parsed).not.toBeNull();
+    expect(Object.keys(parsed!).sort()).toEqual(['turn', 'type', 'τ']);
+  });
+
+  it('treats ev/s set to undefined (never on the wire) as absent', () => {
+    expect(parseMsg({ type: 'frame', turn: 4, τ: 10, ev: undefined, s: undefined })).toEqual({ type: 'frame', turn: 4, τ: 10 });
+  });
+
+  it('drops unknown fields', () => {
+    const parsed = parseMsg(tampered(find('hello'), (x) => {
+      x.evil = '<script>';
+      x.look.extra = 1;
+    }));
+    expect(parsed).toEqual(find('hello'));
+  });
+
+  it('drops unknown fields inside config and profiles', () => {
+    const parsed = parseMsg(tampered(find('start'), (x) => {
+      x.config.seed = 1234;
+      x.hostProfile.admin = true;
+    }));
+    expect(parsed).toEqual(find('start'));
+  });
+});
+
+describe('parseMsg rejects', () => {
+  it.each([null, undefined, 42, 'hello', true, [], [{ type: 'leave' }]])('non-message %j', (raw) => {
+    expect(parseMsg(raw)).toBeNull();
+  });
+
+  it.each([{}, { type: 'shout' }, { type: 'HELLO' }, { type: 7 }, { type: 'toString' }, { type: '__proto__' }])('unknown or missing type %j', (raw) => {
+    expect(parseMsg(raw)).toBeNull();
+  });
+
+  const required = samples.flatMap((m) =>
+    Object.keys(m)
+      .filter((k) => k !== 'type' && !(m.type === 'frame' && (k === 'ev' || k === 's')))
+      .map((k) => [`${m.type} without ${k}`, m, k] as const),
+  );
+  it.each(required)('%s', (_label, m, key) => {
+    expect(parseMsg(tampered(m, (x) => delete x[key]))).toBeNull();
+  });
+
+  const lookFields = ['skin', 'hairStyle', 'hair', 'shirt', 'shorts', 'headband', 'racket'];
+  it.each(lookFields)('hello with look.%s missing or not a number', (field) => {
+    expect(parseMsg(tampered(find('hello'), (x) => delete x.look[field]))).toBeNull();
+    expect(parseMsg(tampered(find('hello'), (x) => (x.look[field] = '3')))).toBeNull();
+  });
+
+  const configFields = ['format', 'pace', 'surface', 'wordPack', 'deuceRule', 'training'];
+  it.each(configFields)('lobby with config.%s missing or invalid', (field) => {
+    expect(parseMsg(tampered(find('lobby'), (x) => delete x.config[field]))).toBeNull();
+    expect(parseMsg(tampered(find('lobby'), (x) => (x.config[field] = 'bogus')))).toBeNull();
+  });
+
+  const wrongTypes: [string, NetMsg, (x: Record<string, any>) => void][] = [
+    ['hello proto as string', find('hello'), (x) => (x.proto = '1')],
+    ['hello fractional proto', find('hello'), (x) => (x.proto = 1.5)],
+    ['hello numeric name', find('hello'), (x) => (x.name = 5)],
+    ['hello numeric app', find('hello'), (x) => (x.app = 1)],
+    ['hello look null', find('hello'), (x) => (x.look = null)],
+    ['hello look array', find('hello'), (x) => (x.look = [1, 2, 3, 4, 5, 6, 7])],
+    ['welcome hostProfile null', find('welcome'), (x) => (x.hostProfile = null)],
+    ['welcome hostProfile without look', find('welcome'), (x) => delete x.hostProfile.look],
+    ['welcome config null', find('welcome'), (x) => (x.config = null)],
+    ['welcome training.serveClock not boolean', samples[2]!, (x) => (x.config.training.serveClock = 1)],
+    ['welcome training.fixedWords.serve not nested strings', samples[2]!, (x) => (x.config.training.fixedWords.serve = [['ace', 3]])],
+    ['welcome training.fixedWords.choice missing', samples[2]!, (x) => delete x.config.training.fixedWords.choice],
+    ['reject unknown reason', find('reject'), (x) => (x.reason = 'banned')],
+    ['lobby ready of length 1', find('lobby'), (x) => (x.ready = [true])],
+    ['lobby ready of length 3', find('lobby'), (x) => (x.ready = [true, false, true])],
+    ['lobby ready with a string', find('lobby'), (x) => (x.ready = [true, 'no'])],
+    ['ready on as string', find('ready'), (x) => (x.on = 'yes')],
+    ['start guestProfile name null', find('start'), (x) => (x.guestProfile.name = null)],
+    ['input uppercase letter', find('input'), (x) => (x.k = 'Q')],
+    ['input two letters', find('input'), (x) => (x.k = 'ab')],
+    ['input empty key', find('input'), (x) => (x.k = '')],
+    ['input non-letter', find('input'), (x) => (x.k = '1')],
+    ['input Toss', find('input'), (x) => (x.k = 'Toss')],
+    ['input fractional seq', find('input'), (x) => (x.seq = 1.5)],
+    ['input τ as string', find('input'), (x) => (x.τ = '5')],
+    ['input τ null (NaN on the wire)', find('input'), (x) => (x.τ = null)],
+    ['input turn as string', find('input'), (x) => (x.turn = '11')],
+    ['clock τ as boolean', find('clock'), (x) => (x.τ = true)],
+    ['frame ev not an array', samples[13]!, (x) => (x.ev = { 0: x.ev[0] })],
+    ['frame ev null', samples[13]!, (x) => (x.ev = null)],
+    ['frame ev entry not an object', samples[13]!, (x) => x.ev.push('boom')],
+    ['frame ev entry without type', samples[13]!, (x) => delete x.ev[0].type],
+    ['frame ev entry with numeric type', samples[13]!, (x) => (x.ev[0].type = 3)],
+    ['frame ev entry without turn', samples[13]!, (x) => delete x.ev[1].turn],
+    ['frame ev entry with string τ', samples[13]!, (x) => (x.ev[1].τ = '812')],
+    ['frame s null', samples[14]!, (x) => (x.s = null)],
+    ['frame s array', samples[14]!, (x) => (x.s = [])],
+    ['frame s with v 2', samples[14]!, (x) => (x.s.v = 2)],
+    ['frame s without v', samples[14]!, (x) => delete x.s.v],
+    ['frame s with one player', samples[14]!, (x) => x.s.players.pop()],
+    ['frame s with three players', samples[14]!, (x) => x.s.players.push(x.s.players[0])],
+    ['frame s with a player that is not an object', samples[14]!, (x) => (x.s.players[1] = 'guest')],
+    ['frame s with a player without a name', samples[14]!, (x) => delete x.s.players[0].name],
+    ['frame s with a player look that is not an object', samples[14]!, (x) => (x.s.players[0].look = 3)],
+    ['frame s without score', samples[14]!, (x) => delete x.s.score],
+    ['frame s with score null', samples[14]!, (x) => (x.s.score = null)],
+    ['frame s with numeric turn', samples[14]!, (x) => (x.s.turn = 5)],
+    ['frame s without turn', samples[14]!, (x) => delete x.s.turn],
+    ['frame s with numeric status', samples[14]!, (x) => (x.s.status = 1)],
+    ['ping id as string', find('ping'), (x) => (x.id = '3')],
+    ['pong fractional id', find('pong'), (x) => (x.id = 0.5)],
+    ['rematch want as number', find('rematch'), (x) => (x.want = 1)],
+  ];
+  it.each(wrongTypes)('%s', (_label, m, mutate) => {
+    expect(parseMsg(tampered(m, mutate))).toBeNull();
+  });
+});
+
+describe('parseMsg size cap', () => {
+  /** A frame whose JSON is exactly `chars` long. */
+  function frameOfLength(chars: number): unknown {
+    const base = { type: 'frame', turn: 1, τ: 0, ev: [{ turn: 1, τ: 0, type: 'situation', text: '' }] };
+    const pad = chars - JSON.stringify(base).length;
+    base.ev[0]!.text = 'x'.repeat(pad);
+    expect(JSON.stringify(base).length).toBe(chars);
+    return base;
+  }
+
+  it('accepts a message of exactly 32 KB of JSON', () => {
+    expect(parseMsg(frameOfLength(MAX_MSG_CHARS))).not.toBeNull();
+  });
+
+  it('drops a message one character over 32 KB', () => {
+    expect(parseMsg(frameOfLength(MAX_MSG_CHARS + 1))).toBeNull();
+  });
+
+  it('drops an oversized hello even though its name would be clamped', () => {
+    expect(parseMsg(tampered(find('hello'), (x) => (x.name = 'A'.repeat(40000))))).toBeNull();
+  });
+});
+
+describe('parseMsg clamps names and looks', () => {
+  const hostile = [
+    '<img src=x onerror=alert(1)>',
+    '🎾🎾 Ace 🔥 Player Supreme',
+    '',
+    '   ',
+    'Zoë Ünïcödé',
+    'a'.repeat(200),
+    '‮evil\u0000name',
+  ];
+
+  it.each(hostile)('hello name %j is passed through sanitizeName', (name) => {
+    const parsed = parseMsg(tampered(find('hello'), (x) => (x.name = name)));
+    expect(parsed).toMatchObject({ type: 'hello', name: sanitizeName(name) });
+  });
+
+  it('clamps an HTML name to 12 glyphs with ? for characters outside the font', () => {
+    const parsed = parseMsg(tampered(find('hello'), (x) => (x.name = '<b>Bob</b>')));
+    expect(parsed).toMatchObject({ name: '?b?Bob??b?' });
+    const long = parseMsg(tampered(find('hello'), (x) => (x.name = '<img src=x onerror=alert(1)>')));
+    expect(long).toMatchObject({ name: '?img src?x o' });
+  });
+
+  it('sanitizes the profile names in welcome and start', () => {
+    const welcome = parseMsg(tampered(find('welcome'), (x) => (x.hostProfile.name = '💥<host>💥')));
+    expect(welcome).toMatchObject({ hostProfile: { name: sanitizeName('💥<host>💥') } });
+    const start = parseMsg(tampered(find('start'), (x) => {
+      x.hostProfile.name = '<h>';
+      x.guestProfile.name = '👾👾👾';
+    }));
+    expect(start).toMatchObject({ hostProfile: { name: '?h?' }, guestProfile: { name: '???' } });
+  });
+
+  it('sanitizes the player names inside a frame state', () => {
+    const parsed = parseMsg(wire({ type: 'frame', turn: 2, τ: 0, s: publicState(['<i>Eve</i>', '🤖 bot']) }));
+    expect(parsed).not.toBeNull();
+    const s = (parsed as Extract<NetMsg, { type: 'frame' }>).s!;
+    expect(s.players.map((p) => p.name)).toEqual([sanitizeName('<i>Eve</i>'), sanitizeName('🤖 bot')]);
+    expect(s.players[0].kind).toBe('human');
+    expect(s.score.points).toEqual([2, 3]);
+  });
+
+  it('clamps look indices to their ranges', () => {
+    const wild = { skin: 99, hairStyle: 9, hair: 8, shirt: 12, shorts: -1, headband: 50, racket: 6 };
+    const parsed = parseMsg(tampered(find('hello'), (x) => (x.look = wild)));
+    expect(parsed).toMatchObject({ look: { skin: 5, hairStyle: 4, hair: 7, shirt: 11, shorts: 0, headband: 11, racket: 5 } });
+  });
+
+  it('clamps negative and fractional look indices to whole numbers in range', () => {
+    const odd = { skin: -3, hairStyle: 2.9, hair: 0.2, shirt: 11.99, shorts: 3.5, headband: -0.5, racket: 1e9 };
+    const parsed = parseMsg(tampered(find('hello'), (x) => (x.look = odd)));
+    expect(parsed).toMatchObject({ look: { skin: 0, hairStyle: 2, hair: 0, shirt: 11, shorts: 3, headband: 0, racket: 5 } });
+  });
+
+  it('keeps a null headband', () => {
+    const parsed = parseMsg(wire(find('hello')));
+    expect(parsed).toMatchObject({ look: { headband: null } });
+  });
+
+  it('clamps looks inside profiles and frame state players', () => {
+    const start = parseMsg(tampered(find('start'), (x) => (x.guestProfile.look.racket = 77)));
+    expect(start).toMatchObject({ guestProfile: { look: { racket: 5 } } });
+    const frame = parseMsg(tampered(samples[14]!, (x) => (x.s.players[1].look.skin = 40)));
+    expect(frame).toMatchObject({ s: { players: [{}, { look: { skin: 5 } }] } });
+  });
+});
