@@ -71,6 +71,12 @@ export interface PeerEnv {
   createPeer?: PeerFactory;
   /** joinGame progress: called with STILL_CONNECTING after SLOW_STATUS_MS. */
   onStatus?: (text: string) => void;
+  /**
+   * Aborting it cancels a pending hostGame/joinGame: the peer is destroyed, the promise rejects with
+   * NetError('cancelled') and a result that arrives afterwards is closed at once. No effect once the
+   * promise has resolved.
+   */
+  signal?: AbortSignal;
 }
 
 /** A registered host waiting for guests. */
@@ -104,7 +110,7 @@ function buildEnv(): PeerEnvVars {
   };
 }
 
-interface Deps { options: BrokerOptions; s: Scheduler; rand: () => number; createPeer: PeerFactory }
+interface Deps { options: BrokerOptions; s: Scheduler; rand: () => number; createPeer: PeerFactory; signal: AbortSignal | undefined }
 
 function deps(opts: PeerEnv): Deps {
   return {
@@ -112,16 +118,36 @@ function deps(opts: PeerEnv): Deps {
     s: opts.scheduler ?? new RealScheduler(),
     rand: opts.rand ?? Math.random,
     createPeer: opts.createPeer ?? createPeerJs,
+    signal: opts.signal,
   };
 }
 
-/** Creates a Peer, turning a failure to load or construct PeerJS into a broker error. */
-async function newPeer(d: Deps, id: string | null): Promise<PeerLike> {
+/** Message of the NetError('cancelled') that hostGame/joinGame reject with when their signal aborts. */
+const CANCELLED = 'cancelled by the caller';
+
+/** Loads and constructs a Peer, turning a failure into a broker error. */
+async function loadPeer(d: Deps, id: string | null): Promise<PeerLike> {
   try {
     return await d.createPeer(id, d.options);
   } catch (err) {
     throw new NetError('broker', err instanceof Error ? err.message : String(err));
   }
+}
+
+/** A new Peer (see loadPeer); rejects with 'cancelled' as soon as `d.signal` aborts, and a Peer created after that is destroyed. */
+function newPeer(d: Deps, id: string | null): Promise<PeerLike> {
+  const { signal } = d;
+  if (signal?.aborted) return Promise.reject(new NetError('cancelled', CANCELLED));
+  return new Promise((resolve, reject) => {
+    const abort = (): void => reject(new NetError('cancelled', CANCELLED));
+    signal?.addEventListener('abort', abort);
+    loadPeer(d, id)
+      .finally(() => signal?.removeEventListener('abort', abort))
+      .then((peer) => {
+        if (signal?.aborted) peer.destroy();
+        else resolve(peer);
+      }, reject);
+  });
 }
 
 /**
@@ -174,17 +200,23 @@ function connTransport(conn: ConnLike, s: Scheduler, onEnd: () => void): Transpo
   };
 }
 
-/** Resolves null once `peer` is registered with the broker, or the error that stopped it (type 'timeout' after JOIN_TIMEOUT_MS). */
-function brokerOpen(peer: PeerLike, s: Scheduler): Promise<PeerErrorLike | null> {
+/**
+ * Resolves null once `peer` is registered with the broker, or the error that stopped it (type
+ * 'timeout' after JOIN_TIMEOUT_MS, 'cancelled' when `signal` aborts).
+ */
+function brokerOpen(peer: PeerLike, s: Scheduler, signal: AbortSignal | undefined): Promise<PeerErrorLike | null> {
   return new Promise((resolve) => {
     let done = false;
     const finish = (result: PeerErrorLike | null): void => {
       if (done) return;
       done = true;
-      cancel();
+      cancelTimeout();
+      signal?.removeEventListener('abort', abort);
       resolve(result);
     };
-    const cancel = s.after(JOIN_TIMEOUT_MS, () => finish({ type: 'timeout', message: `no answer from the broker in ${JOIN_TIMEOUT_MS} ms` }));
+    const abort = (): void => finish({ type: 'cancelled', message: CANCELLED });
+    const cancelTimeout = s.after(JOIN_TIMEOUT_MS, () => finish({ type: 'timeout', message: `no answer from the broker in ${JOIN_TIMEOUT_MS} ms` }));
+    signal?.addEventListener('abort', abort);
     peer.on('open', () => finish(null));
     peer.on('error', (err) => finish(err));
   });
@@ -248,14 +280,19 @@ class PeerHost implements HostHandle {
 
 /**
  * Registers a new game code with the broker (PeerJS id `bbtennis-<CODE>`), silently picking a new
- * code when one is taken (HOST_CODE_TRIES codes at most). Rejects with a NetError.
+ * code when one is taken (HOST_CODE_TRIES codes at most). Rejects with a NetError, 'cancelled' when
+ * `opts.signal` aborts.
  */
 export async function hostGame(opts: PeerEnv = {}): Promise<HostHandle> {
   const d = deps(opts);
   for (let attempt = 1; ; attempt++) {
     const code = genCode(d.rand);
     const peer = await newPeer(d, PEER_ID_PREFIX + code);
-    const failure = await brokerOpen(peer, d.s);
+    const failure = await brokerOpen(peer, d.s, d.signal);
+    if (d.signal?.aborted) {
+      peer.destroy();
+      throw new NetError('cancelled', CANCELLED);
+    }
     if (failure === null) return new PeerHost(code, peer, d.s);
     peer.destroy();
     if (failure.type !== 'unavailable-id' || attempt >= HOST_CODE_TRIES) throw new NetError(errorKind(failure.type), failure.message);
@@ -265,14 +302,15 @@ export async function hostGame(opts: PeerEnv = {}): Promise<HostHandle> {
 /**
  * Connects to the host of `code` with a reliable raw DataConnection, resolving once it is open.
  * Fails after JOIN_TIMEOUT_MS with 'nat' if the broker was reached, else 'broker'; a malformed code
- * fails with 'notFound'. Reports STILL_CONNECTING through `opts.onStatus` after SLOW_STATUS_MS.
+ * fails with 'notFound', and an aborted `opts.signal` with 'cancelled'. Reports STILL_CONNECTING
+ * through `opts.onStatus` after SLOW_STATUS_MS.
  */
 export async function joinGame(code: string, opts: PeerEnv = {}): Promise<Transport> {
   const normalized = normalizeCode(code);
   if (normalized === null) throw new NetError('notFound', `malformed code ${JSON.stringify(code)}`);
   const d = deps(opts);
   const peer = await newPeer(d, null);
-  return new Promise<Transport>((resolve, reject) => {
+  const transport = await new Promise<Transport>((resolve, reject) => {
     let brokerReached = false;
     let settled = false;
     const settle = (): boolean => {
@@ -280,6 +318,7 @@ export async function joinGame(code: string, opts: PeerEnv = {}): Promise<Transp
       settled = true;
       cancelSlow();
       cancelTimeout();
+      d.signal?.removeEventListener('abort', abort);
       return true;
     };
     const fail = (kind: NetErrorKind, message: string): void => {
@@ -287,19 +326,27 @@ export async function joinGame(code: string, opts: PeerEnv = {}): Promise<Transp
       peer.destroy();
       reject(new NetError(kind, message));
     };
+    const abort = (): void => fail('cancelled', CANCELLED);
     const cancelSlow = d.s.after(SLOW_STATUS_MS, () => opts.onStatus?.(STILL_CONNECTING));
     const cancelTimeout = d.s.after(JOIN_TIMEOUT_MS, () => {
       fail(brokerReached ? 'nat' : 'broker', `not connected after ${JOIN_TIMEOUT_MS} ms`);
     });
+    d.signal?.addEventListener('abort', abort);
     peer.on('error', (err) => fail(errorKind(err.type), err.message));
     peer.on('open', () => {
       brokerReached = true;
       const conn = peer.connect(PEER_ID_PREFIX + normalized, { reliable: true, serialization: 'raw' });
       conn.on('open', () => {
         if (settle()) resolve(connTransport(conn, d.s, () => peer.destroy()));
+        else conn.close();
       });
       conn.on('error', (err) => fail(errorKind(err.type), err.message));
       conn.on('close', () => fail('nat', 'connection closed before it opened'));
     });
   });
+  if (d.signal?.aborted) {
+    transport.close();
+    throw new NetError('cancelled', CANCELLED);
+  }
+  return transport;
 }

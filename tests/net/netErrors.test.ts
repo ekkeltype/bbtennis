@@ -30,6 +30,7 @@ describe('errorText', () => {
     ['nat', "Couldn't connect directly (firewall/NAT) — try another network"],
     ['full', 'That game already has two players'],
     ['timeout', "The game didn't answer — try again"],
+    ['cancelled', 'Cancelled'],
   ] as [NetErrorKind, string][])('%s → %s', (kind, text) => {
     expect(errorText(new NetError(kind), 'K7TQM')).toBe(text);
   });

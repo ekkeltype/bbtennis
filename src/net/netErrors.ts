@@ -1,5 +1,5 @@
-/** User-facing network failure classes (spec §5.4). */
-export type NetErrorKind = 'notFound' | 'broker' | 'webrtc' | 'nat' | 'version' | 'full' | 'timeout';
+/** User-facing network failure classes (spec §5.4); 'cancelled' means the caller aborted the attempt. */
+export type NetErrorKind = 'notFound' | 'broker' | 'webrtc' | 'nat' | 'version' | 'full' | 'timeout' | 'cancelled';
 
 /** A network failure; show it with errorText. `versions` are protocol versions for kind 'version'. */
 export class NetError extends Error {
@@ -42,5 +42,7 @@ export function errorText(e: NetError, code?: string): string {
       return 'That game already has two players';
     case 'timeout':
       return "The game didn't answer — try again";
+    case 'cancelled':
+      return 'Cancelled';
   }
 }

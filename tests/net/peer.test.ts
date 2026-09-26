@@ -6,7 +6,7 @@ import { ALPHABET } from '../../src/net/codes';
 import {
   CLOSE_FLUSH_MS, DEFAULT_ICE_SERVERS, HOST_CODE_TRIES, JOIN_TIMEOUT_MS, NetError, RECONNECT_DELAY_MS, SLOW_STATUS_MS,
   STILL_CONNECTING, errorKind, errorText, hostGame, joinGame, peerOptions,
-  type BrokerOptions, type ConnLike, type NetErrorKind, type PeerFactory, type PeerLike,
+  type BrokerOptions, type ConnLike, type PeerEnv, type PeerFactory, type PeerLike,
 } from '../../src/net/peer';
 import * as netErrors from '../../src/net/netErrors';
 import * as peerConfig from '../../src/net/peerConfig';
@@ -125,6 +125,16 @@ async function openGuest() {
   const reasons: string[] = [];
   transport!.onClose((r) => reasons.push(r));
   return { ...net, conn, transport: transport!, reasons };
+}
+
+/** A join of `code` in a fake net, with its promise, its outcome and the statuses reported. */
+async function startJoin(code = ' k7tqm ', signal?: AbortSignal) {
+  const net = fakeNet();
+  const statuses: string[] = [];
+  const pending = joinGame(code, { ...net.opts, signal, onStatus: (t) => statuses.push(t) });
+  const settled = pending.then((t) => ({ t }), (e: unknown) => ({ e }));
+  await tick();
+  return { ...net, peer: net.peers[0]!, pending, settled, statuses };
 }
 
 afterEach(() => {
@@ -497,15 +507,6 @@ describe('joinGame', () => {
     expect(peers).toHaveLength(0);
   });
 
-  async function startJoin(code = ' k7tqm ') {
-    const net = fakeNet();
-    const statuses: string[] = [];
-    const pending = joinGame(code, { ...net.opts, onStatus: (t) => statuses.push(t) });
-    const settled = pending.then((t) => ({ t }), (e: unknown) => ({ e }));
-    await tick();
-    return { ...net, peer: net.peers[0]!, pending, settled, statuses };
-  }
-
   it('connects reliably with raw serialization to the host only after reaching the broker', async () => {
     const { peer, pending } = await startJoin();
     expect(peer.id).toBeNull();
@@ -630,5 +631,130 @@ describe('joinGame', () => {
     conn.emit('close');
     expect(reasons).toEqual(['closed']);
     expect(peer.destroyed).toBe(true);
+  });
+});
+
+describe('cancellation', () => {
+  /** A fake net whose PeerJS "loads" only when `load()` is called. */
+  function loadingNet() {
+    const net = fakeNet();
+    let load!: () => void;
+    const loaded = new Promise<void>((resolve) => (load = resolve));
+    const createPeer: PeerFactory = async (id, options) => {
+      await loaded;
+      return net.opts.createPeer(id, options);
+    };
+    return { ...net, load, opts: { ...net.opts, createPeer } };
+  }
+
+  it('an already-aborted signal rejects hostGame and joinGame with cancelled without creating a peer', async () => {
+    const { peers, opts } = fakeNet();
+    const signal = AbortSignal.abort();
+    await expect(hostGame({ ...opts, signal })).rejects.toMatchObject({ name: 'NetError', kind: 'cancelled' });
+    await expect(joinGame('K7TQM', { ...opts, signal })).rejects.toMatchObject({ name: 'NetError', kind: 'cancelled' });
+    expect(peers).toHaveLength(0);
+  });
+
+  it.each([
+    ['hostGame', (opts: PeerEnv) => hostGame(opts)],
+    ['joinGame', (opts: PeerEnv) => joinGame('K7TQM', opts)],
+  ] as const)('%s aborted while PeerJS loads rejects at once and destroys the peer created later', async (_name, start) => {
+    const { peers, opts, load } = loadingNet();
+    const controller = new AbortController();
+    const settled = start({ ...opts, signal: controller.signal }).catch((e: unknown) => e);
+    await tick();
+    controller.abort();
+    expect(await settled).toMatchObject({ kind: 'cancelled' });
+    load();
+    await tick();
+    expect(peers).toHaveLength(1);
+    expect(peers[0]!.destroyed).toBe(true);
+  });
+
+  it('hostGame aborted while waiting for the broker destroys the peer, rejects and tries no other code', async () => {
+    const { peers, s, opts } = fakeNet();
+    const controller = new AbortController();
+    const settled = hostGame({ ...opts, signal: controller.signal }).catch((e: unknown) => e);
+    await tick();
+    controller.abort();
+    const err = await settled;
+    expect(err).toBeInstanceOf(NetError);
+    expect(err).toMatchObject({ kind: 'cancelled' });
+    expect(peers[0]!.destroyed).toBe(true);
+    peers[0]!.emit('error', peerError('unavailable-id'));
+    s.advance(JOIN_TIMEOUT_MS * 2);
+    await tick();
+    expect(peers).toHaveLength(1);
+  });
+
+  it('hostGame aborted in the same turn as the broker opens still rejects, and the peer is destroyed', async () => {
+    const { peers, opts } = fakeNet();
+    const controller = new AbortController();
+    const settled = hostGame({ ...opts, signal: controller.signal }).catch((e: unknown) => e);
+    await tick();
+    peers[0]!.emit('open', peers[0]!.id);
+    controller.abort();
+    expect(await settled).toMatchObject({ kind: 'cancelled' });
+    expect(peers[0]!.destroyed).toBe(true);
+  });
+
+  it('joinGame aborted before the broker answers destroys the peer and reports nothing more', async () => {
+    const controller = new AbortController();
+    const { s, peer, settled, statuses } = await startJoin('K7TQM', controller.signal);
+    controller.abort();
+    expect(await settled).toMatchObject({ e: { kind: 'cancelled' } });
+    expect(peer.destroyed).toBe(true);
+    peer.emit('open', 'guest-id');
+    peer.emit('error', peerError('network'));
+    s.advance(JOIN_TIMEOUT_MS * 2);
+    expect(statuses).toEqual([]);
+  });
+
+  it('joinGame aborted while connecting rejects, and a connection that opens afterwards is closed at once', async () => {
+    const controller = new AbortController();
+    const { peer, settled } = await startJoin('K7TQM', controller.signal);
+    peer.emit('open', 'guest-id');
+    const conn = peer.conns[0]!;
+    controller.abort();
+    expect(await settled).toMatchObject({ e: { kind: 'cancelled' } });
+    expect(peer.destroyed).toBe(true);
+    conn.emit('open');
+    expect(conn.closes).toEqual([undefined]);
+  });
+
+  it('joinGame aborted in the same turn as the connection opens rejects and closes that transport', async () => {
+    const controller = new AbortController();
+    const { s, peer, settled } = await startJoin('K7TQM', controller.signal);
+    peer.emit('open', 'guest-id');
+    const conn = peer.conns[0]!;
+    conn.emit('open');
+    controller.abort();
+    expect(await settled).toMatchObject({ e: { kind: 'cancelled' } });
+    s.advance(CLOSE_FLUSH_MS);
+    expect(conn.closes).toEqual([undefined]);
+    expect(peer.destroyed).toBe(true);
+  });
+
+  it('aborting after hostGame or joinGame resolved changes nothing', async () => {
+    const hostAbort = new AbortController();
+    const host = fakeNet();
+    const hosting = hostGame({ ...host.opts, signal: hostAbort.signal });
+    await tick();
+    host.peers[0]!.emit('open', host.peers[0]!.id);
+    await hosting;
+    hostAbort.abort();
+    expect(host.peers[0]!.destroyed).toBe(false);
+
+    const joinAbort = new AbortController();
+    const { peer, pending } = await startJoin('K7TQM', joinAbort.signal);
+    peer.emit('open', 'guest-id');
+    const conn = peer.conns[0]!;
+    conn.emit('open');
+    const t = await pending;
+    joinAbort.abort();
+    t.send({ type: 'ping', id: 1 });
+    expect(conn.sent).toEqual(['{"type":"ping","id":1}']);
+    expect(conn.closes).toEqual([]);
+    expect(peer.destroyed).toBe(false);
   });
 });
