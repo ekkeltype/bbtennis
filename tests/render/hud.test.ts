@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { COURT } from '../../src/core/court';
 import { CPU_LEVELS } from '../../src/core/cpu';
 import { createScore } from '../../src/core/scoring';
 import { createTurn, startTurn, turnClock, turnInput } from '../../src/core/turn';
@@ -15,7 +16,11 @@ import type {
   ViewModel,
 } from '../../src/core/types';
 import { contrastRatio, relativeLuminance } from '../../src/render/color';
-import { BELT_COLOR, PAL, RAMPS } from '../../src/render/palette';
+import { BANDS, layoutSingle } from '../../src/render/layout';
+import { BELT_COLOR, OUTLINE, PAL, RAMPS } from '../../src/render/palette';
+import { project } from '../../src/render/projection';
+import { headHeight } from '../../src/render/prompts';
+import { HAIR_STYLES } from '../../src/render/sprites/parts';
 import {
   Hud,
   PAUSE_ICON_RECT,
@@ -107,7 +112,7 @@ describe('scoreboard', () => {
     };
     const rows = scoreRows(matchState(null, null, { score }));
     expect(rows.map((r) => r.name)).toEqual(['ALEXANDRA', 'KAI']);
-    expect(rows.map((r) => r.sets)).toEqual([[4], [2]]);
+    expect(rows.map((r) => r.setCells.map((c) => c.value))).toEqual([[4], [2]]);
     expect(rows.map((r) => r.games)).toEqual([1, 3]);
     expect(rows.map((r) => r.points)).toEqual(['', 'AD']);
     expect(rows.map((r) => r.serving)).toEqual([false, true]);
@@ -122,7 +127,7 @@ describe('scoreboard', () => {
       setsWon: [1, 1],
     };
     const rows = scoreRows(matchState(null, null, { score }));
-    expect(rows.map((r) => r.sets)).toEqual([[4, 5], [5, 4]]);
+    expect(rows.map((r) => r.setCells.map((c) => c.value))).toEqual([[4, 5], [5, 4]]);
     expect(rows.map((r) => r.setCells)).toEqual([
       [{ value: 4, sup: null }, { value: 5, sup: 5 }],
       [{ value: 5, sup: 3 }, { value: 4, sup: null }],
@@ -514,6 +519,33 @@ describe('Hud.draw', () => {
       if (isDark) expect(relativeLuminance(ramp[0])).toBeGreaterThan(relativeLuminance(ramp[1]));
     });
     expect(dark).toEqual([BELT_COLOR.brown, BELT_COLOR.black, 7]);
+  });
+
+  it('shows "CONNECTION UNSTABLE..." at the bottom centre, clear of the far prompt band and below every plate', () => {
+    const t = serveTurn();
+    turnClock(t, 3000);
+    const vm = view(matchState(t), 3000);
+    const { ctx, rects } = recordingContext();
+    new Hud().draw(ctx, worldFrame({ ...vm, overlay: { ...vm.overlay, unstable: true, rttMs: 180 } }), PREFS);
+    // The message: an outlined 24 px panel around its 2× title.
+    const box = rects.find((r) => r.style === OUTLINE && r.h === 24);
+    expect(box).toBeDefined();
+    const { x, y, w, h } = box!;
+    expect(x).toBe(Math.round((480 - w) / 2));
+    expect(y + h).toBeLessThanOrEqual(270);
+    // The typist's own choice row sits in the far band; a locked word there at 2× and its timing bar end by y 58.
+    expect(y).toBeGreaterThan(BANDS.far[0] + 32 + 4);
+    // The lowest a plate gets: a 2× chase plate over a near player at the deepest contact point, then its timing bar.
+    const feetY = project({ x: 0, y: -(COURT.halfLength + TUNING.trajectory.maxBehindBaseline), z: 0 }, 0).y;
+    const head = Math.min(
+      ...HAIR_STYLES.flatMap((_, hairStyle) => [null, 5].map((headband) => headHeight({ ...LOOK, hairStyle, headband }, 'near'))),
+    );
+    const lowest = layoutSingle(14, 240, Math.round(feetY) - head, 2);
+    expect(y).toBeGreaterThan(lowest.y + lowest.h + 4);
+    // Clear of the RTT readout in the bottom-right corner.
+    const rtt = rects.find((r) => r.style === OUTLINE && r.h === 10 && r.y === 258);
+    expect(rtt).toBeDefined();
+    expect(x + w).toBeLessThanOrEqual(rtt!.x);
   });
 
   it('replaces the scoreboard with the coach text in the HUD band (spec §3.12)', () => {

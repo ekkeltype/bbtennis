@@ -15,7 +15,7 @@ import type {
 } from '../../src/core/types';
 import { textWidth } from '../../src/render/font';
 import { beltColor } from '../../src/render/hud';
-import { BANDS, layoutServeNear } from '../../src/render/layout';
+import { BANDS, layoutServeFar, layoutServeNear } from '../../src/render/layout';
 import type { PlateDraw } from '../../src/render/plates';
 import { PlayerAnimator, type PlayerPose } from '../../src/render/players';
 import { project } from '../../src/render/projection';
@@ -153,6 +153,39 @@ describe('promptScene', () => {
     expect(s.plates[0]!.faded).toBeGreaterThan(0);
     expect(s.rings).toEqual([]);
     expect(s.bar).toBeNull();
+  });
+
+  it("redraws the local server's locked word at 2× away from the toss column with Large words, the timing bar under it", () => {
+    const t = tossed();
+    typeWord(t, 'vo', 2800);
+    turnClock(t, 3000);
+    const s = scene(view(matchState(t), 3000, 0), { ...PREFS, largeWords: true });
+    const feet = project({ ...serverSpot(0, 'deuce'), z: 0 }, 0);
+    const want = layoutServeNear([4, 6, 10], feet.x, Math.round(feet.y) - headHeight(LOOK, 'near'), 1);
+    expect(s.plates.map((p) => [p.opt.word, p.box, p.scale])).toEqual([
+      ['ball', want[0], 1],
+      ['volley', want[1], 2],
+      ['tiebreaker', want[2], 1],
+    ]);
+    expect(s.bar).toMatchObject({ x: want[1]!.x, y: want[1]!.y + 32 + 2, w: want[1]!.w });
+  });
+
+  it("redraws the opponent's locked hidden serve word at 2× away from the toss gap with Large words, and flips it over in that box", () => {
+    const { serve, ret } = servedBall();
+    const large = { ...PREFS, largeWords: true };
+    const feetX = project({ ...serverSpot(0, 'deuce'), z: 0 }, 1).x;
+    const want = layoutServeFar([4, 6, 10], feetX, 0);
+    // 'bal' typed, the strike 100 ms away.
+    const toss = scene(view(matchState(redactServe(serve)), 3050, 1), large);
+    const hiddenPlates = want.map((b, i) => ['hiddenRemote', b, i === 0 ? 2 : 1]);
+    expect(toss.plates.map((p) => [p.style, p.box, p.scale])).toEqual(hiddenPlates);
+    const flip = scene(view(matchState(ret, redactServe(serve)), 0, 1), large).flip;
+    expect(flip?.hidden).toMatchObject({ box: want[0], scale: 2 });
+    expect(flip?.revealed).toMatchObject({ box: want[0], scale: 2, opt: { word: 'ball' } });
+    const held = scene(view(matchState(ret, redactServe(serve)), 300, 1), large).plates.find((p) => p.opt.word === 'ball');
+    expect(held).toMatchObject({ box: want[0], scale: 2, style: 'remote' });
+    const small = scene(view(matchState(ret, redactServe(serve)), 0, 1)).flip?.revealed;
+    expect(small).toMatchObject({ box: layoutServeFar([4, 6, 10], feetX)[0], scale: 1 });
   });
 
   it('shows everything in remote style to a spectator', () => {

@@ -210,6 +210,35 @@ describe('layoutServeNear', () => {
     expect(bad).toEqual([]);
   });
 
+  it('grows a locked word redrawn at 2× (Large words) away from the head, keeping its inner edge and bottom', () => {
+    const one = layoutServeNear([4, 7, 12], 200, 200);
+    const big = layoutServeNear([4, 7, 12], 200, 200, 1);
+    expect(big[1]).toEqual({ x: 210, y: one[1]!.y + 16 - 32, w: plateWidth(7, 2), h: 32, option: 1 });
+    expect([big[0], big[2]]).toEqual([one[0], one[2]]);
+    const left = layoutServeNear([4, 7, 12], 300, 200, 2)[2]!;
+    expect([left.x + left.w, left.y + left.h, left.w, left.h]).toEqual([290, 200, plateWidth(12, 2), 32]);
+  });
+
+  it('keeps the tossed ball clear of a locked word at 2× for every word length 3–14, on both sides of the screen', () => {
+    const bad = TRIPLES.flatMap((lens) =>
+      HEAD_XS.flatMap((hx) =>
+        [200, 60].flatMap((hy) =>
+          [0, 1, 2].flatMap((large) => {
+            const b = layoutServeNear(lens, hx, hy, large)[large]!;
+            const id = `${lens.join('/')} head ${hx},${hy}, option ${large} at 2×`;
+            const out = problems([b]).map((p) => `${id}: ${p}`);
+            out.push(...tossProblems([b], hx, 'near', id));
+            if (b.w !== plateWidth(lens[large]!, 2) || b.h !== 32) out.push(`${id}: not doubled`);
+            const right = layoutServeNear(lens, hx, hy)[large]!.x >= hx;
+            if (right ? b.x < hx + 10 : b.x + b.w > hx - 10) out.push(`${id}: within 10 px of the head`);
+            return out;
+          }),
+        ),
+      ),
+    );
+    expect(bad).toEqual([]);
+  });
+
   it('pushes the stack below the HUD band when the head is high on screen', () => {
     const boxes = layoutServeNear([5, 9, 14], 200, 40);
     expect(problems(boxes)).toEqual([]);
@@ -275,6 +304,40 @@ describe('layoutServeFar', () => {
         });
         return out;
       }),
+    );
+    expect(bad).toEqual([]);
+  });
+
+  it('grows a locked word redrawn at 2× (Large words) away from the toss gap, keeping its top and gap-side edge', () => {
+    // At 1×: x 118 / 163 / 252, 41 / 65 / 95 px wide, the gap x 228–251.
+    const one = layoutServeFar([5, 9, 14], 240);
+    expect(layoutServeFar([5, 9, 14], 240, 0)[0]).toEqual({ x: 159 - 82, y: 22, w: 82, h: 32, option: 0 });
+    expect(layoutServeFar([5, 9, 14], 240, 1)[1]).toEqual({ x: 228 - 130, y: 22, w: 130, h: 32, option: 1 });
+    const big = layoutServeFar([5, 9, 14], 240, 2);
+    expect(big[2]).toEqual({ x: 252, y: 22, w: 190, h: 32, option: 2 });
+    expect(big.slice(0, 2)).toEqual(one.slice(0, 2));
+  });
+
+  it('moves a 2× word with no room on its side of the gap next to the gap on the other side', () => {
+    // Easy alone left of a server at x 70 (x 17–57); 82 px wide at 2×, it cannot end left of x 58.
+    expect(layoutServeFar([5, 9, 14], 70)[0]).toMatchObject({ x: 17, w: 41 });
+    expect(layoutServeFar([5, 9, 14], 70, 0)[0]).toEqual({ x: 82, y: 22, w: 82, h: 32, option: 0 });
+  });
+
+  it('keeps the toss gap and the tossed ball clear of a locked word at 2× for every word length 3–14', () => {
+    const bad = TRIPLES.flatMap((lens) =>
+      [...SERVER_XS, -50, 530].flatMap((sx) =>
+        [0, 1, 2].flatMap((large) => {
+          const b = layoutServeFar(lens, sx, large)[large]!;
+          const id = `${lens.join('/')} server ${sx}, option ${large} at 2×`;
+          const out = problems([b]).map((p) => `${id}: ${p}`);
+          out.push(...tossProblems([b], sx, 'far', id));
+          if (b.w !== plateWidth(lens[large]!, 2) || b.h !== 32) out.push(`${id}: not doubled`);
+          if (b.y !== 22) out.push(`${id}: not at the top of the far band`);
+          if (b.x + b.w > sx - 12 && b.x < sx + 12) out.push(`${id}: in the toss gap`);
+          return out;
+        }),
+      ),
     );
     expect(bad).toEqual([]);
   });

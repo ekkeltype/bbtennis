@@ -135,14 +135,40 @@ function readableOn(bg: string): string {
   return contrastRatio(PAL.white, bg) >= contrastRatio(PLATE.outline, bg) ? PAL.white : PLATE.outline;
 }
 
+/** A name chip's rectangle in buffer pixels, the scale it is drawn at and where it hangs off its plate. */
+export interface ChipBox { x: number; y: number; w: number; h: number; scale: 1 | 2; side: 'above' | 'left' | 'right' }
+
+const chipLabel = (name: string): string => [...name].slice(0, CHIP_LETTERS).join('').toUpperCase();
+
 /**
- * A tab with the owner's first 3 letters on `color` (belt colour, or the plate fill) that shares one
- * stroke with the plate at (x, y), `plateW` wide: above its left end, or, when that would reach the
- * HUD band (a plate in the far prompt band), beside it with the tops aligned, on the side away from
- * the screen centre unless that would leave x 4–476. The far server stands near the centre (x ≈ 229
- * or 251 for `TUNING.positions.serverX` 0.8 m), so the tab stays out of its serve row's toss gap;
- * it never hangs below the plate, onto the far player. A tab dark enough for white text gets a light
- * rim on its free sides so it stays visible over dark ground.
+ * Where a plate at (x, y), `plateW` wide and drawn at scale `s`, hangs the name chip of `name`: a tab
+ * sharing one stroke with the plate, above its left end, or, when that would reach the HUD band (a
+ * plate in the far prompt band), beside it with the tops aligned, on the side away from the screen
+ * centre. There it shrinks to 1× when a tab at the plate's scale would leave x 4–476 (a long locked
+ * word at 2×), and only when neither fits does it take the other side. The far server stands near
+ * the centre (x ≈ 229 or 251 for `TUNING.positions.serverX` 0.8 m), so the tab stays out of its serve
+ * row's toss gap at 1× and 2×; it never hangs below the plate, onto the far player.
+ */
+export function nameChipBox(name: string, x: number, y: number, plateW: number, s: 1 | 2): ChipBox {
+  const text = chipLabel(name);
+  const w = (k: 1 | 2): number => textWidth(text, k) + 4 * k;
+  const h = CHIP_H * s;
+  if (y - h + s >= CHIP_MIN_Y) return { x, y: y - h + s, w: w(s), h, scale: s, side: 'above' };
+  const fits = (side: 'left' | 'right', k: 1 | 2): boolean =>
+    side === 'left' ? x - w(k) + k >= CHIP_X.min : x + plateW - k + w(k) <= CHIP_X.max;
+  const away = x + (plateW - 1) / 2 <= CHIP_X.centre ? 'left' : 'right';
+  const [side, k]: ['left' | 'right', 1 | 2] = fits(away, s)
+    ? [away, s]
+    : fits(away, 1)
+      ? [away, 1]
+      : [away === 'left' ? 'right' : 'left', s];
+  return { x: side === 'left' ? x - w(k) + k : x + plateW - k, y, w: w(k), h: CHIP_H * k, scale: k, side };
+}
+
+/**
+ * The tab with the owner's first 3 letters on `color` (belt colour, or the plate fill) where
+ * `nameChipBox` puts it. A tab dark enough for white text gets a light rim on its free sides so it
+ * stays visible over dark ground.
  */
 function drawNameChip(
   ctx: CanvasRenderingContext2D,
@@ -153,22 +179,15 @@ function drawNameChip(
   plateW: number,
   s: 1 | 2,
 ): void {
-  const text = [...name].slice(0, CHIP_LETTERS).join('').toUpperCase();
-  const w = textWidth(text, s) + 4 * s;
-  const h = CHIP_H * s;
+  const c = nameChipBox(name, x, y, plateW, s);
+  const k = c.scale;
   const ink = readableOn(color);
-  const above = y - h + s >= CHIP_MIN_Y;
-  const fitsLeft = x - w + s >= CHIP_X.min;
-  const fitsRight = x + plateW - s + w <= CHIP_X.max;
-  const left = x + (plateW - 1) / 2 <= CHIP_X.centre ? fitsLeft : !fitsRight;
-  const cx = above ? x : left ? x - w + s : x + plateW - s;
-  const cy = above ? y - h + s : y;
-  frame(ctx, cx, cy, w, h, s, ink === PAL.white ? CHIP_RIM : PLATE.outline);
+  frame(ctx, c.x, c.y, c.w, c.h, k, ink === PAL.white ? CHIP_RIM : PLATE.outline);
   // The edge lying on the plate's stroke stays dark.
-  if (above) rect(ctx, cx, y, w, s, PLATE.outline);
-  else rect(ctx, left ? x : cx, cy, s, h, PLATE.outline);
-  rect(ctx, cx + s, cy + s, w - 2 * s, h - 2 * s, color);
-  drawText(ctx, text, cx + 2 * s, cy + s, ink, s);
+  if (c.side === 'above') rect(ctx, c.x, y, c.w, k, PLATE.outline);
+  else rect(ctx, c.side === 'left' ? x : c.x, c.y, k, c.h, PLATE.outline);
+  rect(ctx, c.x + k, c.y + k, c.w - 2 * k, c.h - 2 * k, color);
+  drawText(ctx, chipLabel(name), c.x + 2 * k, c.y + k, ink, k);
 }
 
 /**
@@ -304,8 +323,20 @@ export function drawTierRing(ctx: CanvasRenderingContext2D, tier: Tier, sx: numb
   for (const [dx, dy] of ring.ink) rect(ctx, x + dx, y + dy, 1, 1, TIER_COLOR[tier]);
 }
 
-/** Whole-pixel points of the line from (x0, y0) to (x1, y1), both ends included (Bresenham). */
+/**
+ * Longest leader walked, in pixels along either axis: an on-screen plate and an on-screen ring are
+ * never farther apart than the 480 px buffer width.
+ */
+const MAX_LEADER = 1024;
+
+/**
+ * Whole-pixel points of the line from (x0, y0) to (x1, y1), both ends included (Bresenham). Empty for
+ * an end that is not a finite whole pixel, which the walk would never reach, and for a line longer
+ * than `MAX_LEADER`, which could only come from a malformed target (a peer's bad data).
+ */
 function linePixels(x0: number, y0: number, x1: number, y1: number): Offsets {
+  if (![x0, y0, x1, y1].every(Number.isInteger)) return [];
+  if (Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) > MAX_LEADER) return [];
   const out: Offsets = [];
   const dx = Math.abs(x1 - x0);
   const dy = -Math.abs(y1 - y0);
@@ -333,7 +364,8 @@ function linePixels(x0: number, y0: number, x1: number, y1: number): Offsets {
  * Draws the leader joining a choice plate to its ground ring (spec §4.2): a 1 px tier-coloured line
  * from `from` (the plate end) towards the ring centre `to` (the point given to `drawTierRing`),
  * outlined 1 px in near-black and stopping where it meets the ring's outline, so the ring stays clean
- * whichever is drawn first. Draw it before the plate so the plate covers its top end.
+ * whichever is drawn first. Draw it before the plate so the plate covers its top end. Nothing is drawn
+ * for a non-finite end or an off-screen length (`linePixels`).
  */
 export function drawLeader(
   ctx: CanvasRenderingContext2D,

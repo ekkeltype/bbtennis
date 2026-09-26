@@ -16,15 +16,14 @@ export const PAUSE_ICON_RECT: Readonly<{ x: number; y: number; w: number; h: num
 
 /**
  * One scoreboard row: upper-case name, belt colour and, for a belt too dark to read on the panel, the
- * light 1 px inner outline of its swatch (null otherwise), games of completed sets, the set columns as
- * drawn (`setLine`: tiebreak superscripts, the Tiebreak format's points), current games and points,
+ * light 1 px inner outline of its swatch (null otherwise), the set columns as drawn (`setLine`: games
+ * of completed sets, tiebreak superscripts, the Tiebreak format's points), current games and points,
  * serve dot.
  */
 export interface ScoreRow {
   name: string;
   belt: string;
   beltRim: string | null;
-  sets: number[];
   setCells: SetCell[];
   games: number;
   points: string;
@@ -53,6 +52,13 @@ const BANNER_TOP = 83;
 const BANNER_LINE_H = 18;
 /** The serve clock turns yellow (never red) for its last seconds. */
 const CLOCK_WARN_S = 5;
+/**
+ * Centre row of "Connection unstable...": its 24 px box fills y 245–268 at the bottom centre, beside
+ * the RTT readout. The typist's words keep running under it, and no plate reaches that low: choice
+ * rows sit in the bands, and serve and chase plates above a head, which stands ≥ 40 px over feet that
+ * are never below y 257 (the deepest contact point).
+ */
+const UNSTABLE_CY = H - 13;
 
 /** Belt colours under this contrast against the scoreboard panel (black, navy, brown) get a swatch rim. */
 const SWATCH_MIN_CONTRAST = 3;
@@ -87,7 +93,6 @@ export function scoreRows(pub: PublicState): [ScoreRow, ScoreRow] {
     name: pub.players[p].name.toUpperCase(),
     belt: beltColor(pub.players[p]),
     beltRim: beltRim(pub.players[p]),
-    sets: s.setGames.map((g) => g[p]),
     setCells: cells[p],
     games: s.games[p],
     points: points[p],
@@ -422,7 +427,7 @@ export class Hud {
     if (r.speed) readout(ctx, r.speed.text, right, 2, r.speed.alpha);
     if (r.wpm) readout(ctx, r.wpm, right, 12, 1);
     drawPauseIcon(ctx);
-    if (overlay.unstable) message(ctx, 'CONNECTION UNSTABLE...', null, 40);
+    if (overlay.unstable) message(ctx, 'CONNECTION UNSTABLE...', null, UNSTABLE_CY);
     if (overlay.rttMs !== null) readout(ctx, `RTT ${Math.round(overlay.rttMs)} MS`, W - 2, H - 12, 1);
     const banner = bannerFor(f);
     if (banner) drawBanner(ctx, banner);

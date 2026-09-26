@@ -610,6 +610,47 @@ describe('drawPlate — name chip', () => {
     chipText(beside, 40 - w + 3, 32, 'BO');
   });
 
+  it('sets a 1× tab beside a 2× plate whose far side has no room for a 2× tab, rather than on its centre side', () => {
+    // A 14-letter locked word at 2× right of the ad-side far server's toss gap (x 263–452).
+    const g = scene(480, 60);
+    const p = plate('counterpuncher', { style: 'remote', nameChip: 'kim', scale: 2 }, 263, 22);
+    drawPlate(as2d(g), p);
+    const cx = 263 + p.box.w - 1;
+    const w = textWidth('KIM') + 4;
+    expect(colours(g, 0, 0, 263, 60), 'left of the plate').toEqual(new Set([BG]));
+    expect(colours(g, 476, 0, 4, 60), 'right of x 476').toEqual(new Set([BG]));
+    expect(colours(g, cx + 1, 33, w - 1, 27), 'under the tab').toEqual(new Set([BG]));
+    chipText(g, cx + 2, 23, 'KIM');
+    expect(chipEdges(g, cx, 22, w, 11, 'left').shared).toEqual(new Set([PLATE.outline]));
+  });
+
+  it('keeps the tab of a locked far serve word at 2× out of the toss gap over the server', () => {
+    const d = 1 + (TUNING.positions.serverY + COURT.halfLength) / (2 * COURT.halfLength);
+    const off = (TUNING.positions.serverX * 27.35) / d;
+    // The widest 3-letter tab a name can get.
+    const widest = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'].sort((a, b) => GLYPHS[b]!.w - GLYPHS[a]!.w)[0]!.repeat(3);
+    const lengths = [3, 4, 5].flatMap((e) => [6, 7, 8, 9].flatMap((m) => [10, 11, 12, 13, 14].map((h) => [e, m, h])));
+    for (const sx of [240 - off, 240 + off]) {
+      const [gapLeft, gapRight] = [Math.floor(sx - 12), Math.ceil(sx + 12)];
+      const boxes = new Map<string, PlateBox>();
+      for (const lens of lengths) {
+        for (const i of [0, 1, 2]) {
+          const b = layoutServeFar(lens, sx, i)[i]!;
+          boxes.set(JSON.stringify(b), b);
+        }
+      }
+      for (const b of boxes.values()) {
+        const g = scene(480, 60);
+        const len = (b.w / 2 - 11) / 6;
+        drawPlate(as2d(g), { ...plate('x'.repeat(len), { style: 'remote', nameChip: widest, scale: 2 }), box: b });
+        const id = `server ${sx.toFixed(2)}, plate ${JSON.stringify(b)}`;
+        expect(colours(g, gapLeft, 0, gapRight - gapLeft, 60), `${id}: the toss gap`).toEqual(new Set([BG]));
+        expect(colours(g, 0, 0, 4, 60), `${id}: left of x 4`).toEqual(new Set([BG]));
+        expect(colours(g, 476, 0, 4, 60), `${id}: right of x 476`).toEqual(new Set([BG]));
+      }
+    }
+  });
+
   it('sets a 2× tab beside a 2× plate at the top of the far band', () => {
     const g = scene();
     const p = plate('rally', { style: 'remote', nameChip: 'Bo', scale: 2 }, 60, 22);
@@ -827,6 +868,26 @@ describe('drawLeader', () => {
         expect(marks(g), `${t} from ${from.x},${from.y}`).toBe(1);
       }
     }
+  });
+
+  it('draws nothing, and returns, for an end that is not a finite point (a malformed peer target)', () => {
+    const ends: [string, { x: number; y: number }, { x: number; y: number }][] = [
+      ['NaN plate x', { x: NaN, y: 5 }, { x: 30, y: 30 }],
+      ['NaN ring y', { x: 10, y: 5 }, { x: 30, y: NaN }],
+      ['infinite ring x', { x: 10, y: 5 }, { x: Infinity, y: 30 }],
+      ['-infinite plate y', { x: 10, y: -Infinity }, { x: 30, y: 30 }],
+    ];
+    for (const [label, from, to] of ends) {
+      const g = scene(60, 60);
+      drawLeader(as2d(g), from, to, 'easy');
+      expect(colours(g, 0, 0, 60, 60), label).toEqual(new Set([BG]));
+    }
+  });
+
+  it('skips a leader too long to join an on-screen plate to an on-screen ring instead of walking it', () => {
+    const g = scene(60, 60);
+    drawLeader(as2d(g), { x: 10, y: 5 }, { x: 1e12, y: 30 }, 'medium');
+    expect(colours(g, 0, 0, 60, 60)).toEqual(new Set([BG]));
   });
 });
 

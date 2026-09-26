@@ -182,6 +182,7 @@ describe('drawWorld', () => {
     const nearSprite = spriteOf(ops, sheets[0]);
     const farSprite = spriteOf(ops, sheets[1]);
     expect(nearSprite).toBeGreaterThan(-1);
+    expect(farSprite).toBeGreaterThan(-1);
     expect(firstRingPixel(ops, front)).toBeGreaterThan(-1);
     expect(firstRingPixel(ops, front)).toBeLessThan(nearSprite);
     expect(firstRingPixel(ops, front)).toBeGreaterThan(farSprite);

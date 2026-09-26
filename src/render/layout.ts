@@ -71,22 +71,27 @@ export function layoutChoice(lens: number[], targetsScreenX: number[], band: 'fa
  * Serve plates of the near server (spec §4.2, R34): a vertical stack, easy on top, 3 px gaps, beside
  * the head (top at `headX`, `headY`) on the side toward the screen centre, which always has the more
  * room; at exactly the centre it goes right. The plates share their inner edge, ≥ 10 px from `headX`
- * so the tossed ball stays clear, and the stack's bottom is level with the head top. Kept inside
- * x 4–476 and y 22–266. Throws on an empty `lens`.
+ * so the tossed ball stays clear, and the stack's bottom is level with the head top. Option `large`
+ * (a locked word with Large words) is redrawn at 2× grown away from the head: its inner edge and
+ * bottom stay, so the ball stays as clear as at 1×. Kept inside x 4–476 and y 22–266. Throws on an
+ * empty `lens`.
  */
-export function layoutServeNear(lens: number[], headX: number, headY: number): PlateBox[] {
+export function layoutServeNear(lens: number[], headX: number, headY: number, large: number | null = null): PlateBox[] {
   if (lens.length === 0) throw new Error('layoutServeNear needs at least one word length');
   const stackH = lens.length * PLATE_H + (lens.length - 1) * STACK_GAP;
   const top = clamp(Math.round(headY) - stackH, AREA.top, AREA.bottom - stackH);
   const right = headX <= CENTRE_X;
   const inner = right ? Math.ceil(headX + TOSS_CLEAR_NEAR) : Math.floor(headX - TOSS_CLEAR_NEAR);
   return lens.map((len, option) => {
-    const w = plateWidth(len);
+    const scale = option === large ? 2 : 1;
+    const w = plateWidth(len, scale);
+    const h = PLATE_H * scale;
+    const bottom = top + option * (PLATE_H + STACK_GAP) + PLATE_H;
     return {
       x: clamp(right ? inner : inner - w, AREA.left, AREA.right - w),
-      y: top + option * (PLATE_H + STACK_GAP),
+      y: clamp(bottom - h, AREA.top, AREA.bottom - h),
       w,
-      h: PLATE_H,
+      h,
       option,
     };
   });
@@ -103,10 +108,10 @@ function rowWidth(widths: number[]): number {
  * split end ≥ 12 px left of `serverX` and the rest start ≥ 12 px right of it, a ≥ 24 px gap that keeps
  * the tossed ball (over the hand, right of the feet) clear. Of the splits that fit x 4–476, the one
  * whose two sides are closest in width wins (the row best centred on the server); when none fits (a
- * server off screen), the one needing the smallest shift is moved inside x 4–476. Throws on an
- * empty `lens`.
+ * server off screen), the one needing the smallest shift is moved inside x 4–476. Option `large` (a
+ * locked word with Large words) is redrawn at 2× (`largeFar`). Throws on an empty `lens`.
  */
-export function layoutServeFar(lens: number[], serverX: number): PlateBox[] {
+export function layoutServeFar(lens: number[], serverX: number, large: number | null = null): PlateBox[] {
   if (lens.length === 0) throw new Error('layoutServeFar needs at least one word length');
   const widths = lens.map((len) => plateWidth(len));
   const gapLeft = Math.floor(serverX - TOSS_CLEAR_FAR);
@@ -129,7 +134,28 @@ export function layoutServeFar(lens: number[], serverX: number): PlateBox[] {
     const bestShift = Math.abs(best.dx);
     if (shift < bestShift || (shift === bestShift && imbalance < best.imbalance)) best = { xs, dx, imbalance };
   }
-  return best.xs.map((x, option) => ({ x: x + best.dx, y: BANDS.far[0], w: widths[option]!, h: PLATE_H, option }));
+  return best.xs.map((x, option) => {
+    const box = { x: x + best.dx, y: BANDS.far[0], w: widths[option]!, h: PLATE_H, option };
+    return option === large ? largeFar(box, serverX, gapLeft, gapRight) : box;
+  });
+}
+
+/**
+ * A far-row plate redrawn at 2×, grown away from the toss gap (`gapLeft`–`gapRight`) instead of
+ * around its centre: its top stays, and so does the edge facing the gap (the right edge of a plate
+ * left of the server, the left edge of one right of it). Kept inside x 4–476 on its side of the gap;
+ * when that side has no room for it (a server near a screen edge), it sits next to the gap on the
+ * other side, which then always has room.
+ */
+function largeFar(box: PlateBox, serverX: number, gapLeft: number, gapRight: number): PlateBox {
+  const w = box.w * 2;
+  const leftSide = { lo: AREA.left, hi: Math.min(gapLeft, AREA.right) - w };
+  const rightSide = { lo: Math.max(gapRight, AREA.left), hi: AREA.right - w };
+  const left = box.x + box.w / 2 < serverX;
+  const own = left ? leftSide : rightSide;
+  const side = own.lo <= own.hi ? own : left ? rightSide : leftSide;
+  const x = clamp(left ? box.x + box.w - w : box.x, side.lo, side.hi);
+  return { x, y: box.y, w, h: box.h * 2, option: box.option };
 }
 
 /**

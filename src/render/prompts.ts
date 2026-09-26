@@ -152,7 +152,10 @@ function plate(c: Ctx, box: PlateBox, opt: WordOption, style: PlateStyle, over: 
   };
 }
 
-/** A plate box redrawn at 2× around the same centre column, top unchanged, kept inside the plate area. */
+/**
+ * A choice plate redrawn at 2× around the same centre column, top unchanged, kept inside the plate
+ * area. Serve plates grow away from the toss column instead (`layoutServeNear`/`layoutServeFar`).
+ */
 function doubled(box: PlateBox): PlateBox {
   const w = box.w * 2;
   const h = box.h * 2;
@@ -173,19 +176,30 @@ function chipOf(c: Ctx, owner: PlayerId, style: PlateStyle): { name: string; col
   return { name: info.name, color: beltColor(info) };
 }
 
+/** The option of `prompt` drawn at 2×: the locked word, with Large words (spec §4.2). */
+function largeOption(c: Ctx, prompt: PromptView): number | null {
+  return c.o.prefs.largeWords ? prompt.locked : null;
+}
+
 /**
- * The plates of a three-option prompt in `boxes`: after a lock the other options fade out and the
- * locked word is redrawn at 2× with Large words. Returns the box each option is drawn in.
+ * The plates of a three-option prompt in `boxes`, option `large` at 2× (its box already doubled):
+ * after a lock the other options fade out. Returns `boxes`.
  */
-function optionPlates(c: Ctx, prompt: PromptView, boxes: PlateBox[], style: PlateStyle, owner: PlayerId): PlateBox[] {
+function optionPlates(
+  c: Ctx,
+  prompt: PromptView,
+  boxes: PlateBox[],
+  large: number | null,
+  style: PlateStyle,
+  owner: PlayerId,
+): PlateBox[] {
   const lockAt = lockTime(c.t, prompt.id, c.f.τ);
   const chip = chipOf(c, owner, style);
   const wrongAge = prompt.lastWrongAt === null ? null : c.f.τ - prompt.lastWrongAt;
   const local = style === 'localActive';
   return prompt.options.map((opt, i) => {
     const locked = prompt.locked === i;
-    const big = locked && c.o.prefs.largeWords;
-    const box = big ? doubled(boxes[i]!) : boxes[i]!;
+    const box = boxes[i]!;
     const faded = prompt.locked !== null && !locked && lockAt !== null ? clamp((c.f.τ - lockAt) / OPTION_FADE_MS, 0, 1) : 0;
     c.s.plates.push(
       plate(c, box, opt, style, {
@@ -197,11 +211,19 @@ function optionPlates(c: Ctx, prompt: PromptView, boxes: PlateBox[], style: Plat
         showInitialBlock: local && prompt.locked === null,
         nameChip: chip && i === (prompt.locked ?? 0) ? chip.name : null,
         oppColor: chip?.color ?? null,
-        scale: big ? 2 : 1,
+        scale: i === large ? 2 : 1,
       }),
     );
     return box;
   });
+}
+
+/**
+ * The serve plates of `server` with its head at `head` (spec §4.2, R34): the near stack or the far
+ * row, option `large` at 2× grown away from the toss column.
+ */
+function serveLayout(c: Ctx, server: PlayerId, lens: number[], head: { x: number; y: number }, large: number | null): PlateBox[] {
+  return server === c.f.near ? layoutServeNear(lens, head.x, head.y, large) : layoutServeFar(lens, head.x, large);
 }
 
 /** The option fade of plate `i` among the plates just added (1 − its opacity). */
@@ -230,8 +252,8 @@ function servePrompts(c: Ctx, d: ServeTurnData): void {
   const style = styleFor(f, server, prompt.options);
   const lens = prompt.options.map((o) => o.len);
   const head = headAt(c, server, c.poses[server].feet);
-  const layout = server === f.near ? layoutServeNear(lens, head.x, head.y) : layoutServeFar(lens, head.x);
-  const boxes = optionPlates(c, prompt, layout, style, server);
+  const large = largeOption(c, prompt);
+  const boxes = optionPlates(c, prompt, serveLayout(c, server, lens, head, large), large, style, server);
   const n = prompt.options.length;
   const targets = d.wordSets[v.active ?? 0]?.targets ?? [];
   if (targets.length === n) {
@@ -292,7 +314,8 @@ function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: Plat
     targets.map((p) => p.x),
     band,
   );
-  const boxes = optionPlates(c, choice, layout, style, d.owner);
+  const large = largeOption(c, choice);
+  const boxes = optionPlates(c, choice, layout.map((b, i) => (i === large ? doubled(b) : b)), large, style, d.owner);
   const n = choice.options.length;
   targets.forEach((to, i) => {
     const tier = choice.options[i]!.tier;
@@ -314,7 +337,8 @@ function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: Plat
 /**
  * The opponent's hidden serve plate turning over as the return turn begins (spec §4.2): a 4-step
  * flip to the struck word (the chase word), which then holds and fades, or fades at once when the
- * chase word is complete (R42). Only for a viewer who saw the serve words hidden.
+ * chase word is complete (R42). It turns over in the box the word was locked in, 2× with Large words.
+ * Only for a viewer who saw the serve words hidden.
  */
 function revealServe(c: Ctx, d: ReturnTurnData): void {
   const last = c.f.last?.turn;
@@ -330,11 +354,18 @@ function revealServe(c: Ctx, d: ReturnTurnData): void {
   const option = last.outcome.strike.option;
   const lens = prompt.options.map((o) => o.len);
   const head = headAt(c, server, c.o.turnStart[server]);
-  const box = (server === c.f.near ? layoutServeNear(lens, head.x, head.y) : layoutServeFar(lens, head.x))[option];
+  const large = c.o.prefs.largeWords ? option : null;
+  const box = serveLayout(c, server, lens, head, large)[option];
   if (!box) return;
   const word = d.chase;
   const chip = chipOf(c, server, 'remote');
-  const common: Partial<PlateDraw> = { typed: word.len, locked: true, nameChip: chip?.name ?? null, oppColor: chip?.color ?? null };
+  const common: Partial<PlateDraw> = {
+    typed: word.len,
+    locked: true,
+    nameChip: chip?.name ?? null,
+    oppColor: chip?.color ?? null,
+    scale: large === null ? 1 : 2,
+  };
   const revealed = plate(c, box, word, 'remote', common);
   if (τ < FLIP_STEP_MS * FLIP_STEPS && chaseDone === null) {
     const back: WordOption = { word: '', len: word.len, tier: word.tier, hidden: true };

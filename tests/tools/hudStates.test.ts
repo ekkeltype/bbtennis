@@ -7,7 +7,7 @@ const PREFS = { largeWords: false, reduceEffects: false, showWpm: true };
 describe('HUD samples', () => {
   it('scoreboards: each sample shows its score, sets and games', () => {
     const rows = scoreboardSamples().map((s) => scoreRows(s.frame.pub));
-    const shown = rows.map(([a, b]) => ({ points: [a.points, b.points], games: [a.games, b.games], sets: [a.sets, b.sets] }));
+    const shown = rows.map(([a, b]) => ({ points: [a.points, b.points], games: [a.games, b.games], sets: [a, b].map((r) => r.setCells.map((c) => c.value)) }));
     expect(shown).toEqual([
       { points: ['0', '0'], games: [0, 0], sets: [[], []] },
       { points: ['6', '5'], games: [0, 0], sets: [[], []] },
@@ -15,7 +15,8 @@ describe('HUD samples', () => {
       { points: ['40', '40'], games: [3, 3], sets: [[], []] },
       { points: ['', 'AD'], games: [3, 3], sets: [[], []] },
       { points: ['0', '40'], games: [2, 2], sets: [[4, 3], [2, 5]] },
-      { points: ['0', '0'], games: [0, 0], sets: [[1], [0]] },
+      // A decided Tiebreak-format match: its one set column shows the tiebreak points.
+      { points: ['0', '0'], games: [0, 0], sets: [[7], [5]] },
     ]);
   });
 
