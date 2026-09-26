@@ -9,10 +9,11 @@ browser (Chrome, Edge, Firefox) with a physical keyboard, with nothing to instal
 ## Screenshots
 
 _Placeholders until screenshots are committed._ `npm run e2e` saves fresh ones as
-`artifacts/e2e/*.png` (git-ignored, never committed). They cover the title screen, every menu at
-960×540 and 1920×1080, and a vs-CPU match at the serve, toss, chase, shot choice, point call and
-results. To show some here, copy them into a tracked folder such as `docs/screenshots/` and link them
-in place of these cells.
+`artifacts/e2e/*.png` (git-ignored, never committed). They cover the start gate and title, every
+screen at 960×540 and 1920×1080, Training's first point, a vs-CPU match at the serve, toss, chase,
+shot choice, point call and results, and both sides of an online match when the PeerJS broker is
+reachable. To show some here, copy them into a tracked folder such as `docs/screenshots/` and link
+them in place of these cells.
 
 | Title | Rally | Results |
 |---|---|---|
@@ -64,8 +65,9 @@ countdown.
 ## Modes
 
 - **Training** walks you through the serve, the return, a three-shot rally and one real point
-  against a White-belt coach, at a relaxed pace. It stays first on the main menu until you finish it
-  once.
+  against a White-belt coach, at a relaxed pace. On your first launch, a panel beside the main menu
+  offers it: **Training** (focused, so <kbd>Enter</kbd> starts it) or **Later**, which puts the offer
+  away for good. Training stays first on the main menu until you finish it once.
 - **Play vs CPU** has 15 levels shown as belts. Each belt from White to Brown has 0–2 stripes, and
   after them come Black, Black 2nd dan and Black 3rd dan:
 
@@ -106,8 +108,9 @@ that blocks storage, the game says once that progress can't be saved and plays o
 
 ## Development
 
-You need Node 24 and npm. `art:export` and `e2e` also need a locally installed Google Chrome, which
-they drive through `playwright-core` (no browser download).
+You need Node 22.12 or newer (the `engines` field in `package.json`; CI uses Node 24) and npm.
+`art:export` and `e2e` also need a locally installed Google Chrome, which they drive through
+`playwright-core` (no browser download).
 
 ```sh
 npm ci
@@ -121,9 +124,9 @@ npm run dev        # http://localhost:5173
 | `npm run preview` | Serve the built `dist/` locally |
 | `npm test` | All Vitest tests, including a smoke subset of the balance simulation |
 | `npm run test:sim` | The full balance simulation of spec §6 (slow) |
-| `npm run typecheck` | `tsc --noEmit -p .` |
+| `npm run typecheck` | `tsc --noEmit -p .` (the game, tests and tools) and `tsc --noEmit -p tsconfig.node.json` (the Node-side tests in `tests/scripts/`) |
 | `npm run art:export` | Screenshot every section of the art QA page (`tools/art.html`) to `artifacts/art/` |
-| `npm run e2e` | Build, serve and play the game in Chrome: every screen, a Training lesson, a full vs-CPU tiebreak and a best-effort online match. Screenshots go to `artifacts/e2e/` |
+| `npm run e2e` | Build the game and play it in the local Chrome, about 4 minutes (see [below](#end-to-end-run-npm-run-e2e)). Screenshots go to `artifacts/e2e/` |
 | `npm run package:itch` | After `npm run build`, zip the contents of `dist/` into `black-belt-tennis-itch.zip`, with `index.html` at the zip root |
 
 Build-time settings are Vite environment variables. Set them when you run `npm run build` (or
@@ -137,6 +140,26 @@ Build-time settings are Vite environment variables. Set them when you run `npm r
 
 The design spec is in `docs/superpowers/specs/2026-09-26-black-belt-tennis-design.md`.
 
+### End-to-end run (`npm run e2e`)
+
+[`scripts/e2e.mjs`](scripts/e2e.mjs) builds the game with `vite build`, which overwrites `dist/`,
+serves it with `vite preview` and plays it in your local Google Chrome through the `?e2e=1` test
+hooks. A run takes about 4 minutes and has five scenarios:
+
+1. Boot: the start gate, then the title over the attract demo.
+2. Every screen at 960×540 and 1920×1080.
+3. Training lesson 1, played by keyboard alone.
+4. A full vs-CPU tiebreak against the White belt at Relaxed pace (the first-visit defaults), typed
+   at 90 ms per key, with screenshots at the serve, toss, chase, shot choice, point call and results.
+5. Online, best effort: two pages, a host and a guest, connect through the PeerJS broker and play
+   2 points. When the broker is unreachable, this scenario is skipped with a warning; any other
+   online failure fails the run.
+
+Screenshots go to `artifacts/e2e/`, which each run clears first. The run prints PASS, WARN (skipped)
+or FAIL for each scenario. It exits non-zero when a scenario fails (a page that logs an error fails
+its scenario) or when the build, the server or Chrome can't start. The browser and the server are
+always closed.
+
 ## Deploy to GitHub Pages
 
 1. Push the repository to GitHub. On the Free plan, Pages needs a public repository.
@@ -145,10 +168,10 @@ The design spec is in `docs/superpowers/specs/2026-09-26-black-belt-tennis-desig
 3. Push to `main`, or open **Actions → Deploy to GitHub Pages → Run workflow**.
 
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) runs `npm ci`, the typecheck, the
-tests and the build, then deploys `dist/`. It builds with
-`VITE_PUBLIC_URL=https://<owner>.github.io/<repo>/`, which is where the game appears. If you serve
-the site from a custom domain or a `<owner>.github.io` repository, change `VITE_PUBLIC_URL` in the
-workflow to the real address, so that invite links point at the page.
+tests and the build, then deploys `dist/`. It sets `VITE_PUBLIC_URL` to the site's real address,
+which `actions/configure-pages` reports as `base_url`: `https://<owner>.github.io/<repo>/` for a
+project site, `https://<owner>.github.io/` for a `<owner>.github.io` repository, or your custom
+domain. Invite links point at the page in every case, with nothing to edit.
 
 ## Deploy to itch.io
 
