@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TIERS } from '../../src/core/types';
-import { BELT_COLOR, OUTLINE, PAL, PLATE, RAMPS, SURFACE_PAL, TIER_COLOR } from '../../src/render/palette';
+import { BELT_COLOR, OUTLINE, PAL, PLATE, RAMPS, SURFACE_PAL, TIER_COLOR, TIER_TYPED } from '../../src/render/palette';
 import {
   ciede2000,
   contrastRatio,
@@ -201,6 +201,32 @@ describe('TIER_COLOR', () => {
         for (let j = i + 1; j < seen.length; j++) {
           expect(ciede2000(seen[i]!, seen[j]!), `${view ?? 'normal'} ${TIERS[i]}/${TIERS[j]}`).toBeGreaterThanOrEqual(20);
         }
+      }
+    }
+  });
+});
+
+describe('TIER_TYPED (typed-letter shades, spec §4.2)', () => {
+  it('snaps every typed shade to the master palette', () => {
+    for (const t of TIERS) expect(palValues, t).toContain(TIER_TYPED[t]);
+  });
+
+  it('keeps every typed shade at ≥ 4.5:1 against the plate fill', () => {
+    for (const t of TIERS) expect(contrastRatio(TIER_TYPED[t], PLATE.fill), t).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('keeps the remaining letters ≥ 1.8× as luminous as each typed shade', () => {
+    for (const t of TIERS) {
+      const ratio = relativeLuminance(PLATE.text) / relativeLuminance(TIER_TYPED[t]);
+      expect(ratio, t).toBeGreaterThanOrEqual(1.8);
+    }
+  });
+
+  it('is a shade of its own tier colour: nearer (CIEDE2000) to it than to either other tier colour', () => {
+    for (const t of TIERS) {
+      const own = ciede2000(TIER_TYPED[t], TIER_COLOR[t]);
+      for (const other of TIERS.filter((o) => o !== t)) {
+        expect(own, `${t} vs ${other}`).toBeLessThan(ciede2000(TIER_TYPED[t], TIER_COLOR[other]));
       }
     }
   });
