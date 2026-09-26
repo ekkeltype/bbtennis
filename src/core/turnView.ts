@@ -1,4 +1,5 @@
 import type { PromptKind, StrikeInfo, TurnOutcome, TurnPhase, TurnState, WordOption } from './types';
+import { jsonCopy } from './util';
 
 /** A prompt as a viewer sees it at some τ: its options and typing progress, never the letters typed. */
 export interface PromptView {
@@ -43,7 +44,7 @@ interface Replay {
  */
 export function turnViewAt(t: TurnState, τ: number): TurnView {
   const r = replay(t, τ);
-  const outcome = t.ended && t.outcome !== null && τ >= t.outcome.endτ ? copy(t.outcome) : null;
+  const outcome = t.ended && t.outcome !== null && τ >= t.outcome.endτ ? jsonCopy(t.outcome) : null;
   const d = t.data;
   let { tossAt, catchAt } = r;
   const last = r.prompts.length > 0 ? r.prompts.length - 1 : null;
@@ -156,8 +157,4 @@ function replay(t: TurnState, τ: number): Replay {
 function progressOf(p: PromptView): number {
   const word = p.locked === null ? undefined : p.options[p.locked];
   return word === undefined ? 0 : p.typed / word.len;
-}
-
-function copy<T>(v: T): T {
-  return JSON.parse(JSON.stringify(v)) as T;
 }

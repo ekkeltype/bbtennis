@@ -5,6 +5,14 @@ export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+/**
+ * A deep copy of plain JSON-safe data through JSON, the same bits a peer would receive on the wire
+ * (undefined properties are dropped).
+ */
+export function jsonCopy<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v)) as T;
+}
+
 /** Linear interpolation from `a` (t = 0) to `b` (t = 1). */
 export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;

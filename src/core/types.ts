@@ -329,8 +329,14 @@ export type GameEvent = { turn: number; τ: number } & (
   | { type: 'game'; winner: PlayerId }
   | { type: 'set'; winner: PlayerId }
   | { type: 'match'; winner: PlayerId }
-  | { type: 'situation'; text: string }   // 'MATCH POINT', 'SET POINT', 'BREAK POINT', 'DEUCE', ...
+  | { type: 'situation'; text: string }   // 'MATCH POINT', 'SET POINT', 'GOLDEN POINT', 'BREAK POINT', 'DEUCE'
 );
+
+/** `Omit` applied to each member of a union on its own, keeping the union discriminated. */
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/** A GameEvent without its (turn, τ) stamp. */
+export type EventBody = DistributiveOmit<GameEvent, 'turn' | 'τ'>;
 
 /** A player's persistent identity (name + look), shared by UI settings and the net protocol. */
 export interface Profile { name: string; look: Look }

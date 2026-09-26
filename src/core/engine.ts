@@ -6,6 +6,7 @@ import { PACE_MULT, TUNING } from './tuning';
 import {
   other,
   TIERS,
+  type EventBody,
   type GameEvent,
   type LeadIn,
   type MatchConfig,
@@ -28,15 +29,13 @@ import {
   type WordOption,
 } from './types';
 import { isComplete, wordCps, wpmOf } from './typing';
+import { jsonCopy } from './util';
 import { tierOfLength } from './words/lists';
 import { createPicker, initialsOk, pickFixed, pickTriple } from './words/picker';
 
 /** Everything a match starts from: its options, its two players and the match-RNG seed. */
 export interface EngineOptions { config: MatchConfig; players: [PlayerInfo, PlayerInfo]; seed: number }
 
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-/** A GameEvent without its (turn, τ) stamp. */
-type EventBody = DistributiveOmit<GameEvent, 'turn' | 'τ'>;
 /** Stamps an engine event at the τ the ended turn ended. */
 type At = (body: EventBody) => GameEvent;
 
@@ -75,11 +74,11 @@ export class Engine {
     validateTraining(opts.config.training);
     const rng = seedRng(opts.seed);
     const firstServer: PlayerId = uniform(rng) < 0.5 ? 0 : 1;
-    const config = copy(opts.config);
+    const config = jsonCopy(opts.config);
     this.state = {
       v: 1,
       config,
-      players: copy(opts.players),
+      players: jsonCopy(opts.players),
       score: createScore(config.format, config.deuceRule, firstServer),
       stats: [emptyStats(), emptyStats()],
       turn: null,
@@ -106,7 +105,7 @@ export class Engine {
       throw new Error('Engine.fromState needs a full state, but this one is redacted (no rng/picker)');
     }
     // Every bit of the engine lives in `state`, so an instance is its prototype plus a state.
-    return Object.assign(Object.create(Engine.prototype) as Engine, { state: copy(state) });
+    return Object.assign(Object.create(Engine.prototype) as Engine, { state: jsonCopy(state) });
   }
 
   /** Owner of the current turn, or null when the match is over. */
@@ -138,7 +137,7 @@ export class Engine {
     return t === null || !t.started ? [] : this.run(t, () => turnClock(t, τ));
   }
 
-  /** `player` gives up: the match ends at once, won by the other player. */
+  /** `player` gives up: the match ends at once, won by the other player (in the state and its score). */
   forfeit(player: PlayerId): GameEvent[] {
     const s = this.state;
     const t = s.turn;
@@ -146,6 +145,7 @@ export class Engine {
     const winner = other(player);
     s.status = 'over';
     s.winner = winner;
+    s.score.winner = winner;
     s.forfeitBy = player;
     s.lastTurn = t;
     s.turn = null;
@@ -482,8 +482,4 @@ function stamp(t: TurnState, τ: number, body: EventBody): GameEvent {
 
 function words(options: readonly WordOption[]): string[] {
   return options.map((o) => o.word);
-}
-
-function copy<T>(v: T): T {
-  return JSON.parse(JSON.stringify(v)) as T;
 }

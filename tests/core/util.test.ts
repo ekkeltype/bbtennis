@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { add2, clamp, dist2, easeOutQuad, len2, lerp, norm2, scale2, sub2 } from '../../src/core/util';
+import { add2, clamp, dist2, easeOutQuad, jsonCopy, len2, lerp, norm2, scale2, sub2 } from '../../src/core/util';
+
+describe('jsonCopy', () => {
+  it('returns an equal deep copy that shares no objects with the original', () => {
+    const src = { a: 1, list: [{ w: 'ace' }, null], nested: { flag: true, τ: 12.5 } };
+    const out = jsonCopy(src);
+    expect(out).toStrictEqual(src);
+    expect(out).not.toBe(src);
+    expect(out.list).not.toBe(src.list);
+    expect(out.list[0]).not.toBe(src.list[0]);
+    out.nested.flag = false;
+    (out.list[0] as { w: string }).w = 'let';
+    expect(src.nested.flag).toBe(true);
+    expect(src.list[0]).toStrictEqual({ w: 'ace' });
+  });
+
+  it('drops undefined properties, as the JSON wire does', () => {
+    expect(jsonCopy({ a: 1, b: undefined })).toStrictEqual({ a: 1 });
+  });
+});
 
 describe('clamp', () => {
   it('keeps values inside the range unchanged', () => {

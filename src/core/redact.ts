@@ -1,4 +1,5 @@
 import type { GameEvent, MatchState, PlayerId, PublicState, ShotRandoms, TurnState, WordOption } from './types';
+import { jsonCopy } from './util';
 
 /** Who looks at the state: a player, or a spectator (attract mode) who may see everything. */
 type Viewer = PlayerId | 'spectator';
@@ -10,7 +11,7 @@ const NO_RANDOMS: ShotRandoms = [0, 0, 0, 0, 0, 0, 0, 0, 0];
  * state, with every turn (current and last) redacted by `redactTurn`. Never mutates `state`.
  */
 export function redact(state: MatchState, viewer: Viewer): PublicState {
-  const pub = copy(state);
+  const pub = jsonCopy(state);
   pub.rng = null;
   pub.picker = null;
   if (pub.turn !== null) hideSecrets(pub.turn, viewer);
@@ -23,7 +24,7 @@ export function redact(state: MatchState, viewer: Viewer): PublicState {
  * word events hold no letters, and a strike's word is public from the strike on.
  */
 export function redactEvents(events: GameEvent[], _state: MatchState, _viewer: Viewer): GameEvent[] {
-  return copy(events);
+  return jsonCopy(events);
 }
 
 /**
@@ -33,7 +34,7 @@ export function redactEvents(events: GameEvent[], _state: MatchState, _viewer: V
  * its typed letters, except the struck word in its prompt.
  */
 export function redactTurn(t: TurnState, viewer: Viewer): TurnState {
-  const out = copy(t);
+  const out = jsonCopy(t);
   hideSecrets(out, viewer);
   return out;
 }
@@ -58,8 +59,4 @@ function hideSecrets(t: TurnState, viewer: Viewer): void {
 
 function hide(o: WordOption): WordOption {
   return { word: '', len: o.len, tier: o.tier, hidden: true };
-}
-
-function copy<T>(v: T): T {
-  return JSON.parse(JSON.stringify(v)) as T;
 }

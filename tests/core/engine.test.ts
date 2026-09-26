@@ -500,6 +500,7 @@ describe('Engine: points', () => {
     e.clock(server, 1000);
     expect(e.forfeit(server)).toEqual([{ turn: 1, τ: 1000, type: 'match', winner: other(server) }]);
     expect(e.state).toMatchObject({ status: 'over', winner: other(server), forfeitBy: server, turn: null });
+    expect(e.state.score.winner).toBe(other(server));
     expect(e.state.lastTurn?.data.turnId).toBe(1);
     expect(e.owner()).toBeNull();
     expect(e.forfeit(other(server))).toEqual([]);

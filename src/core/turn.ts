@@ -1,4 +1,5 @@
 import type {
+  EventBody,
   GameEvent,
   PromptKind,
   PromptState,
@@ -14,12 +15,7 @@ import type {
 import { applyLetter, createPrompt, isComplete, wordCps, wpmOf } from './typing';
 import { type ReturnDeadline, returnDeadlines, returnStrike } from './turnReturn';
 import { type ServeDeadline, serveClockτ, serveDeadlines, serveStrike } from './turnServe';
-
-/** `Omit` applied to each member of a union on its own, keeping the union discriminated. */
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-
-/** A GameEvent without its (turn, τ) stamp. */
-type EventBody = DistributiveOmit<GameEvent, 'turn' | 'τ'>;
+import { jsonCopy } from './util';
 
 type Deadline = ServeDeadline | ReturnDeadline;
 
@@ -34,7 +30,7 @@ const LETTER = /^[a-z]$/;
  */
 export function createTurn(data: TurnData): TurnState {
   return {
-    data: copy(data),
+    data: jsonCopy(data),
     started: false,
     τ: 0,
     phase: data.kind === 'serve' ? 'leadIn' : 'chase',
@@ -93,7 +89,7 @@ export function turnClock(t: TurnState, τ: number): GameEvent[] {
 
 /** Engine appends a spare serve word set (after a catch); ignored for return turns. */
 export function appendWordSet(t: TurnState, set: ServeWordSet): void {
-  if (t.data.kind === 'serve') t.data.wordSets.push(copy(set));
+  if (t.data.kind === 'serve') t.data.wordSets.push(jsonCopy(set));
 }
 
 /**
@@ -323,8 +319,4 @@ function emit(t: TurnState, out: GameEvent[], τ: number, body: EventBody): void
 
 function activePrompt(t: TurnState): PromptState | null {
   return t.active === null ? null : t.prompts[t.active] ?? null;
-}
-
-function copy<T>(v: T): T {
-  return JSON.parse(JSON.stringify(v)) as T;
 }
