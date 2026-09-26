@@ -18,12 +18,16 @@ const NEAR_BAND_GAP = 6;
 const STACK_GAP = 3;
 const ROW_GAP = 4;
 /**
- * The tossed ball rises straight above the server's feet, through the column head x ± 6 px (R34):
- * a near serve stack keeps its inner edge ≥ 8 px from the head, the far serve row leaves ≥ 6 px
- * clear on each side of the server's x.
+ * Serve plates keep clear of the tossed ball (R34). `ball.ts` draws it over the tossing hand, not
+ * over the feet: 6.5 px screen-left of the feet for the near server (seen from behind), 6.5 px
+ * screen-right for the far one (seen from the front), a 5 px sprite (3 px core, 1 px outline). For a
+ * head (feet) at x h it covers x ⌊h⌋ − 8 … ⌊h⌋ − 4 near and ⌊h⌋ + 5 … ⌊h⌋ + 9 far. A near stack's
+ * inner edge ≥ 10 px from the head and a far row clear ≥ 12 px either side of the server leave a
+ * court pixel between a plate's 1 px halo and the ball, so a 2 px wrong-key shake reaches at most
+ * the ball's outline.
  */
-const TOSS_CLEAR_NEAR = 8;
-const TOSS_CLEAR_FAR = 6;
+const TOSS_CLEAR_NEAR = 10;
+const TOSS_CLEAR_FAR = 12;
 
 /** Left x that puts a `w`-wide box's centre column on `cx`, kept inside x 4–476. */
 function centredX(cx: number, w: number): number {
@@ -66,8 +70,8 @@ export function layoutChoice(lens: number[], targetsScreenX: number[], band: 'fa
 /**
  * Serve plates of the near server (spec §4.2, R34): a vertical stack, easy on top, 3 px gaps, beside
  * the head (top at `headX`, `headY`) on the side toward the screen centre, which always has the more
- * room; at exactly the centre it goes right. The plates share their inner edge, ≥ 8 px from `headX`
- * so the toss column stays clear, and the stack's bottom is level with the head top. Kept inside
+ * room; at exactly the centre it goes right. The plates share their inner edge, ≥ 10 px from `headX`
+ * so the tossed ball stays clear, and the stack's bottom is level with the head top. Kept inside
  * x 4–476 and y 22–266. Throws on an empty `lens`.
  */
 export function layoutServeNear(lens: number[], headX: number, headY: number): PlateBox[] {
@@ -96,10 +100,11 @@ function rowWidth(widths: number[]): number {
 /**
  * Serve plates of the far server (spec §4.2, R34): one row in the far prompt band, easy to hard left
  * to right, 4 px apart except for a gap over the server: the row splits so the plates before the
- * split end ≥ 6 px left of `serverX` and the rest start ≥ 6 px right of it, keeping the toss column
- * clear. Of the splits that fit x 4–476, the one whose two sides are closest in width wins (the row
- * best centred on the server); when none fits (a server off screen), the one needing the smallest
- * shift is moved inside x 4–476. Throws on an empty `lens`.
+ * split end ≥ 12 px left of `serverX` and the rest start ≥ 12 px right of it, a ≥ 24 px gap that keeps
+ * the tossed ball (over the hand, right of the feet) clear. Of the splits that fit x 4–476, the one
+ * whose two sides are closest in width wins (the row best centred on the server); when none fits (a
+ * server off screen), the one needing the smallest shift is moved inside x 4–476. Throws on an
+ * empty `lens`.
  */
 export function layoutServeFar(lens: number[], serverX: number): PlateBox[] {
   if (lens.length === 0) throw new Error('layoutServeFar needs at least one word length');

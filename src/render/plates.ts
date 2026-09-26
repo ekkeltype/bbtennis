@@ -139,9 +139,10 @@ function readableOn(bg: string): string {
  * A tab with the owner's first 3 letters on `color` (belt colour, or the plate fill) that shares one
  * stroke with the plate at (x, y), `plateW` wide: above its left end, or, when that would reach the
  * HUD band (a plate in the far prompt band), beside it with the tops aligned, on the side away from
- * the screen centre unless that would leave x 4–476. The far server stands near the centre, so the
- * tab stays out of its serve row's toss gap; it never hangs below the plate, onto the far player. A
- * tab dark enough for white text gets a light rim on its free sides so it stays visible over dark ground.
+ * the screen centre unless that would leave x 4–476. The far server stands near the centre (x ≈ 229
+ * or 251 for `TUNING.positions.serverX` 0.8 m), so the tab stays out of its serve row's toss gap;
+ * it never hangs below the plate, onto the far player. A tab dark enough for white text gets a light
+ * rim on its free sides so it stays visible over dark ground.
  */
 function drawNameChip(
   ctx: CanvasRenderingContext2D,

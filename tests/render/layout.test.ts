@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 // Projection (Task 13) is exercised by its own tests; here the net line is the spec §4.1 value.
 vi.mock('../../src/render/projection', () => ({ netScreenY: () => -80 + 320 / 1.5 }));
 
+import { COURT } from '../../src/core/court';
+import { TUNING } from '../../src/core/tuning';
 import {
   BANDS,
   layoutChoice,
@@ -12,6 +14,8 @@ import {
   plateWidth,
   type PlateBox,
 } from '../../src/render/layout';
+import { CELL, type View } from '../../src/render/sprites/animations';
+import { posesFor } from '../../src/render/sprites/poses';
 
 const EASY = [3, 4, 5];
 const MEDIUM = [6, 7, 8, 9];
@@ -39,6 +43,42 @@ function problems(boxes: PlateBox[]): string[] {
 }
 
 const centreX = (b: PlateBox): number => b.x + (b.w - 1) / 2;
+
+/** Screen x of the tossing hand's centre relative to the feet, from serve frame 0 (as `ball.ts` places the toss). */
+const tossHandDx = (view: View): number => posesFor('serve', view)[0]!.handL.x + 0.5 - CELL.anchorX;
+
+/** First and last column of the tossed ball (a 5 px sprite, outline included) for feet at screen x `hx`. */
+function tossBallCols(hx: number, view: View): [number, number] {
+  const cx = Math.round(hx + tossHandDx(view));
+  return [cx - 2, cx + 2];
+}
+
+/** Every plate whose 1 px halo (x − 1 … x + w) leaves no court pixel between it and the tossed ball. */
+function tossProblems(boxes: PlateBox[], hx: number, view: View, id: string): string[] {
+  const [first, last] = tossBallCols(hx, view);
+  return boxes
+    .filter((b) => b.x - 1 <= last + 1 && b.x + b.w >= first - 1)
+    .map((b) => `${id}: option ${b.option} (x ${b.x}–${b.x + b.w - 1}) within 1 px of the ball (x ${first}–${last})`);
+}
+
+/** Screen x of a server's feet at world y `y` (spec §4.1: x = 240 ± serverX · 27.35 / d, viewer at end 0). */
+function serverScreenXs(y: number): number[] {
+  const d = 1 + (y + COURT.halfLength) / (2 * COURT.halfLength);
+  const dx = (TUNING.positions.serverX * 27.35) / d;
+  return [240 - dx, 240 + dx];
+}
+const NEAR_SERVER_XS = serverScreenXs(-TUNING.positions.serverY);
+const FAR_SERVER_XS = serverScreenXs(TUNING.positions.serverY);
+
+describe('the tossed ball (ball.ts)', () => {
+  it('rises over the tossing hand: 6.5 px left of the feet for a near server, 6.5 px right for a far one', () => {
+    // The serve layouts' toss clearances assume this; revisit TOSS_CLEAR_NEAR/FAR if the sprite changes.
+    expect(tossHandDx('near')).toBe(-6.5);
+    expect(tossHandDx('far')).toBe(6.5);
+    expect(NEAR_SERVER_XS.map((x) => x.toFixed(2))).toEqual(['217.73', '262.27']);
+    expect(FAR_SERVER_XS.map((x) => x.toFixed(2))).toEqual(['229.15', '250.85']);
+  });
+});
 
 describe('plateWidth', () => {
   it('is 6n + 11 px at 1× (95 for the longest word)', () => {
@@ -113,7 +153,7 @@ describe('layoutChoice', () => {
 });
 
 describe('layoutServeNear', () => {
-  const HEAD_XS = [0, 4, 20, 100, 239.5, 240, 240.5, 380, 460, 476, 480];
+  const HEAD_XS = [0, 4, 20, 100, ...NEAR_SERVER_XS, 239.5, 240, 240.5, 262, 262.5, 263, 380, 460, 476, 480];
 
   it('stacks easy, medium, hard top to bottom with 3 px gaps, bottom level with the head top', () => {
     const boxes = layoutServeNear([5, 9, 14], 200, 200);
@@ -123,33 +163,43 @@ describe('layoutServeNear', () => {
     expect(boxes[2]!.y + boxes[2]!.h).toBe(200);
   });
 
-  it('puts the stack right of a head left of centre, inner edges 8 px from the head', () => {
+  it('puts the stack right of a head left of centre, inner edges 10 px from the head', () => {
     const boxes = layoutServeNear([4, 7, 12], 200, 200);
-    expect(boxes.map((b) => b.x)).toEqual([208, 208, 208]);
+    expect(boxes.map((b) => b.x)).toEqual([210, 210, 210]);
     expect(boxes.map((b) => b.w)).toEqual([4, 7, 12].map((n) => plateWidth(n)));
   });
 
-  it('puts the stack left of a head right of centre, right edges 8 px from the head', () => {
+  it('puts the stack left of a head right of centre, right edges 10 px from the head', () => {
     const boxes = layoutServeNear([4, 7, 12], 300, 200);
-    expect(boxes.map((b) => b.x + b.w)).toEqual([292, 292, 292]);
+    expect(boxes.map((b) => b.x + b.w)).toEqual([290, 290, 290]);
   });
 
-  it('rounds a fractional head outwards so the gap to the head stays ≥ 8 px', () => {
-    expect(layoutServeNear([5], 199.5, 200)[0]!.x).toBe(208);
+  it('rounds a fractional head outwards so the gap to the head stays ≥ 10 px', () => {
+    expect(layoutServeNear([5], 199.5, 200)[0]!.x).toBe(210);
     const left = layoutServeNear([5], 300.5, 200)[0]!;
-    expect(left.x + left.w).toBe(292);
+    expect(left.x + left.w).toBe(290);
   });
 
-  it('keeps the toss column (head x ± 6) clear, toward the screen centre, for heads near both edges', () => {
+  it('leaves a court pixel between the halo and the tossed ball of the real deuce-court server', () => {
+    // Feet at x 262.27: the ball (x 254–258) sits left of the head, on the stack's side; the plates
+    // end at x 251, their halo at x 252, and x 253 shows court.
+    const [hx] = NEAR_SERVER_XS.slice(1) as [number];
+    expect(tossBallCols(hx, 'near')).toEqual([254, 258]);
+    const boxes = layoutServeNear([5, 9, 14], hx, 200);
+    expect(boxes.map((b) => b.x + b.w)).toEqual([252, 252, 252]);
+  });
+
+  it('keeps the tossed ball clear, toward the screen centre, for heads near both edges', () => {
     const bad = TRIPLES.flatMap((lens) =>
       HEAD_XS.flatMap((hx) =>
         [200, 60].flatMap((hy) => {
           const boxes = layoutServeNear(lens, hx, hy);
           const id = `${lens.join('/')} head ${hx},${hy}`;
           const out = problems(boxes).map((p) => `${id}: ${p}`);
+          out.push(...tossProblems(boxes, hx, 'near', id));
           for (const b of boxes) {
-            const right = b.x >= hx + 8;
-            if (!right && b.x + b.w > hx - 8) out.push(`${id}: option ${b.option} within 8 px of the head`);
+            const right = b.x >= hx + 10;
+            if (!right && b.x + b.w > hx - 10) out.push(`${id}: option ${b.option} within 10 px of the head`);
             if (hx < 240 && !right) out.push(`${id}: option ${b.option} left of a head left of centre`);
             if (hx > 240 && right) out.push(`${id}: option ${b.option} right of a head right of centre`);
           }
@@ -178,37 +228,47 @@ describe('layoutServeNear', () => {
 });
 
 describe('layoutServeFar', () => {
-  const SERVER_XS = [0, 4, 30, 100, 180, 239.5, 240, 240.5, 300, 380, 450, 476, 480];
+  const SERVER_XS = [0, 4, 30, 100, 180, ...FAR_SERVER_XS, 239.5, 240, 240.5, 251, 300, 380, 450, 476, 480];
 
-  it('splits easy, medium, hard around a 12 px gap centred on the server, 4 px apart otherwise', () => {
+  it('splits easy, medium, hard around a 24 px gap centred on the server, 4 px apart otherwise', () => {
     const boxes = layoutServeFar([5, 9, 14], 240);
     expect(boxes.map((b) => b.option)).toEqual([0, 1, 2]);
     expect(boxes.map((b) => b.y)).toEqual([22, 22, 22]);
     expect(boxes.map((b) => b.h)).toEqual([16, 16, 16]);
     expect(boxes.map((b) => b.w)).toEqual([41, 65, 95]);
     // 41 + 4 + 65 = 110 px left of the gap and 95 right of it balance the row best.
-    expect(boxes.map((b) => b.x)).toEqual([124, 169, 246]);
+    expect(boxes.map((b) => b.x)).toEqual([118, 163, 252]);
+  });
+
+  it('leaves a court pixel between the first plate right of the gap and the tossed ball', () => {
+    // The ball rises right of the far server's feet: x 234–238 for feet at x 229.15, 255–259 at 250.85.
+    const [left, right] = FAR_SERVER_XS as [number, number];
+    expect(tossBallCols(left, 'far')).toEqual([234, 238]);
+    expect(layoutServeFar([5, 9, 14], left).map((b) => b.x)).toEqual([107, 152, 242]);
+    expect(tossBallCols(right, 'far')).toEqual([255, 259]);
+    expect(layoutServeFar([5, 9, 14], right).map((b) => b.x)).toEqual([128, 173, 263]);
   });
 
   it('chooses the split that centres the row best, here one plate left of the gap', () => {
-    // The easy + medium pair (110 px) no longer fits left of a gap at x 94, so easy goes alone.
-    expect(layoutServeFar([5, 9, 14], 100).map((b) => b.x)).toEqual([53, 106, 175]);
+    // The easy + medium pair (110 px) no longer fits left of a gap at x 88, so easy goes alone.
+    expect(layoutServeFar([5, 9, 14], 100).map((b) => b.x)).toEqual([47, 112, 181]);
   });
 
   it('puts the whole row on one side of the gap for a server near an edge', () => {
-    expect(layoutServeFar([5, 9, 14], 30).map((b) => b.x)).toEqual([36, 81, 150]);
-    expect(layoutServeFar([5, 9, 14], 450).map((b) => b.x)).toEqual([235, 280, 349]);
+    expect(layoutServeFar([5, 9, 14], 30).map((b) => b.x)).toEqual([42, 87, 156]);
+    expect(layoutServeFar([5, 9, 14], 450).map((b) => b.x)).toEqual([229, 274, 343]);
   });
 
-  it('keeps the toss gap clear, easy to hard left to right, on screen for servers near both edges', () => {
+  it('keeps the toss gap and the tossed ball clear, easy to hard left to right, on screen near both edges', () => {
     const bad = TRIPLES.flatMap((lens) =>
       SERVER_XS.flatMap((sx) => {
         const boxes = layoutServeFar(lens, sx);
         const id = `${lens.join('/')} server ${sx}`;
         const out = problems(boxes).map((p) => `${id}: ${p}`);
+        out.push(...tossProblems(boxes, sx, 'far', id));
         for (const b of boxes) {
           if (b.y !== 22) out.push(`${id}: option ${b.option} outside the far band`);
-          if (b.x + b.w > sx - 6 && b.x < sx + 6) out.push(`${id}: option ${b.option} in the toss gap`);
+          if (b.x + b.w > sx - 12 && b.x < sx + 12) out.push(`${id}: option ${b.option} in the toss gap`);
         }
         boxes.slice(1).forEach((b, i) => {
           if (b.x < boxes[i]!.x + boxes[i]!.w + 4) out.push(`${id}: option ${b.option} not 4+ px right of ${i}`);
@@ -219,10 +279,10 @@ describe('layoutServeFar', () => {
     expect(bad).toEqual([]);
   });
 
-  it('rounds a fractional server outwards so the gap stays ≥ 12 px', () => {
+  it('rounds a fractional server outwards so the gap stays ≥ 24 px', () => {
     const boxes = layoutServeFar([5, 9, 14], 240.5);
-    expect(boxes[1]!.x + boxes[1]!.w).toBe(234);
-    expect(boxes[2]!.x).toBe(247);
+    expect(boxes[1]!.x + boxes[1]!.w).toBe(228);
+    expect(boxes[2]!.x).toBe(253);
   });
 
   it('clamps the row to x 4–476 for a server off either side of the screen', () => {

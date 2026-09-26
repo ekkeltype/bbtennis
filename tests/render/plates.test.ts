@@ -1,8 +1,10 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { COURT } from '../../src/core/court';
+import { TUNING } from '../../src/core/tuning';
 import type { Tier, WordOption } from '../../src/core/types';
 import { contrastRatio } from '../../src/render/color';
 import { GLYPHS, textWidth } from '../../src/render/font';
-import type { PlateBox } from '../../src/render/layout';
+import { layoutServeFar, type PlateBox } from '../../src/render/layout';
 import { BELT_COLOR, OUTLINE, PAL, PLATE, RAMPS, TIER_COLOR, TIER_TYPED } from '../../src/render/palette';
 import { drawLeader, drawPlate, drawTierRing, drawTimingBar, type PlateDraw } from '../../src/render/plates';
 
@@ -558,15 +560,25 @@ describe('drawPlate — name chip', () => {
   });
 
   it('keeps the tab of a far serve row out of the toss gap over the server, before and after the lock', () => {
-    // The far serve row for a server at x 240 (layout tests): easy + medium left of the gap, hard right.
-    const row: [string, number][] = [['rally', 124], ['backhand', 169], ['counterpuncher', 246]];
-    for (const chipOn of [0, 1, 2]) {
-      const g = scene(480, 60);
-      row.forEach(([word, x], i) => {
-        drawPlate(as2d(g), plate(word, { style: 'remote', nameChip: i === chipOn ? 'kim' : null }, x, 22));
-      });
-      expect(colours(g, 234, 0, 12, 60), `chip on option ${chipOn}`).toEqual(new Set([BG]));
-      expect(colours(g, 0, 38, 480, 22), `chip on option ${chipOn}`).toEqual(new Set([BG]));
+    // The far server's feet (spec §4.1 projection of TUNING.positions, x ±0.8 m at y 12.3 m) and the centre.
+    const d = 1 + (TUNING.positions.serverY + COURT.halfLength) / (2 * COURT.halfLength);
+    const off = (TUNING.positions.serverX * 27.35) / d;
+    const words = ['rally', 'backhand', 'counterpuncher'];
+    for (const sx of [240 - off, 240, 240 + off]) {
+      const row = layoutServeFar(words.map((w) => w.length), sx);
+      const gapLeft = Math.max(...row.filter((b) => b.x < sx).map((b) => b.x + b.w));
+      const gapRight = Math.min(...row.filter((b) => b.x > sx).map((b) => b.x));
+      expect(gapRight - gapLeft, `server ${sx}: plates on both sides of a 24+ px gap`).toBeGreaterThanOrEqual(24);
+      for (const chipOn of [0, 1, 2]) {
+        const g = scene(480, 60);
+        row.forEach((b, i) => {
+          const over: Partial<PlateDraw> = { style: 'remote', nameChip: i === chipOn ? 'kim' : null };
+          drawPlate(as2d(g), plate(words[i]!, over, b.x, b.y));
+        });
+        const id = `server ${sx}, chip on option ${chipOn}`;
+        expect(colours(g, gapLeft, 0, gapRight - gapLeft, 60), `${id}: the toss gap`).toEqual(new Set([BG]));
+        expect(colours(g, 0, 38, 480, 22), `${id}: below the band`).toEqual(new Set([BG]));
+      }
     }
   });
 
