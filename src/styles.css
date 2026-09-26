@@ -378,8 +378,24 @@ body {
   background: var(--c, var(--shadow));
   box-shadow:
     inset 0 0 0 var(--u) var(--ink),
+    inset 0 0 0 calc(2 * var(--u)) var(--rim, transparent),
     inset calc(2 * var(--u)) calc(2 * var(--u)) 0 0 var(--hi, transparent),
     inset calc(-2 * var(--u)) calc(-2 * var(--u)) 0 0 var(--lo, transparent);
+}
+
+/*
+ * A colour too dark to read on the panels (under 3:1 against --night, the scoreboard's rule: black,
+ * navy, brown, the darkest hair, skin and racket) gets a light inner outline, its own colour half-way
+ * to --mist, so it never reads as an empty slot. In linear sRGB: --mist is (0.694 0.708 0.783), and
+ * the outline's alpha is 1 below relative luminance 0.1239 (3:1 against --night), else 0.
+ */
+@supports (color: color(from white srgb-linear calc(r / 2) g b / clamp(0, (0.124 - r) * 1000, 1))) {
+  #ui .swatch {
+    --rim: color(
+      from var(--c, white) srgb-linear calc((r + 0.694) / 2) calc((g + 0.708) / 2) calc((b + 0.783) / 2) /
+        clamp(0, (0.1239 - (0.2126 * r + 0.7152 * g + 0.0722 * b)) * 100000, 1)
+    );
+  }
 }
 
 #ui .swatch.none {
@@ -959,6 +975,25 @@ body {
 #ui .score tr.won th,
 #ui .score tr.won td {
   color: var(--ball);
+}
+
+/* Room right of each score column for a tiebreak superscript (two digits), headers aligned with the digits. */
+#ui table.score th:not(:first-child),
+#ui table.score td {
+  padding-right: calc(9 * var(--u));
+}
+
+#ui table.score td {
+  position: relative;
+}
+
+/* The superscript (7⁵) is out of the flow, so every column's digits stay aligned; its top is level with theirs. */
+#ui table.score sup {
+  position: absolute;
+  top: calc(50% - 4 * var(--u));
+  left: calc(100% - 9 * var(--u));
+  font-size: calc(4 * var(--u));
+  line-height: 1;
 }
 
 #ui .stats thead th {
