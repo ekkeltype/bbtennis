@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Black Belt Tennis art</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    padding: 16px;
+    color: #c9cad6;
+    font: 11px/14px Consolas, ui-monospace, monospace;
+    background: repeating-conic-gradient(#24242d 0% 25%, #1b1b22 0% 50%) 0 0 / 16px 16px;
+  }
+  section { width: max-content; margin: 0 0 32px; padding: 8px; }
+  h2 { margin: 0 0 8px; font-size: 13px; line-height: 16px; font-weight: bold; color: #fff; }
+  h3 { margin: 12px 0 6px; font-size: 12px; line-height: 16px; font-weight: bold; color: #e8e8f0; }
+  .row { display: flex; gap: 8px; align-items: flex-end; margin: 0 0 8px; }
+  .row > .label { width: 190px; flex: none; align-self: center; white-space: pre-line; }
+  .grid { display: flex; flex-wrap: wrap; gap: 6px; max-width: 1200px; }
+  figure { margin: 0; }
+  figcaption { margin: 0 0 2px; color: #9a9bb0; }
+  canvas { display: block; image-rendering: pixelated; }
+  canvas.cell { outline: 1px solid #4a4a5c; }
+  .error { color: #ffb0b0; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<main id="art"></main>
+<script type="module" src="./art.ts"></script>
+</body>
+</html>
