@@ -31,7 +31,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - id: pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - run: npm run build
         env:
           # Online invite links (?join=CODE) always point at this Pages build (spec §8). base_url is the
