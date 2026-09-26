@@ -14,5 +14,6 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "tests", "tools"]
+  "include": ["src", "tests", "tools"],
+  "exclude": ["tools/scratch", "node_modules", "dist"]
 }
