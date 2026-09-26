@@ -161,8 +161,9 @@ export function setLine(s: ScoreState): [SetCell[], SetCell[]] {
 }
 
 /**
- * Banner before the next point, by priority: 'MATCH POINT' > 'SET POINT' > 'BREAK POINT' (the receiver is one
- * point from the game) > 'DEUCE'; null when none applies or the match is over.
+ * Banner before the next point, by priority: 'MATCH POINT' > 'SET POINT' > 'GOLDEN POINT' (40–40 under the
+ * golden rule, where the umpire calls "Deuce" and the next point takes the game) > 'BREAK POINT' (the receiver is
+ * one point from the game) > 'DEUCE'; null when none applies or the match is over.
  */
 export function situation(s: ScoreState): string | null {
   if (s.winner !== null) return null;
@@ -171,9 +172,11 @@ export function situation(s: ScoreState): string | null {
   const setPoint = gamePoint.filter((p) => gameWinsSet(s, p));
   if (setPoint.some((p) => setWinsMatch(s, p))) return 'MATCH POINT';
   if (setPoint.length > 0) return 'SET POINT';
-  if (gamePoint.includes(other(currentServer(s)))) return 'BREAK POINT';
   const [a, b] = s.points;
-  if (!s.inTiebreak && a === b && a >= 3) return 'DEUCE';
+  const deuce = !s.inTiebreak && a === b && a >= 3;
+  if (deuce && s.deuceRule === 'golden') return 'GOLDEN POINT';
+  if (gamePoint.includes(other(currentServer(s)))) return 'BREAK POINT';
+  if (deuce) return 'DEUCE';
   return null;
 }
 

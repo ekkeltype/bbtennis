@@ -423,8 +423,34 @@ describe('situation', () => {
     expect(situation(ad)).toBe('BREAK POINT');
 
     const golden = createScore('short', 'golden', 0);
-    play(golden, '000111');
+    play(golden, '111');
     expect(situation(golden)).toBe('BREAK POINT');
+  });
+
+  it('is GOLDEN POINT at 40-40 under the golden rule (the umpire calls Deuce), above BREAK POINT', () => {
+    const s = createScore('short', 'golden', 0);
+    play(s, '000111');
+    expect(pointsDisplay(s)).toStrictEqual(['40', '40']);
+    expect(situation(s)).toBe('GOLDEN POINT');
+    expect(umpireCall(s, NAMES, 1)).toBe('Deuce');
+  });
+
+  it('keeps SET POINT and MATCH POINT above GOLDEN POINT, and has no golden point in a tiebreak', () => {
+    const set = createScore('bo3', 'golden', 0);
+    playGames(set, '000');
+    play(set, '000111');
+    expect(situation(set)).toBe('SET POINT');
+
+    const match = createScore('short', 'golden', 0);
+    playGames(match, '000');
+    play(match, '000111');
+    expect(situation(match)).toBe('MATCH POINT');
+
+    const tiebreak = createScore('bo3', 'golden', 0);
+    playGames(tiebreak, '01010101');
+    expect(tiebreak.inTiebreak).toBe(true);
+    play(tiebreak, '000111');
+    expect(situation(tiebreak)).toBeNull();
   });
 
   it('is SET POINT when the next point can win a set that is not the last, above BREAK POINT', () => {
