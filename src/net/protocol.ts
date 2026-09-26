@@ -50,7 +50,7 @@ type Rec = Record<string, unknown>;
 const FORMATS: Record<FormatId, true> = { tiebreak: true, short: true, full: true, bo3: true };
 const PACES: Record<PaceId, true> = { relaxed: true, normal: true, fast: true, lightning: true };
 const SURFACES: Record<Surface, true> = { hard: true, clay: true, grass: true, dojo: true };
-const WORD_PACKS: Record<WordPackId, true> = { tennis: true, everyday: true, mixed: true };
+const WORD_PACKS: Record<WordPackId, true> = { everyday: true, sports: true, dojo: true, mixed: true };
 const DEUCE_RULES: Record<DeuceRule, true> = { advantage: true, golden: true };
 const REJECT_REASONS = { version: true, full: true, 'in-match': true } as const;
 

@@ -12,7 +12,7 @@ const trainingConfig: MatchConfig = {
   format: 'tiebreak',
   pace: 'relaxed',
   surface: 'dojo',
-  wordPack: 'tennis',
+  wordPack: 'everyday',
   deuceRule: 'advantage',
   training: { serveClock: false, freezeUntilFirstKey: true, fixedWords: { serve: [['ace', 'volley', 'backspinner']], choice: [['net', 'return', 'overheadsmash']] } },
 };
@@ -226,6 +226,10 @@ describe('parseMsg round trip', () => {
     expect(parseMsg({ type: 'frame', turn: 4, τ: 10, ev: undefined, s: undefined })).toEqual({ type: 'frame', turn: 4, τ: 10 });
   });
 
+  it.each(['everyday', 'sports', 'dojo', 'mixed'])('keeps a config with the %s word pack', (pack) => {
+    expect(parseMsg(tampered(find('lobby'), (x) => (x.config.wordPack = pack)))).toMatchObject({ config: { wordPack: pack } });
+  });
+
   it('drops unknown fields', () => {
     const parsed = parseMsg(tampered(find('hello'), (x) => {
       x.evil = '<script>';
@@ -271,6 +275,10 @@ describe('parseMsg rejects', () => {
   it.each(configFields)('lobby with config.%s missing or invalid', (field) => {
     expect(parseMsg(tampered(find('lobby'), (x) => delete x.config[field]))).toBeNull();
     expect(parseMsg(tampered(find('lobby'), (x) => (x.config[field] = 'bogus')))).toBeNull();
+  });
+
+  it('lobby with the retired tennis word pack', () => {
+    expect(parseMsg(tampered(find('lobby'), (x) => (x.config.wordPack = 'tennis')))).toBeNull();
   });
 
   const wrongTypes: [string, NetMsg, (x: Record<string, any>) => void][] = [
