@@ -9,6 +9,7 @@
     "build": "tsc --noEmit -p . && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:sim": "node scripts/testSim.mjs",
     "typecheck": "tsc --noEmit -p .",
     "art:export": "node scripts/artExport.mjs",
     "e2e": "node scripts/e2e.mjs",
