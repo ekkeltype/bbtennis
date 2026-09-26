@@ -1,3 +1,5 @@
+import { workerTicker } from './loop';
+
 /** Time source + timers. Real in the browser, virtual in tests. */
 export interface Scheduler {
   /** Current time in ms; monotonic. */
@@ -18,14 +20,24 @@ function checkPeriod(ms: number): void {
   if (!Number.isFinite(ms) || ms <= 0) throw new RangeError(`every: period must be a finite number > 0, got ${ms}`);
 }
 
-/** performance.now + setInterval/setTimeout. */
+/** RealScheduler options: `worker` runs `every` on a Worker ticker that keeps going in hidden tabs. */
+export interface RealSchedulerOptions { worker?: boolean }
+
+/** performance.now + setInterval/setTimeout (or a Worker ticker for `every` with `worker: true`). */
 export class RealScheduler implements Scheduler {
+  private readonly worker: boolean;
+
+  constructor(opts: RealSchedulerOptions = {}) {
+    this.worker = opts.worker === true;
+  }
+
   now(): number {
     return performance.now();
   }
 
   every(ms: number, fn: () => void): () => void {
     checkPeriod(ms);
+    if (this.worker) return workerTicker(ms, fn);
     const id = setInterval(fn, ms);
     return () => clearInterval(id);
   }
