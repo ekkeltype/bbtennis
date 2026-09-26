@@ -63,7 +63,6 @@ describe('KeyboardCapture (spec §4.5)', () => {
     { key: 'Dead', code: 'BracketLeft' },
     { key: 'Process', code: 'KeyA' },
     { key: 'Unidentified', code: '' },
-    { key: 'F5', code: 'F5' },
     { key: 'Shift', code: 'ShiftLeft', shiftKey: true },
     { key: 'Alt', code: 'AltLeft', altKey: true },
     { key: 'a', code: 'KeyA', altKey: true },
@@ -98,6 +97,24 @@ describe('KeyboardCapture (spec §4.5)', () => {
     expect(e.defaultPrevented).toBe(false);
     expect(onKey).not.toHaveBeenCalled();
     expect(onMenu).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['F5', { key: 'F5', code: 'F5' }],
+    ['F11', { key: 'F11', code: 'F11' }],
+    ['F12', { key: 'F12', code: 'F12' }],
+    ['F1', { key: 'F1', code: 'F1' }],
+    ['Shift+F5', { key: 'F5', code: 'F5', shiftKey: true }],
+    ['Alt+F4', { key: 'F4', code: 'F4', altKey: true }],
+    ['F12 held (repeat)', { key: 'F12', code: 'F12', repeat: true }],
+  ] as const)('never prevents or forwards a function key during a match (R37): %s', (_name, init) => {
+    const e = press(init);
+    expect(e.defaultPrevented).toBe(false);
+    expect(onKey).not.toHaveBeenCalled();
+    expect(onMenu).not.toHaveBeenCalled();
+    const next = press({ key: 'F', code: 'KeyF', shiftKey: true });
+    expect(next.defaultPrevented).toBe(true);
+    expect(onKey).toHaveBeenCalledWith({ kind: 'letter', letter: 'f', viaCode: false }, next.timeStamp);
   });
 
   it.each(['Escape', 'Tab'] as const)('sends %s to the menu callback instead of the game, prevented', (key) => {

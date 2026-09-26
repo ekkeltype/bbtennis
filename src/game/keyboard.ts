@@ -4,11 +4,18 @@ import { classifyKey, type KeyClass } from '../core/typing';
 export type MenuKey = 'Escape' | 'Tab';
 
 /**
+ * Function keys by `event.key` (F1–F12, and F13+ where a keyboard has them): left to the browser
+ * for reload, fullscreen and dev tools (spec §4.5).
+ */
+const FUNCTION_KEY = /^F\d{1,2}$/;
+
+/**
  * Match keyboard input (spec §4.5): keydown on the window in the capture phase, classified by
  * `classifyKey`; letters and Space go to `onKey` with the event's timeStamp, Esc and Tab to `onMenu`.
- * While enabled, every non-Ctrl/Meta keydown (and the Alt keyup, which opens the Windows menu) has
- * its default prevented; Ctrl/Meta combinations never are. Nothing at all is done while disabled,
- * blocked (a menu is open) or while a text field (input, textarea, select, contenteditable) has focus.
+ * While enabled, every keydown other than a function key or a Ctrl/Meta combination (and the Alt
+ * keyup, which opens the Windows menu) has its default prevented; function keys and Ctrl/Meta
+ * combinations are never prevented or forwarded. Nothing at all is done while disabled, blocked
+ * (a menu is open) or while a text field (input, textarea, select, contenteditable) has focus.
  */
 export class KeyboardCapture {
   private readonly target: Window;
@@ -50,7 +57,7 @@ export class KeyboardCapture {
   }
 
   private readonly keydown = (e: KeyboardEvent): void => {
-    if (!this.active() || e.ctrlKey || e.metaKey) return;
+    if (!this.active() || e.ctrlKey || e.metaKey || FUNCTION_KEY.test(e.key)) return;
     e.preventDefault();
     if (e.key === 'Escape' || e.key === 'Tab') {
       if (!e.repeat) this.onMenu?.(e.key);
