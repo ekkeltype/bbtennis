@@ -335,7 +335,9 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
   at the left edge; ground rings are shaped (circle / diamond / 4-point star). Every court-space UI
   mark has a 1 px near-black outline; plates get a 1 px dark stroke outside the tier outline.
 - **Plate**: dark fill; width `6n + 11` px (incl. pips), height 16; max 95 px.
-  Remaining letters near-white (≥ 12:1 vs fill); typed letters in the tier colour (≥ 4.5:1); next
+  Remaining letters near-white (≥ 12:1 vs fill); typed letters in the tier's **typed shade** (a
+  muted/darker shade of the tier colour, ≥ 4.5:1 vs fill and clearly darker than the remaining
+  letters: luminance ratio remaining/typed ≥ 1.8); next
   letter as an inverse block (fill-coloured glyph on a near-white 6×10 block), no blinking. In
   unlocked options the first letter is an inverse block in the tier colour. After lock, the other
   options fade out.
@@ -359,8 +361,8 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
 - **Turn signalling**: local-active plates have the tier outline with a dark halo, inverse cursor
   and timing bar; when the local player becomes the active typist: 2-frame white border pop + a
   "your turn" tick; a pulsing ring under the local player's feet while active. Remote plates: grey
-  outline, 70 % fill opacity, no cursor, no timing bar, a 3-letter name chip, typed letters in the
-  opponent's belt colour.
+  outline, 70 % fill opacity, no cursor, no timing bar, a 3-letter name chip in the opponent's belt
+  colour, typed letters in the tier's typed shade (belt colours are unreadable on the plate).
 - **Opponent serve plates** (vs CPU and online alike): true word width (length is public), tier
   colour + pips, one dim dot per letter; each typed letter becomes a 3×5 block in the tier colour;
   wrong-key shake shown; after lock the other two fade. At the strike frame the locked plate
@@ -399,7 +401,8 @@ During a match, `keydown` is handled on `window` in the capture phase:
 - Esc, Tab or the pause icon open the in-match menu (in fullscreen, the first Esc exits fullscreen).
 
 ### 4.6 Screens (HTML/CSS overlay, pixel-styled; keyboard + mouse)
-- The DOM overlay defines `--u = k/dpr` CSS px (one game pixel); overlay sizes are multiples of
+- The DOM overlay defines `--u = cssW / 480` CSS px (one game pixel; equals k/dpr in pixel mode and
+  stays correct in fit mode); overlay sizes are multiples of
   `--u`; the pixel font uses `font-size: calc(8 * var(--u))`, titles 16u. `document.fonts.ready` is
   awaited before the first screen.
 - **Start gate**: "Click to start" (on top-level pages also "or press any key"). The gesture
@@ -500,8 +503,9 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
 
 ### 5.3 Online multiplayer (host-authoritative)
 - **Transport**: PeerJS (npm, bundled). Host peer id `bbtennis-<CODE>`. Guest connects with
-  `peer.connect(id, { reliable: true, serialization: 'json' })` (default `reliable: false` is
-  unordered). Nobody sends before `conn.on('open')`. ICE servers:
+  `peer.connect(id, { reliable: true, serialization: 'raw' })` with manual `JSON.stringify` /
+  validated parse on both ends (PeerJS 'json' mode hard-fails at ~16 KB; default `reliable: false`
+  is unordered). Messages over 32 000 UTF-8 bytes are never sent (dropped with a warning). Nobody sends before `conn.on('open')`. ICE servers:
   `[{urls:'stun:stun.l.google.com:19302'}, {urls:['turn:eu-0.turn.peerjs.com:3478',
   'turn:us-0.turn.peerjs.com:3478'], username:'peerjs', credential:'peerjsp'}]`. Broker host/port/
   path/key and ICE list overridable via `VITE_PEER_HOST`, `VITE_PEER_PORT`, `VITE_PEER_PATH`,
