@@ -1,3 +1,4 @@
+import { clamp } from '../core/util';
 import { netScreenY } from './projection';
 
 /** Screen rectangle of one word plate, in 480×270 buffer pixels; `option` indexes the prompt's options. */
@@ -14,8 +15,6 @@ const HEAD_GAP = 4;
 const NEAR_BAND_GAP = 6;
 const STACK_GAP = 2;
 const ROW_GAP = 4;
-
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 /** Left x that puts a `w`-wide box's centre column on `cx`, kept inside x 4–476. */
 function centredX(cx: number, w: number): number {
@@ -36,24 +35,33 @@ export function plateWidth(len: number, scale: 1 | 2 = 1): number {
  * Choice plates (spec §4.2) for `lens` = [easy, medium, hard]: one 1× row in the band of the targeted
  * half (far: the far prompt band; near: 6 px below the net line), slot centres x 90 / 240 / 390.
  * Easy takes the centre slot; medium takes the outer slot on its target's side of the hard target
- * (`targetsScreenX` in the same option order) and hard the other one.
+ * (`targetsScreenX` in the same option order) and hard the other one. Throws unless both arrays hold
+ * exactly 3 entries.
  */
 export function layoutChoice(lens: number[], targetsScreenX: number[], band: 'far' | 'near'): PlateBox[] {
+  if (lens.length !== 3 || targetsScreenX.length !== 3) {
+    throw new Error(
+      `layoutChoice needs 3 word lengths and 3 target x values, got ${lens.length} and ${targetsScreenX.length}`,
+    );
+  }
   const y = band === 'far' ? BANDS.far[0] : Math.round(netScreenY() + NEAR_BAND_GAP);
-  const mediumLeft = (targetsScreenX[1] ?? 0) <= (targetsScreenX[2] ?? 0);
+  const [, mediumX, hardX] = targetsScreenX as [number, number, number];
+  const mediumLeft = mediumX <= hardX;
   const slots = [SLOT_X.centre, mediumLeft ? SLOT_X.left : SLOT_X.right, mediumLeft ? SLOT_X.right : SLOT_X.left];
   return lens.map((len, option) => {
     const w = plateWidth(len);
-    return { x: centredX(slots[option] ?? SLOT_X.centre, w), y, w, h: PLATE_H, option };
+    return { x: centredX(slots[option]!, w), y, w, h: PLATE_H, option };
   });
 }
 
 /**
  * Serve plates of the near server (spec §4.2): a vertical stack, easy on top, 2 px gaps, its bottom
  * 4 px above the head top (`headX`, `headY`). The plates share one left edge, placed so the widest
- * is centred over the head; the stack is kept inside x 4–476 and below the HUD band.
+ * is centred over the head; the stack is kept inside x 4–476 and below the HUD band. Throws on an
+ * empty `lens`.
  */
 export function layoutServeNear(lens: number[], headX: number, headY: number): PlateBox[] {
+  if (lens.length === 0) throw new Error('layoutServeNear needs at least one word length');
   const widest = Math.max(...lens.map((len) => plateWidth(len)));
   const x = centredX(headX, widest);
   const stackH = lens.length * PLATE_H + (lens.length - 1) * STACK_GAP;
@@ -69,9 +77,10 @@ export function layoutServeNear(lens: number[], headX: number, headY: number): P
 
 /**
  * Serve plates of the far server (spec §4.2): one row in the far prompt band, easy on the left,
- * 4 px gaps, centred on the server's screen x and clamped to x 4–476.
+ * 4 px gaps, centred on the server's screen x and clamped to x 4–476. Throws on an empty `lens`.
  */
 export function layoutServeFar(lens: number[], serverX: number): PlateBox[] {
+  if (lens.length === 0) throw new Error('layoutServeFar needs at least one word length');
   const widths = lens.map((len) => plateWidth(len));
   const rowW = widths.reduce((sum, w) => sum + w, 0) + (lens.length - 1) * ROW_GAP;
   let x = centredX(serverX, rowW);

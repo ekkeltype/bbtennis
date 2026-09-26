@@ -41,7 +41,7 @@ function problems(boxes: PlateBox[]): string[] {
 const centreX = (b: PlateBox): number => b.x + (b.w - 1) / 2;
 
 describe('plateWidth', () => {
-  it('is 6n + 11 px at 1×, capped by the longest word at 95', () => {
+  it('is 6n + 11 px at 1× (95 for the longest word)', () => {
     expect(plateWidth(3)).toBe(29);
     expect(plateWidth(8)).toBe(59);
     expect(plateWidth(14)).toBe(95);
@@ -100,6 +100,16 @@ describe('layoutChoice', () => {
     const boxes = layoutChoice([4, 7, 12], [240, 250, 230], 'far');
     expect(boxes.map(centreX)).toEqual([240, 390, 90]);
   });
+
+  it('rejects anything but exactly 3 word lengths and 3 targets', () => {
+    const targets = [240, 200, 280];
+    for (const lens of [[], [5, 9], [5, 9, 14, 4]]) {
+      expect(() => layoutChoice(lens, targets, 'far'), `${lens.length} lens`).toThrow(/layoutChoice.*3 word lengths/);
+    }
+    for (const ts of [[], [240, 200], [240, 200, 280, 100]]) {
+      expect(() => layoutChoice([5, 9, 14], ts, 'near'), `${ts.length} targets`).toThrow(/layoutChoice.*3 target/);
+    }
+  });
 });
 
 describe('layoutServeNear', () => {
@@ -132,6 +142,10 @@ describe('layoutServeNear', () => {
     expect(problems(boxes)).toEqual([]);
     expect(boxes[0]!.y).toBe(22);
   });
+
+  it('rejects an empty stack', () => {
+    expect(() => layoutServeNear([], 240, 200)).toThrow(/layoutServeNear.*at least one word/);
+  });
 });
 
 describe('layoutServeFar', () => {
@@ -156,6 +170,10 @@ describe('layoutServeFar', () => {
     expect(layoutServeFar([5, 9, 14], 0)[0]!.x).toBe(4);
     const row = layoutServeFar([5, 9, 14], 480);
     expect(row[2]!.x + row[2]!.w).toBe(476);
+  });
+
+  it('rejects an empty row', () => {
+    expect(() => layoutServeFar([], 240)).toThrow(/layoutServeFar.*at least one word/);
   });
 });
 
