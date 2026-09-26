@@ -39,6 +39,39 @@ describe('Attract', () => {
     expect(next.pub.status).toBe('playing');
   }, 60_000);
 
+  it('shown again after minutes away (a match, Options), it goes on where it was: no catching up on the time it was not shown', () => {
+    const s = new VirtualScheduler();
+    const attract = new Attract(s);
+    let vm = attract.frame(0);
+    for (let i = 0; i < 40; i++) {
+      s.advance(STEP);
+      vm = attract.frame(STEP);
+    }
+    const before = { point: vm.pub.pointNo, score: structuredClone(vm.pub.score) };
+    s.advance(5 * 60_000);
+    const back = attract.frame(16);
+    expect(back.pub.status).toBe('playing');
+    expect(back.pub.pointNo - before.point).toBeLessThanOrEqual(1);
+    expect(back.pub.score.setGames).toEqual(before.score.setGames);
+    expect(back.events.filter((e) => e.type === 'point').length).toBeLessThanOrEqual(1);
+  });
+
+  it('a demo that was over when it was hidden is replaced on its return, not raced through', () => {
+    const s = new VirtualScheduler();
+    const attract = new Attract(s);
+    const first = attract.session;
+    let vm = attract.frame(0);
+    for (let i = 0; i < 20_000 && vm.pub.status !== 'over'; i++) {
+      s.advance(STEP);
+      vm = attract.frame(STEP);
+    }
+    s.advance(5 * 60_000);
+    const back = attract.frame(16);
+    expect(attract.session).not.toBe(first);
+    expect(back.pub.status).toBe('playing');
+    expect(back.pub.pointNo).toBeLessThanOrEqual(1);
+  }, 60_000);
+
   it('stop() drops the demo and the next frame starts a fresh one', () => {
     const s = new VirtualScheduler();
     const attract = new Attract(s);
