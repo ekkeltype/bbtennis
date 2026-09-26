@@ -414,16 +414,69 @@ describe('drawPlate — name chip', () => {
     }
   };
 
+  /**
+   * The 1 px edge of a chip at (cx, cy), `w` × `h`, that is not shared with its plate: `shared` names
+   * the side lying on the plate's dark stroke. Returns the edge colours and the shared side's colours.
+   */
+  const chipEdges = (
+    g: PixelContext,
+    cx: number,
+    cy: number,
+    w: number,
+    h: number,
+    shared: 'bottom' | 'left' | 'right',
+  ): { free: Set<string>; shared: Set<string> } => {
+    const sides = {
+      top: colours(g, cx, cy, w, 1),
+      bottom: colours(g, cx, cy + h - 1, w, 1),
+      left: colours(g, cx, cy, 1, h),
+      right: colours(g, cx + w - 1, cy, 1, h),
+    };
+    const inner = {
+      bottom: [sides.top, colours(g, cx, cy, 1, h - 1), colours(g, cx + w - 1, cy, 1, h - 1)],
+      left: [colours(g, cx + 1, cy, w - 1, 1), colours(g, cx + 1, cy + h - 1, w - 1, 1), sides.right],
+      right: [colours(g, cx, cy, w - 1, 1), colours(g, cx, cy + h - 1, w - 1, 1), sides.left],
+    }[shared];
+    return { free: new Set(inner.flatMap((s) => [...s])), shared: sides[shared] };
+  };
+
   it("shows the name's first 3 letters in white capitals on a dark tab above the plate without a belt colour", () => {
     const g = scene();
     const p = plate('rally', { style: 'remote', nameChip: 'alexander' });
     drawPlate(as2d(g), p);
     const { x, y } = p.box;
     const w = textWidth('ALE') + 4;
-    expect(at(g, x, y - 10)).toBe(PLATE.outline);
-    expect(at(g, x + w - 1, y - 5)).toBe(PLATE.outline);
+    expect(at(g, x + w - 1, y - 10)).not.toBe(BG);
     expect(at(g, x + w, y - 5)).toBe(BG);
+    expect(at(g, x, y - 11)).toBe(BG);
     chipText(g, x + 2, y - 9, 'ALE');
+  });
+
+  it('rims a dark tab (black or brown belt, or none) in a light 1 px outline, a light tab in the dark stroke', () => {
+    const cases: [string, string | null, boolean][] = [
+      ['black', RAMPS.cloth[BELT_COLOR.black]![1], true],
+      ['brown', RAMPS.cloth[BELT_COLOR.brown]![1], true],
+      ['no belt', null, true],
+      ['white', RAMPS.cloth[BELT_COLOR.white]![1], false],
+      ['yellow', RAMPS.cloth[BELT_COLOR.yellow]![1], false],
+      ['green', RAMPS.cloth[BELT_COLOR.green]![1], false],
+    ];
+    for (const [label, oppColor, dark] of cases) {
+      const g = scene();
+      const p = plate('rally', { style: 'remote', nameChip: 'kim', oppColor });
+      drawPlate(as2d(g), p);
+      const { x, y } = p.box;
+      const edges = chipEdges(g, x, y - 10, textWidth('KIM') + 4, 11, 'bottom');
+      expect(edges.shared, `${label}: the plate's top stroke stays dark`).toEqual(new Set([PLATE.outline]));
+      expect(edges.free.size, label).toBe(1);
+      const [rim] = [...edges.free] as [string];
+      if (!dark) {
+        expect(rim, label).toBe(PLATE.outline);
+        continue;
+      }
+      expect(contrastRatio(rim, PLATE.outline), `${label} rim vs dark ground`).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(rim, oppColor ?? PLATE.fill), `${label} rim vs tab`).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it('paints the tab in any cloth shade or the grey belt fallback with text at ≥ 4.5:1', () => {
@@ -447,7 +500,12 @@ describe('drawPlate — name chip', () => {
       expect([PAL.white, PLATE.outline], label).toContain(text[0]);
       expect(contrastRatio(text[0]!, shade), label).toBeGreaterThanOrEqual(4.5);
       chipText(g, x + 2, y - 9, 'KIM', text[0], shade);
-      expect(colours(g, x, y - 10, w, 1), `${label} top stroke`).toEqual(new Set([PLATE.outline]));
+      const edges = chipEdges(g, x, y - 10, w, 11, 'bottom');
+      expect(edges.free.size, `${label} edge`).toBe(1);
+      const [rim] = [...edges.free] as [string];
+      if (text[0] === PLATE.outline) expect(rim, `${label} edge`).toBe(PLATE.outline);
+      else expect(contrastRatio(rim, shade), `${label} rim vs tab`).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(rim, PLATE.outline) >= 3 || contrastRatio(shade, PLATE.outline) >= 3, label).toBe(true);
     }
   });
 
@@ -461,26 +519,97 @@ describe('drawPlate — name chip', () => {
     }
   });
 
-  it('hangs the tab below a plate at the top of the far band', () => {
+  it('sets the tab beside a plate at the top of the far band, inside the band, never below the plate', () => {
     const g = scene();
-    const p = plate('rally', { style: 'remote', nameChip: 'Bo' }, 40, 22);
+    const p = plate('rally', { style: 'remote', nameChip: 'Bo' }, 60, 22);
     drawPlate(as2d(g), p);
-    const { x, y, h } = p.box;
-    expect(colours(g, x, y - 11, 30, 11)).toEqual(new Set([BG]));
-    expect(at(g, x, y + h + 9)).toBe(PLATE.outline);
-    chipText(g, x + 2, y + h, 'BO');
+    const { width, height } = g.canvas;
+    const w = textWidth('BO') + 4;
+    const cx = 60 - w + 1;
+    expect(colours(g, 0, 0, width, 22), 'HUD band').toEqual(new Set([BG]));
+    expect(colours(g, 0, 38, width, height - 38), 'below the plate').toEqual(new Set([BG]));
+    expect(colours(g, 0, 22, cx, 16), 'left of the tab').toEqual(new Set([BG]));
+    expect(colours(g, cx, 33, w - 1, 5), 'under the tab').toEqual(new Set([BG]));
+    chipText(g, cx + 2, 23, 'BO');
+    const edges = chipEdges(g, cx, 22, w, 11, 'right');
+    expect(edges.shared, "the plate's left stroke stays dark").toEqual(new Set([PLATE.outline]));
+    expect(edges.free.size).toBe(1);
   });
 
-  it('keeps the tab out of the HUD band (y 0–21): above a plate from y 32 down, below it higher up', () => {
+  it('sets a far-band tab on the side away from the screen centre: right of a plate right of x 240', () => {
+    const g = scene(480, 60);
+    const p = plate('rally', { style: 'remote', nameChip: 'Bo' }, 300, 22);
+    drawPlate(as2d(g), p);
+    const w = textWidth('BO') + 4;
+    const cx = 300 + p.box.w - 1;
+    expect(colours(g, 0, 0, 300, 60), 'left of the plate').toEqual(new Set([BG]));
+    chipText(g, cx + 2, 23, 'BO');
+    expect(chipEdges(g, cx, 22, w, 11, 'left').shared).toEqual(new Set([PLATE.outline]));
+    expect(colours(g, cx + w, 0, 480 - cx - w, 60)).toEqual(new Set([BG]));
+  });
+
+  it('sets a far-band tab left of a plate too near the right edge for it, never right of x 476', () => {
+    const g = scene(480, 60);
+    const p = plate('rally', { style: 'remote', nameChip: 'Bo' }, 476 - plateWidth(5), 22);
+    drawPlate(as2d(g), p);
+    const w = textWidth('BO') + 4;
+    expect(colours(g, 476, 0, 4, 60), 'right of x 476').toEqual(new Set([BG]));
+    chipText(g, p.box.x - w + 3, 23, 'BO');
+  });
+
+  it('keeps the tab of a far serve row out of the toss gap over the server, before and after the lock', () => {
+    // The far serve row for a server at x 240 (layout tests): easy + medium left of the gap, hard right.
+    const row: [string, number][] = [['rally', 124], ['backhand', 169], ['counterpuncher', 246]];
+    for (const chipOn of [0, 1, 2]) {
+      const g = scene(480, 60);
+      row.forEach(([word, x], i) => {
+        drawPlate(as2d(g), plate(word, { style: 'remote', nameChip: i === chipOn ? 'kim' : null }, x, 22));
+      });
+      expect(colours(g, 234, 0, 12, 60), `chip on option ${chipOn}`).toEqual(new Set([BG]));
+      expect(colours(g, 0, 38, 480, 22), `chip on option ${chipOn}`).toEqual(new Set([BG]));
+    }
+  });
+
+  it('sets a far-band tab right of a plate too near the left edge for it, never left of x 4', () => {
+    const g = scene();
+    const p = plate('rally', { style: 'remote', nameChip: 'Bo' }, 10, 22);
+    drawPlate(as2d(g), p);
+    const w = textWidth('BO') + 4;
+    const cx = 10 + p.box.w - 1;
+    expect(colours(g, 0, 0, 10, g.canvas.height), 'left of the plate').toEqual(new Set([BG]));
+    expect(colours(g, 0, 38, g.canvas.width, g.canvas.height - 38), 'below the plate').toEqual(new Set([BG]));
+    chipText(g, cx + 2, 23, 'BO');
+    expect(chipEdges(g, cx, 22, w, 11, 'left').shared).toEqual(new Set([PLATE.outline]));
+    expect(at(g, cx + w, 27)).toBe(BG);
+  });
+
+  it('keeps the tab out of the HUD band (y 0–21): above a plate from y 32 down, beside it higher up', () => {
+    const w = textWidth('BO') + 4;
     const above = scene();
     drawPlate(as2d(above), plate('rally', { style: 'remote', nameChip: 'Bo' }, 40, 32));
-    expect(colours(above, 40, 0, 30, 22)).toEqual(new Set([BG]));
-    expect(at(above, 40, 22)).toBe(PLATE.outline);
+    expect(colours(above, 0, 0, above.canvas.width, 22)).toEqual(new Set([BG]));
+    chipText(above, 42, 23, 'BO');
 
-    const below = scene();
-    drawPlate(as2d(below), plate('rally', { style: 'remote', nameChip: 'Bo' }, 40, 31));
-    expect(colours(below, 40, 0, 30, 31)).toEqual(new Set([BG]));
-    expect(at(below, 40, 31 + 16 + 9)).toBe(PLATE.outline);
+    const beside = scene();
+    drawPlate(as2d(beside), plate('rally', { style: 'remote', nameChip: 'Bo' }, 40, 31));
+    expect(colours(beside, 0, 0, beside.canvas.width, 31)).toEqual(new Set([BG]));
+    expect(colours(beside, 0, 47, beside.canvas.width, beside.canvas.height - 47)).toEqual(new Set([BG]));
+    chipText(beside, 40 - w + 3, 32, 'BO');
+  });
+
+  it('sets a 2× tab beside a 2× plate at the top of the far band', () => {
+    const g = scene();
+    const p = plate('rally', { style: 'remote', nameChip: 'Bo', scale: 2 }, 60, 22);
+    drawPlate(as2d(g), p);
+    const w = textWidth('BO', 2) + 8;
+    const cx = 60 - w + 2;
+    expect(colours(g, 0, 0, g.canvas.width, 22)).toEqual(new Set([BG]));
+    expect(colours(g, 0, 22 + 32, g.canvas.width, g.canvas.height - 54)).toEqual(new Set([BG]));
+    expect(colours(g, 0, 22, cx, 32)).toEqual(new Set([BG]));
+    expect(colours(g, cx, 44, w - 2, 10), 'under the tab').toEqual(new Set([BG]));
+    expect(colours(g, 60, 22, 2, 22), "the plate's left stroke stays dark").toEqual(new Set([PLATE.outline]));
+    expect(colours(g, cx, 22, 2, 22).size).toBe(1);
+    expect(at(g, cx, 22)).not.toBe(BG);
   });
 });
 
@@ -530,6 +659,81 @@ describe('drawTierRing', () => {
         expect(ink.has(`${-dx},${dy}`) && ink.has(`${dx},${-dy}`), `${t} ${p}`).toBe(true);
       }
     }
+  });
+
+  /** The 8-connected groups of `cells` ('dx,dy' keys). */
+  const groups = (cells: string[]): string[][] => {
+    const left = new Set(cells);
+    const out: string[][] = [];
+    for (const start of cells) {
+      if (!left.delete(start)) continue;
+      const group = [start];
+      for (let i = 0; i < group.length; i++) {
+        const [x, y] = group[i]!.split(',').map(Number) as [number, number];
+        for (let j = -1; j <= 1; j++) {
+          for (let k = -1; k <= 1; k++) {
+            const n = `${x + k},${y + j}`;
+            if (left.delete(n)) group.push(n);
+          }
+        }
+      }
+      out.push(group);
+    }
+    return out;
+  };
+
+  /** Whether the target point is walled in by ink: no 4-connected ink-free path leads out of the ring's box. */
+  const enclosesCentre = (ink: string[]): boolean => {
+    const wall = new Set(ink);
+    const seen = new Set(['0,0']);
+    const queue = [[0, 0] as [number, number]];
+    while (queue.length) {
+      const [x, y] = queue.pop()!;
+      if (Math.abs(x) > 6 || Math.abs(y) > 3) return false;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const n = `${x + dx},${y + dy}`;
+        if (wall.has(n) || seen.has(n)) continue;
+        seen.add(n);
+        queue.push([x + dx, y + dy]);
+      }
+    }
+    return true;
+  };
+
+  it('keeps every ring 13×7 px, centred on the target', () => {
+    for (const t of ['easy', 'medium', 'hard'] as const) {
+      const cells = inkAround(t).ink.map((p) => p.split(',').map(Number) as [number, number]);
+      const xs = cells.map(([x]) => x);
+      const ys = cells.map(([, y]) => y);
+      expect([Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)], t).toEqual([-6, 6, -3, 3]);
+    }
+  });
+
+  it('draws the medium diamond as one closed line around the target', () => {
+    const { ink } = inkAround('medium');
+    expect(groups(ink).length).toBe(1);
+    expect(enclosesCentre(ink)).toBe(true);
+  });
+
+  it('draws the hard star as 4 separate points, one on each axis, around an open hollow centre', () => {
+    const { ink } = inkAround('hard');
+    const points = groups(ink);
+    expect(points.length).toBe(4);
+    for (const tip of ['0,-3', '0,3', '-6,0', '6,0']) {
+      expect(points.filter((g) => g.includes(tip)).length, `a point reaching ${tip}`).toBe(1);
+    }
+    for (const p of ink) {
+      const [dx, dy] = p.split(',').map(Number) as [number, number];
+      expect(Math.abs(dx) <= 2 && Math.abs(dy) <= 1, `${p} inside the hollow centre`).toBe(false);
+    }
+    expect(enclosesCentre(ink)).toBe(false);
+  });
+
+  it('shares under half its pixels with the diamond, so the shapes differ without colour (deutan)', () => {
+    const medium = new Set(inkAround('medium').ink);
+    const hard = inkAround('hard').ink;
+    const shared = hard.filter((p) => medium.has(p)).length;
+    expect(shared / (medium.size + hard.length - shared)).toBeLessThan(0.5);
   });
 
   it('outlines every tier pixel in near-black', () => {

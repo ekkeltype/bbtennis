@@ -58,6 +58,10 @@ const CHIP_H = 11;
 const CHIP_LETTERS = 3;
 /** First row below the HUD band (spec §4.1, `BANDS.far[0]`); a chip above the plate may not start higher. */
 const CHIP_MIN_Y = 22;
+/** The plate area's x range (spec §4.2, x 4–476) and centre, which a chip beside a plate faces away from. */
+const CHIP_X = { min: 4, max: 476, centre: 240 };
+/** 1 px rim of a chip dark enough for white text: ≥ 3:1 against that chip and against dark ground. */
+const CHIP_RIM = PAL.mist;
 
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
@@ -132,8 +136,12 @@ function readableOn(bg: string): string {
 }
 
 /**
- * A tab with the owner's first 3 letters on `color` (belt colour, or the plate fill), above the plate,
- * or below it when that would reach the HUD band.
+ * A tab with the owner's first 3 letters on `color` (belt colour, or the plate fill) that shares one
+ * stroke with the plate at (x, y), `plateW` wide: above its left end, or, when that would reach the
+ * HUD band (a plate in the far prompt band), beside it with the tops aligned, on the side away from
+ * the screen centre unless that would leave x 4–476. The far server stands near the centre, so the
+ * tab stays out of its serve row's toss gap; it never hangs below the plate, onto the far player. A
+ * tab dark enough for white text gets a light rim on its free sides so it stays visible over dark ground.
  */
 function drawNameChip(
   ctx: CanvasRenderingContext2D,
@@ -141,17 +149,25 @@ function drawNameChip(
   color: string,
   x: number,
   y: number,
-  h: number,
+  plateW: number,
   s: 1 | 2,
 ): void {
   const text = [...name].slice(0, CHIP_LETTERS).join('').toUpperCase();
   const w = textWidth(text, s) + 4 * s;
-  const chipH = CHIP_H * s;
-  const above = y - chipH + s;
-  const cy = above >= CHIP_MIN_Y ? above : y + h - s;
-  frame(ctx, x, cy, w, chipH, s, PLATE.outline);
-  rect(ctx, x + s, cy + s, w - 2 * s, chipH - 2 * s, color);
-  drawText(ctx, text, x + 2 * s, cy + s, readableOn(color), s);
+  const h = CHIP_H * s;
+  const ink = readableOn(color);
+  const above = y - h + s >= CHIP_MIN_Y;
+  const fitsLeft = x - w + s >= CHIP_X.min;
+  const fitsRight = x + plateW - s + w <= CHIP_X.max;
+  const left = x + (plateW - 1) / 2 <= CHIP_X.centre ? fitsLeft : !fitsRight;
+  const cx = above ? x : left ? x - w + s : x + plateW - s;
+  const cy = above ? y - h + s : y;
+  frame(ctx, cx, cy, w, h, s, ink === PAL.white ? CHIP_RIM : PLATE.outline);
+  // The edge lying on the plate's stroke stays dark.
+  if (above) rect(ctx, cx, y, w, s, PLATE.outline);
+  else rect(ctx, left ? x : cx, cy, s, h, PLATE.outline);
+  rect(ctx, cx + s, cy + s, w - 2 * s, h - 2 * s, color);
+  drawText(ctx, text, cx + 2 * s, cy + s, ink, s);
 }
 
 /**
@@ -161,8 +177,9 @@ function drawNameChip(
  * dark) and shakes the plate by up to 2 px unless `reduceEffects`. Remote: grey outline, 70 % fill,
  * no cursor, typed letters in the typed shade. Hidden remote: tier outline, a dim dot per letter,
  * typed letters as 3×5 tier blocks. Remote plates shake on a wrong key but never flash. The name
- * chip is painted in `oppColor` with white or dark text. Every plate has 1/2/3 tier pips and a 1 px
- * dark stroke; red is never used. Canvas state is restored afterwards.
+ * chip is painted in `oppColor` with white or dark text, above the plate or, in the far prompt band,
+ * beside it; a dark chip gets a light rim. Every plate has 1/2/3 tier pips and a 1 px dark stroke;
+ * red is never used. Canvas state is restored afterwards.
  */
 export function drawPlate(ctx: CanvasRenderingContext2D, p: PlateDraw): void {
   const alpha = 1 - clamp01(p.faded);
@@ -188,7 +205,7 @@ export function drawPlate(ctx: CanvasRenderingContext2D, p: PlateDraw): void {
   ctx.globalAlpha = opacity;
   drawPips(ctx, p.opt.tier, x, y, s, flash ? PLATE.fill : tier);
   drawLetters(ctx, p, x, y, flash);
-  if (p.nameChip !== null) drawNameChip(ctx, p.nameChip, p.oppColor ?? PLATE.fill, x, y, h, s);
+  if (p.nameChip !== null) drawNameChip(ctx, p.nameChip, p.oppColor ?? PLATE.fill, x, y, w, s);
   ctx.restore();
 }
 
@@ -215,13 +232,15 @@ const RING_ART: Record<Tier, string[]> = {
     '....##.##....',
     '......#......',
   ],
+  // Four separate points (arrowheads above and below, bars left and right) around an open centre,
+  // so it never reads as the closed diamond when yellow and vermillion look alike (deutan).
   hard: [
     '......#......',
-    '.....#.#.....',
-    '.####...####.',
-    '#...........#',
-    '.####...####.',
-    '.....#.#.....',
+    '.....###.....',
+    '.............',
+    '####.....####',
+    '.............',
+    '.....###.....',
     '......#......',
   ],
 };
@@ -272,7 +291,8 @@ const RINGS: Record<Tier, ReturnType<typeof ringShape>> = {
 
 /**
  * Draws the ground ring of a target (spec §4.2) centred on screen point (sx, sy): easy circle,
- * medium diamond, hard 4-point star, 1 px tier line with a 1 px near-black outline.
+ * medium diamond (one closed line), hard 4-point star (four separate points around an open centre),
+ * 1 px tier ink with a 1 px near-black outline.
  */
 export function drawTierRing(ctx: CanvasRenderingContext2D, tier: Tier, sx: number, sy: number): void {
   const x = Math.round(sx);
