@@ -1001,6 +1001,193 @@ body {
   text-align: center;
 }
 
+/* ---------- Online lobby: Host lobby and Join ---------- */
+
+#ui .lobby {
+  width: calc(420 * var(--u));
+  --label-w: 56;
+  --value-w: 104;
+}
+
+/* The lobby shows and hides its parts by phase; a hidden one stays hidden whatever its display. */
+#ui .lobby [hidden] {
+  display: none !important;
+}
+
+#ui .lobby .body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(3 * var(--u));
+}
+
+#ui .code-box {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  padding: calc(4 * var(--u)) calc(6 * var(--u));
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--shadow);
+}
+
+#ui .code-box .label {
+  color: var(--silver);
+}
+
+/* The game code at 2× the menu text (spec §4.6). */
+#ui .code.big {
+  min-width: calc(88 * var(--u));
+  font-size: calc(16 * var(--u));
+  letter-spacing: calc(2 * var(--u));
+  color: var(--gold);
+  text-shadow: var(--u) var(--u) 0 var(--shadow);
+}
+
+#ui .code-box .copy {
+  display: flex;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+#ui .selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#ui .copied {
+  display: flex;
+  gap: calc(6 * var(--u));
+  min-height: calc(10 * var(--u));
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  line-height: 1;
+  color: var(--sky);
+}
+
+#ui .invite-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cream);
+}
+
+#ui .lobby .split {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(6 * var(--u));
+  min-height: calc(114 * var(--u));
+}
+
+#ui .lobby .rows {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+#ui .opponent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(3 * var(--u));
+  width: calc(96 * var(--u));
+  padding: calc(3 * var(--u)) 0 calc(4 * var(--u));
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--shadow);
+}
+
+#ui .opponent .preview {
+  width: calc(80 * var(--u));
+  height: calc(96 * var(--u));
+}
+
+#ui .opponent figcaption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(3 * var(--u));
+}
+
+#ui .opponent .name {
+  color: var(--cream);
+}
+
+#ui .opponent .state {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  line-height: 1;
+  color: var(--grey);
+}
+
+#ui .opponent .state.on {
+  color: var(--gold);
+}
+
+#ui .row.info .value {
+  color: var(--cream);
+}
+
+#ui .lobby .foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(6 * var(--u));
+  min-height: calc(11 * var(--u));
+}
+
+#ui .lobby .ping {
+  flex: none;
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  color: var(--grey);
+}
+
+#ui .lobby .btn:disabled {
+  color: var(--slate);
+  cursor: default;
+}
+
+#ui .lobby .btn.ready[aria-pressed='true']:not(:focus) {
+  color: var(--ball);
+}
+
+#ui .code-entry {
+  display: flex;
+  flex-direction: column;
+  gap: calc(3 * var(--u));
+}
+
+#ui .code-field {
+  all: unset;
+  width: calc(88 * var(--u));
+  height: calc(14 * var(--u));
+  padding: 0 calc(4 * var(--u));
+  font-family: var(--head);
+  font-size: calc(8 * var(--u));
+  letter-spacing: calc(2 * var(--u));
+  text-transform: uppercase;
+  color: var(--gold);
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--slate);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#ui .code-field:focus {
+  box-shadow: inset 0 0 0 var(--u) var(--gold);
+}
+
+#ui .code-field:disabled {
+  color: var(--grey);
+}
+
+#ui .code-entry .hint {
+  padding-left: calc(14 * var(--u));
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  line-height: 1;
+  color: var(--yellow);
+}
+
 /* ---------- Match overlay ---------- */
 
 #ui .play {
