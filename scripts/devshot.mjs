@@ -6,20 +6,20 @@
  * <pagePath> is relative to the project root (e.g. tools/scratch/hello.html); omit a leading '/'
  * in Git Bash, which rewrites '/x' into a Windows path.
  *
- * Starts a Vite dev server on a free port, opens http://localhost:<port>/<pagePath> in the local
- * Chrome via playwright-core, screenshots the selector's element (or the full page) and prints the
- * PNG path. Page console errors go to stderr; a page-load or __shotReady timeout also prints the
- * whole page console transcript, and a failed launch prints the errors of both launch routes.
+ * Through the harness shared with scripts/artExport.mjs (scripts/lib/pageShot.mjs): starts a Vite dev
+ * server on a free port, opens http://localhost:<port>/<pagePath> in the local Chrome via
+ * playwright-core, screenshots the selector's element (or the full page) and prints the PNG path.
+ * Page console errors go to stderr as `devshot: <line>`; a page-load, __shotReady or --selector
+ * screenshot timeout also prints the whole page console transcript, and a failed launch prints the
+ * errors of both launch routes. The browser and the server are closed on every path.
  * Exit codes: 0 ok, 1 failure/timeout, 2 bad usage.
  */
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, errors } from 'playwright-core';
-import { createServer } from 'vite';
+import { launchChrome, openReadyPage, PageTimeoutError, startDevServer, withTimeoutTranscript } from './lib/pageShot.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const CHROME_PATH = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const USAGE = 'Usage: node scripts/devshot.mjs <pagePath> <out.png> [--w 960] [--h 540] [--selector css] [--timeout 20000]';
 
 function parseArgs(argv) {
@@ -47,85 +47,36 @@ function parseArgs(argv) {
   return { pagePath, out: resolve(out), ...opts };
 }
 
-async function launchChrome() {
-  let channelErr;
-  try {
-    return await chromium.launch({ channel: 'chrome' });
-  } catch (err) {
-    channelErr = err;
+/** Opens the page at `url` once ready and writes the selector's element, or the full page, to args.out. */
+async function capture(browser, url, args) {
+  const { page, transcript } = await openReadyPage(browser, url, {
+    viewport: { width: args.w, height: args.h },
+    timeout: args.timeout,
+    tag: 'devshot',
+  });
+  await mkdir(dirname(args.out), { recursive: true });
+  if (!args.selector) {
+    await page.screenshot({ path: args.out, fullPage: true });
+    return;
   }
-  try {
-    return await chromium.launch({ executablePath: CHROME_PATH });
-  } catch (pathErr) {
-    throw new Error(
-      `could not launch Chrome.\n--- via channel 'chrome':\n${channelErr.message}\n--- via executablePath ${CHROME_PATH}:\n${pathErr.message}`,
-    );
-  }
+  await withTimeoutTranscript(
+    () => page.locator(args.selector).screenshot({ path: args.out, timeout: args.timeout }),
+    `timed out after ${args.timeout} ms screenshotting ${args.selector} on ${url}`,
+    transcript,
+  );
 }
 
 async function shoot(args) {
-  const consoleLines = [];
-  let server = null;
-  let browser = null;
+  const { server, origin } = await startDevServer(ROOT);
   try {
-    server = await createServer({
-      root: ROOT,
-      appType: 'mpa',
-      server: { port: 0, forwardConsole: false },
-      logLevel: 'warn',
-      clearScreen: false,
-    });
-    await server.listen();
-    const { port } = server.httpServer.address();
-    const url = `http://localhost:${port}/${args.pagePath.replace(/^\/+/, '')}`;
-
-    browser = await launchChrome();
-    const context = await browser.newContext({ viewport: { width: args.w, height: args.h }, deviceScaleFactor: 1 });
-    await context.route('**/favicon.ico', (route) => route.fulfill({ status: 204 }));
-    const page = await context.newPage();
-    page.on('console', (msg) => {
-      const line = `[console.${msg.type()}] ${msg.text()}`;
-      consoleLines.push(line);
-      if (msg.type() === 'error') console.error(line);
-    });
-    page.on('pageerror', (err) => {
-      const line = `[pageerror] ${err.stack ?? err.message}`;
-      consoleLines.push(line);
-      console.error(line);
-    });
-
-    const timedOut = (what) => {
-      console.error(`devshot: timed out after ${args.timeout} ms ${what}`);
-      console.error(consoleLines.length ? consoleLines.join('\n') : '(no page console output)');
-      return 1;
-    };
-
-    let response;
+    const browser = await launchChrome();
     try {
-      response = await page.goto(url, { timeout: args.timeout });
-    } catch (err) {
-      if (!(err instanceof errors.TimeoutError)) throw err;
-      return timedOut(`loading ${url}`);
+      await capture(browser, `${origin}/${args.pagePath.replace(/^\/+/, '')}`, args);
+    } finally {
+      await browser.close();
     }
-    if (response && !response.ok()) {
-      console.error(`devshot: HTTP ${response.status()} for ${url}`);
-      return 1;
-    }
-    try {
-      await page.waitForFunction(() => window.__shotReady === true, null, { timeout: args.timeout });
-    } catch (err) {
-      if (!(err instanceof errors.TimeoutError)) throw err;
-      return timedOut(`waiting for window.__shotReady on ${url}`);
-    }
-
-    await mkdir(dirname(args.out), { recursive: true });
-    if (args.selector) await page.locator(args.selector).screenshot({ path: args.out, timeout: args.timeout });
-    else await page.screenshot({ path: args.out, fullPage: true });
-    console.log(args.out);
-    return 0;
   } finally {
-    await browser?.close();
-    await server?.close();
+    await server.close();
   }
 }
 
@@ -137,8 +88,10 @@ try {
   process.exit(2);
 }
 try {
-  process.exit(await shoot(args));
+  await shoot(args);
+  console.log(args.out);
+  process.exit(0);
 } catch (err) {
-  console.error(`devshot: ${err.stack ?? err}`);
+  console.error(`devshot: ${err instanceof PageTimeoutError ? err.message : (err.stack ?? err)}`);
   process.exit(1);
 }
