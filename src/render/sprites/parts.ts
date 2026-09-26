@@ -64,6 +64,17 @@ export const LEGEND: Readonly<Record<string, SlotId>> = {
 /** Where a ramp group takes its colours: a `Look` ramp or the fixed neutral ramp (shoes, strings). */
 export type RampSource = 'skin' | 'hair' | 'shirt' | 'shorts' | 'headband' | 'racket' | 'neutral';
 
+/** Shades in each source's ramp: every `Look` ramp is [hi, mid, lo]; the neutral ramp has four greys. */
+export const RAMP_SIZE: Readonly<Record<RampSource, number>> = {
+  skin: 3,
+  hair: 3,
+  shirt: 3,
+  shorts: 3,
+  headband: 3,
+  racket: 3,
+  neutral: 4,
+};
+
 /** Slots sharing one ramp, listed light → dark, with the ramp shade index each one uses. */
 export interface RampGroup {
   source: RampSource;
@@ -173,7 +184,7 @@ export const HEADS: Record<View, Part> = {
 export const HAIR_STYLES: string[] = ['crop', 'topknot', 'ponytail', 'bob', 'afro'];
 
 /** Hair overlays per style (same order as `HAIR_STYLES`) and view. */
-export const HAIR: readonly Record<View, Overlay>[] = [
+const HAIR: readonly Record<View, Overlay>[] = [
   // crop
   {
     near: {
@@ -337,10 +348,10 @@ export const HAIR: readonly Record<View, Overlay>[] = [
 ];
 
 /** Head-grid rows the headband covers (upper row band mid, lower row band shadow). */
-export const BAND_ROWS: readonly [number, number] = [2, 3];
+const BAND_ROWS: readonly [number, number] = [2, 3];
 
 /** The headband's knot tails, trailing on the player's right (in head-grid pixels, like hair). */
-export const BAND_TAILS: Record<View, Overlay> = {
+const BAND_TAILS: Record<View, Overlay> = {
   near: {
     rows: [
       '.B##...',
@@ -596,14 +607,20 @@ export function lintGrid(name: string, rows: readonly string[]): string[] {
   return problems;
 }
 
-/** Art lint for ramp groups: one shade per slot, shades strictly increasing (light → dark). */
+/**
+ * Art lint for ramp groups: one shade per slot, shades strictly increasing (light → dark) and
+ * inside the source ramp (`RAMP_SIZE`).
+ */
 export function lintRamps(groups: readonly RampGroup[]): string[] {
   const problems: string[] = [];
   groups.forEach((g, i) => {
+    const size = RAMP_SIZE[g.source];
     if (g.slots.length !== g.shades.length) {
       problems.push(`ramp ${i} (${g.source}): ${g.slots.length} slots but ${g.shades.length} shades`);
     } else if (g.shades.some((s, j) => !Number.isInteger(s) || s < 0 || (j > 0 && s <= (g.shades[j - 1] ?? -1)))) {
       problems.push(`ramp ${i} (${g.source}): shades ${g.shades.join(',')} are not strictly increasing`);
+    } else if (g.shades.some((s) => s >= size)) {
+      problems.push(`ramp ${i} (${g.source}): shades ${g.shades.join(',')} go beyond its ${size}-shade ramp`);
     }
   });
   return problems;

@@ -58,8 +58,12 @@ export const ANIMS: Record<AnimName, { frames: number; msPerFrame: number; loop:
 /** Sprite cell size and the feet anchor inside it (the ground point under the player). */
 export const CELL = { w: 48, h: 48, anchorX: 24, anchorY: 46 } as const;
 
-/** Frame number → frame index: looping animations wrap, one-shots hold their first/last frame. */
+/**
+ * Frame number → frame index: looping animations wrap, one-shots hold their first/last frame, and
+ * a non-finite number (a bad elapsed time) shows frame 0.
+ */
 export function frameIndex(anim: AnimName, i: number): number {
+  if (!Number.isFinite(i)) return 0;
   const { frames, loop } = ANIMS[anim];
   const n = Math.floor(i);
   if (loop) return ((n % frames) + frames) % frames;

@@ -46,19 +46,23 @@ class Canvas {
 /** Grid origin that puts a part's anchor on `at`. */
 const origin = (p: Part, at: Pt): Pt => ({ x: Math.round(at.x - p.ax), y: Math.round(at.y - p.ay) });
 
-/** Integer points of the segment a → b (Bresenham), both ends included. */
-function linePoints(a: Pt, b: Pt): Pt[] {
+/**
+ * Integer points of the segment a → b (Bresenham), both ends included. Endpoints are rounded to
+ * whole pixels first: stepping from a half-way point would never land exactly on the end.
+ */
+export function linePoints(a: Pt, b: Pt): Pt[] {
+  const end = { x: Math.round(b.x), y: Math.round(b.y) };
   const pts: Pt[] = [];
-  let x = a.x;
-  let y = a.y;
-  const dx = Math.abs(b.x - a.x);
-  const dy = -Math.abs(b.y - a.y);
-  const sx = a.x < b.x ? 1 : -1;
-  const sy = a.y < b.y ? 1 : -1;
+  let x = Math.round(a.x);
+  let y = Math.round(a.y);
+  const dx = Math.abs(end.x - x);
+  const dy = -Math.abs(end.y - y);
+  const sx = x < end.x ? 1 : -1;
+  const sy = y < end.y ? 1 : -1;
   let err = dx + dy;
   for (;;) {
     pts.push({ x, y });
-    if (x === b.x && y === b.y) return pts;
+    if (x === end.x && y === end.y) return pts;
     const e2 = 2 * err;
     if (e2 >= dy) {
       err += dy;

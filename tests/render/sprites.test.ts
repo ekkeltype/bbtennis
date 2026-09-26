@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest';
 import type { Look } from '../../src/core/types';
 import { RAMPS } from '../../src/render/palette';
 import { ANIMS, ANIM_NAMES, CELL, VIEWS, frameIndex, type AnimName, type View } from '../../src/render/sprites/animations';
-import { HAIR_STYLES, SLOT, lintGrid, lintParts, lintRamps } from '../../src/render/sprites/parts';
+import {
+  HAIR_STYLES,
+  RAMP_SIZE,
+  SLOT,
+  lintGrid,
+  lintParts,
+  lintRamps,
+  type RampSource,
+} from '../../src/render/sprites/parts';
 import { posesFor } from '../../src/render/sprites/poses';
-import { composeFrame } from '../../src/render/sprites/rig';
-import { SHEET, cellOrigin, slotColors } from '../../src/render/sprites/sheet';
+import { composeFrame, linePoints } from '../../src/render/sprites/rig';
+import { SHEET, cellOrigin, lookCache, sheetFrames, slotColors } from '../../src/render/sprites/sheet';
 
 // buildSheet/drawPlayer need a canvas, which node lacks: everything below exercises pure data.
 
@@ -81,6 +89,12 @@ describe('frameIndex', () => {
     expect(frameIndex('idle', 1.7)).toBe(1);
     expect(frameIndex('forehand', 2.99)).toBe(2);
   });
+
+  it('shows frame 0 for a non-finite frame number instead of NaN', () => {
+    for (const anim of ANIM_NAMES) {
+      for (const i of [NaN, Infinity, -Infinity]) expect(frameIndex(anim, i), `${anim} ${i}`).toBe(0);
+    }
+  });
 });
 
 describe('lintGrid', () => {
@@ -122,6 +136,14 @@ describe('lintRamps', () => {
 
   it('reports a ramp whose slot and shade lists disagree in length', () => {
     expect(lintRamps([{ source: 'shirt', slots: [SLOT.shirtHi, SLOT.shirtMid], shades: [0] }])).toHaveLength(1);
+  });
+
+  it('reports a shade beyond the end of its source ramp', () => {
+    expect(lintRamps([{ source: 'racket', slots: [SLOT.racketHi, SLOT.racketLo], shades: [0, 3] }])[0]).toMatch(
+      /racket.*0,3 go beyond its 3-shade ramp/,
+    );
+    expect(lintRamps([{ source: 'neutral', slots: [SLOT.strings], shades: [4] }])).toHaveLength(1);
+    expect(lintRamps([{ source: 'neutral', slots: [SLOT.shoeHi, SLOT.shoeLo], shades: [0, 3] }])).toEqual([]);
   });
 });
 
@@ -189,14 +211,17 @@ describe('composeFrame', () => {
     }
   });
 
-  it('draws a standing player about 40 px tall whose shoes rest on the anchor row', () => {
-    for (const view of VIEWS) {
-      const body = pixels(composeFrame('idle', view, 0, 0, false), opaque);
-      const top = Math.min(...body.map((p) => p.y));
-      const bottom = Math.max(...body.map((p) => p.y));
-      expect(bottom - top + 1, view).toBeGreaterThanOrEqual(38);
-      expect(bottom - top + 1, view).toBeLessThanOrEqual(42);
-      expect(bottom, view).toBe(CELL.anchorY);
+  it('draws a standing player 40–45 px tall, hair included, whose shoes rest on the anchor row', () => {
+    for (let style = 0; style < HAIR_STYLES.length; style++) {
+      for (const view of VIEWS) {
+        const where = `${HAIR_STYLES[style]} ${view}`;
+        const body = pixels(composeFrame('idle', view, 0, style, false), opaque);
+        const top = Math.min(...body.map((p) => p.y));
+        const bottom = Math.max(...body.map((p) => p.y));
+        expect(bottom - top + 1, where).toBeGreaterThanOrEqual(40);
+        expect(bottom - top + 1, where).toBeLessThanOrEqual(45);
+        expect(bottom, where).toBe(CELL.anchorY);
+      }
     }
   });
 
@@ -267,6 +292,17 @@ describe('composeFrame', () => {
   });
 });
 
+describe('linePoints', () => {
+  it('rounds half-pixel endpoints to whole pixels before stepping', () => {
+    expect(linePoints({ x: 0.5, y: 0 }, { x: 3.5, y: 2 })).toEqual(linePoints({ x: 1, y: 0 }, { x: 4, y: 2 }));
+  });
+
+  it('ends when only one endpoint is half-way, as from a centre-line socket to a joint', () => {
+    expect(linePoints({ x: 23.5, y: 20 }, { x: 20, y: 26 })).toEqual(linePoints({ x: 24, y: 20 }, { x: 20, y: 26 }));
+    expect(linePoints({ x: 20, y: 26 }, { x: 23.5, y: 20.5 })).toEqual(linePoints({ x: 20, y: 26 }, { x: 24, y: 21 }));
+  });
+});
+
 describe('sheet layout', () => {
   it('gives each of the 80 frames (40 per view, runRight included) its own 48×48 cell inside the sheet', () => {
     const seen = new Set<string>();
@@ -284,6 +320,53 @@ describe('sheet layout', () => {
   it('maps out-of-range frame numbers like frameIndex', () => {
     expect(cellOrigin('forehand', 'near', 9)).toEqual(cellOrigin('forehand', 'near', 3));
     expect(cellOrigin('runAway', 'far', 5)).toEqual(cellOrigin('runAway', 'far', 1));
+    expect(cellOrigin('runLeft', 'far', NaN)).toEqual(cellOrigin('runLeft', 'far', 0));
+  });
+
+  it('places every composed frame in the cell of the frame it was composed for', () => {
+    const frames = sheetFrames(1, true);
+    expect(frames).toHaveLength(80);
+    expect(new Set(frames.map((f) => `${f.anim} ${f.view} ${f.i}`)).size).toBe(80);
+    for (const f of frames) {
+      const where = `${f.anim} ${f.view} ${f.i}`;
+      expect({ sx: f.sx, sy: f.sy }, where).toEqual(cellOrigin(f.anim, f.view, f.i));
+      expect(f.buf, where).toEqual(composeFrame(f.anim, f.view, f.i, 1, true));
+    }
+  });
+});
+
+describe('lookCache', () => {
+  const lookN = (n: number): Look => ({ skin: n, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 });
+
+  function stubbed() {
+    const built: number[] = [];
+    const get = lookCache((look: Look) => {
+      built.push(look.skin);
+      return { skin: look.skin };
+    });
+    return { built, get };
+  }
+
+  it('builds each distinct look once, whatever its property order', () => {
+    const { built, get } = stubbed();
+    const first = get(lookN(0));
+    expect(get({ racket: 0, headband: null, shorts: 0, shirt: 0, hair: 0, hairStyle: 0, skin: 0 })).toBe(first);
+    get({ ...lookN(0), headband: 0 });
+    expect(built).toEqual([0, 0]);
+  });
+
+  it('keeps the 8 most recently used looks, evicting the least recently used first', () => {
+    const { built, get } = stubbed();
+    const first = [0, 1, 2, 3, 4, 5, 6, 7].map((n) => get(lookN(n)));
+    expect(built).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(get(lookN(0))).toBe(first[0]);
+    get(lookN(8)); // evicts 1, the least recently used since 0 was just used
+    expect(get(lookN(0))).toBe(first[0]);
+    expect(get(lookN(7))).toBe(first[7]);
+    expect(built).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    get(lookN(1)); // rebuilt, evicting 2
+    get(lookN(2)); // rebuilt, evicting 3
+    expect(built).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2]);
   });
 });
 
@@ -311,6 +394,21 @@ describe('slotColors', () => {
     for (const [name, slot] of Object.entries(SLOT)) {
       if (slot === SLOT.clear || slot === SLOT.hole) continue;
       expect(c[slot], name).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    }
+  });
+
+  it('throws on a shade beyond its ramp instead of leaving the slot transparent', () => {
+    const skin = [SLOT.skinHi, SLOT.skinMid, SLOT.skinLo];
+    expect(() => slotColors(look, [{ source: 'skin', slots: skin, shades: [1, 2, 3] }])).toThrow(RangeError);
+    expect(() => slotColors(look, [{ source: 'neutral', slots: [SLOT.strings], shades: [4] }])).toThrow(RangeError);
+  });
+
+  it('resolves exactly the shades the ramp lint allows, for every ramp source', () => {
+    for (const source of Object.keys(RAMP_SIZE) as RampSource[]) {
+      const last = RAMP_SIZE[source] - 1;
+      const c = slotColors(look, [{ source, slots: [SLOT.strings], shades: [last] }]);
+      expect(c[SLOT.strings], source).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      expect(() => slotColors(look, [{ source, slots: [SLOT.strings], shades: [last + 1] }]), source).toThrow(RangeError);
     }
   });
 });

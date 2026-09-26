@@ -2,7 +2,7 @@ import type { Look } from '../../core/types';
 import { hex } from '../color';
 import { OUTLINE, PAL, RAMPS, type Ramp } from '../palette';
 import { ANIMS, ANIM_NAMES, CELL, VIEWS, frameIndex, type AnimName, type View } from './animations';
-import { RAMP_GROUPS, SLOT, type RampSource } from './parts';
+import { RAMP_GROUPS, SLOT, type RampGroup, type RampSource } from './parts';
 import { composeFrame } from './rig';
 
 /** Fixed neutral ramp for shoes and strings, light → dark. */
@@ -45,14 +45,22 @@ function rampOf(look: Look, source: RampSource): readonly string[] | null {
   }
 }
 
-/** Colour of every slot for a look (index = slot id); null for clear and see-through pixels. */
-export function slotColors(look: Look): (string | null)[] {
+/**
+ * Colour of every slot for a look (index = slot id); null for clear and see-through pixels.
+ * Throws a `RangeError` for a shade beyond its ramp rather than leaving that slot transparent.
+ */
+export function slotColors(look: Look, groups: readonly RampGroup[] = RAMP_GROUPS): (string | null)[] {
   const colors: (string | null)[] = Array(Math.max(...Object.values(SLOT)) + 1).fill(null);
   colors[SLOT.outline] = OUTLINE;
-  for (const g of RAMP_GROUPS) {
+  for (const g of groups) {
     const ramp = rampOf(look, g.source);
     if (!ramp) continue;
-    g.slots.forEach((slot, i) => (colors[slot] = ramp[g.shades[i] ?? 0] ?? null));
+    g.slots.forEach((slot, i) => {
+      const shade = g.shades[i];
+      const color = shade === undefined ? undefined : ramp[shade];
+      if (color === undefined) throw new RangeError(`slot ${slot}: shade ${shade} is beyond its ${g.source} ramp`);
+      colors[slot] = color;
+    });
   }
   return colors;
 }
@@ -63,24 +71,66 @@ export interface SpriteSheet {
   frame(anim: AnimName, view: View, i: number): { sx: number; sy: number };
 }
 
-/** Composed slot buffers per head (hair style × headband), shared by every look using it. */
-const frameCache = new Map<string, Uint8Array[]>();
-/** Built sheets keyed by the look's JSON. */
-const sheetCache = new Map<string, SpriteSheet>();
+/** One sheet cell: the frame it holds and its top-left in the sheet. */
+interface SheetCell {
+  anim: AnimName;
+  view: View;
+  i: number;
+  sx: number;
+  sy: number;
+}
 
-function framesFor(hairStyle: number, headband: boolean): Uint8Array[] {
+/** A composed frame (48×48 slot buffer) together with the cell it goes in. */
+export interface SheetFrame extends SheetCell {
+  buf: Uint8Array;
+}
+
+/** Every cell of the sheet in one fixed order: composing and placing frames both walk this list. */
+const SHEET_CELLS: readonly SheetCell[] = ANIM_NAMES.flatMap((anim) =>
+  VIEWS.flatMap((view) =>
+    Array.from({ length: ANIMS[anim].frames }, (_, i) => ({ anim, view, i, ...cellOrigin(anim, view, i) })),
+  ),
+);
+
+/** Composed frames per head (hair style × headband), shared by every look using it. */
+const frameCache = new Map<string, readonly SheetFrame[]>();
+
+/** Every frame of the sheet for one head, each composed for its own cell (cached per head). */
+export function sheetFrames(hairStyle: number, headband: boolean): readonly SheetFrame[] {
   const key = `${hairStyle}:${headband}`;
   let frames = frameCache.get(key);
   if (!frames) {
-    frames = [];
-    for (const anim of ANIM_NAMES) {
-      for (const view of VIEWS) {
-        for (let i = 0; i < ANIMS[anim].frames; i++) frames.push(composeFrame(anim, view, i, hairStyle, headband));
-      }
-    }
+    frames = SHEET_CELLS.map((cell) => ({ ...cell, buf: composeFrame(cell.anim, cell.view, cell.i, hairStyle, headband) }));
     frameCache.set(key, frames);
   }
   return frames;
+}
+
+/** Sheets kept at once: the Customize live preview steps through many looks, ~1.2 MB of canvas each. */
+const SHEET_CACHE_LOOKS = 8;
+
+/**
+ * Memoises `build` per distinct look (property order does not matter), keeping the
+ * `SHEET_CACHE_LOOKS` most recently used results and evicting the least recently used first.
+ */
+export function lookCache<T>(build: (look: Look) => T): (look: Look) => T {
+  const cache = new Map<string, T>();
+  return (look) => {
+    const key = JSON.stringify([look.skin, look.hairStyle, look.hair, look.shirt, look.shorts, look.headband, look.racket]);
+    const hit = cache.get(key);
+    if (hit !== undefined) {
+      cache.delete(key);
+      cache.set(key, hit);
+      return hit;
+    }
+    const value = build(look);
+    cache.set(key, value);
+    if (cache.size > SHEET_CACHE_LOOKS) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
+    return value;
+  };
 }
 
 function newCanvas(w: number, h: number): HTMLCanvasElement | OffscreenCanvas {
@@ -93,44 +143,36 @@ function newCanvas(w: number, h: number): HTMLCanvasElement | OffscreenCanvas {
   return new OffscreenCanvas(w, h);
 }
 
-/**
- * Builds a look's sheet (80 frames: 40 per view, `runRight` included) in the browser, once per
- * distinct look; later calls return the cached sheet.
- */
-export function buildSheet(look: Look): SpriteSheet {
-  const key = JSON.stringify([look.skin, look.hairStyle, look.hair, look.shirt, look.shorts, look.headband, look.racket]);
-  const cached = sheetCache.get(key);
-  if (cached) return cached;
-
+/** Paints a look's sheet onto a new canvas (browser only). */
+function renderSheet(look: Look): SpriteSheet {
   const colors = slotColors(look).map((c) => (c === null ? null : hex(c)));
   const canvas = newCanvas(SHEET.w, SHEET.h);
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
   if (!ctx) throw new Error('buildSheet: no 2D context');
   const image = ctx.createImageData(SHEET.w, SHEET.h);
-  const frames = framesFor(look.hairStyle, look.headband !== null);
-  let n = 0;
-  for (const anim of ANIM_NAMES) {
-    for (const view of VIEWS) {
-      for (let i = 0; i < ANIMS[anim].frames; i++) {
-        const buf = frames[n++];
-        if (!buf) throw new Error(`buildSheet: missing frame ${anim} ${view} ${i}`);
-        const { sx, sy } = cellOrigin(anim, view, i);
-        buf.forEach((slot, p) => {
-          const rgb = colors[slot];
-          if (!rgb) return;
-          const o = ((sy + Math.floor(p / CELL.w)) * SHEET.w + sx + (p % CELL.w)) * 4;
-          image.data[o] = rgb[0];
-          image.data[o + 1] = rgb[1];
-          image.data[o + 2] = rgb[2];
-          image.data[o + 3] = 255;
-        });
-      }
-    }
+  for (const { sx, sy, buf } of sheetFrames(look.hairStyle, look.headband !== null)) {
+    buf.forEach((slot, p) => {
+      const rgb = colors[slot];
+      if (!rgb) return;
+      const o = ((sy + Math.floor(p / CELL.w)) * SHEET.w + sx + (p % CELL.w)) * 4;
+      image.data[o] = rgb[0];
+      image.data[o + 1] = rgb[1];
+      image.data[o + 2] = rgb[2];
+      image.data[o + 3] = 255;
+    });
   }
   ctx.putImageData(image, 0, 0);
-  const sheet: SpriteSheet = { canvas, frame: cellOrigin };
-  sheetCache.set(key, sheet);
-  return sheet;
+  return { canvas, frame: cellOrigin };
+}
+
+const cachedSheet = lookCache(renderSheet);
+
+/**
+ * Builds a look's sheet (80 frames: 40 per view, `runRight` included) in the browser; the sheets
+ * of the most recently used looks are kept and returned again (see `lookCache`).
+ */
+export function buildSheet(look: Look): SpriteSheet {
+  return cachedSheet(look);
 }
 
 /**
