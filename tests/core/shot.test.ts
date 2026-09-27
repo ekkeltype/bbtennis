@@ -11,7 +11,7 @@ import {
   strikeV,
 } from '../../src/core/shot';
 import { PACE_MULT, TUNING } from '../../src/core/tuning';
-import { TIERS } from '../../src/core/types';
+import { ALL_TIERS, TIERS } from '../../src/core/types';
 import type { ShotRandoms, ShotResult, Tier, Vec2 } from '../../src/core/types';
 
 // Local fixtures from the spec numbers (court.ts is built in parallel and is not imported here).
@@ -31,6 +31,7 @@ const SERVE_TARGETS: Record<Tier, Vec2[]> = {
   easy: [{ x: -2.06, y: 4.2 }],
   medium: [{ x: -3.115, y: 5.4 }, { x: -1.0, y: 5.4 }], // hard is T / hard is wide
   hard: [{ x: -0.4, y: 6.0 }, { x: -3.715, y: 6.0 }], // T / wide
+  insane: [{ x: -3.965, y: 6.25 }, { x: -0.15, y: 6.25 }], // hard is T → wide corner / hard is wide → T corner
 };
 
 /** Rally targets for destination player 1, m = +1 then m = −1 (spec §3.3.3). */
@@ -38,6 +39,7 @@ const RALLY_TARGETS: Record<Tier, Vec2[]> = {
   easy: [{ x: 0, y: 8.885 }],
   medium: [{ x: -2.865, y: 9.385 }, { x: 2.865, y: 9.385 }],
   hard: [{ x: 3.615, y: 11.385 }, { x: -3.615, y: 11.385 }],
+  insane: [{ x: -3.965, y: 11.735 }, { x: 3.965, y: 11.735 }], // medium's side, m = +1 then −1
 };
 
 /** Randoms with the given r_net and the same four uniforms for zx and for zy. */
@@ -116,15 +118,15 @@ describe('flightTimeMs', () => {
     }
   });
 
-  it('never leaves more time for harder placement: T(hard) < T(medium) < T(easy)', () => {
+  it('never leaves more time for harder placement: T(insane) < T(hard) < T(medium) < T(easy)', () => {
     const violations: string[] = [];
     for (const pace of Object.values(PACE_MULT)) {
-      for (let chaseLen = 3; chaseLen <= 14; chaseLen++) {
+      for (let chaseLen = 2; chaseLen <= 15; chaseLen++) {
         for (const v of [0.612, 0.85, 1.0, 1.3]) {
           for (let n = 0; n <= 9; n++) {
-            const t = (tier: 'easy' | 'medium' | 'hard'): number =>
+            const t = (tier: Tier): number =>
               flightTimeMs({ pace, chaseLen, v, tier, isServe: false, n });
-            if (!(t('hard') < t('medium') && t('medium') < t('easy'))) {
+            if (!(t('insane') < t('hard') && t('hard') < t('medium') && t('medium') < t('easy'))) {
               violations.push(`pace ${pace} len ${chaseLen} v ${v} n ${n}`);
             }
           }
@@ -148,6 +150,7 @@ describe('displayKmh', () => {
     expect(displayKmh(1, 'easy', 0, false)).toBe(95);
     expect(displayKmh(1, 'medium', 0, false)).toBe(100); // 99.75
     expect(displayKmh(1, 'hard', 0, false)).toBe(105); // 104.5
+    expect(displayKmh(1, 'insane', 0, false)).toBe(114); // 95 × 1.2
     expect(displayKmh(0.8, 'easy', 0, false)).toBe(76);
   });
 
@@ -291,7 +294,7 @@ describe('resolveShot accuracy guarantees (spec §3.5)', () => {
     return counts;
   }
 
-  for (const [t, tier] of TIERS.entries()) {
+  for (const [t, tier] of ALL_TIERS.entries()) {
     it(`e = 0, no stretch: ${tier} serve and rally shots are never out or net (100,000 seeded draws per target)`, () => {
       for (const [k, { kind, targets, isIn }] of KINDS.entries()) {
         for (const [i, target] of targets[tier].entries()) {
@@ -306,7 +309,7 @@ describe('resolveShot accuracy guarantees (spec §3.5)', () => {
     const lo = [0, 0, 0, 0];
     const hi = [1, 1, 1, 1].map((u) => u - 2 ** -53); // largest uniform below 1
     const failures: string[] = [];
-    for (const tier of TIERS) {
+    for (const tier of ALL_TIERS) {
       for (const { kind, targets, isIn } of KINDS) {
         for (const target of targets[tier]) {
           for (const ux of [lo, hi]) {
@@ -334,6 +337,15 @@ describe('resolveShot accuracy guarantees (spec §3.5)', () => {
     for (const [i, target] of RALLY_TARGETS.medium.entries()) {
       const c = tally('medium', 1, target, inRallyHalf, 20_000, 3000 + i);
       expect((c.out + c.net) / 20_000, `target (${target.x}, ${target.y})`).toBeLessThanOrEqual(0.05);
+    }
+  });
+
+  it('insane rally shot with 1 slip fails (out + net) 60–85 % of the time', () => {
+    for (const [i, target] of RALLY_TARGETS.insane.entries()) {
+      const c = tally('insane', 1, target, inRallyHalf, 20_000, 4000 + i);
+      const failRate = (c.out + c.net) / 20_000;
+      expect(failRate, `target (${target.x}, ${target.y})`).toBeGreaterThanOrEqual(0.6);
+      expect(failRate, `target (${target.x}, ${target.y})`).toBeLessThanOrEqual(0.85);
     }
   });
 });

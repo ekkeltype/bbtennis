@@ -24,7 +24,7 @@ export const TUNING = {
   flight: {
     baseMs: 2200,
     perCharMs: 100,
-    place: { easy: 1.0, medium: 0.85, hard: 0.7 } as Record<Tier, number>,
+    place: { easy: 1.0, medium: 0.85, hard: 0.7, insane: 0.55 } as Record<Tier, number>,
     pressure: 0.85,
     // Serve reading allowance 250 + 750·pace ms (spec §3.4; the original draft's 500 + 500·pace →
     // 250 + 750·pace, amended ac7c81b; the same 1 s at Normal): keeps the server's share of points
@@ -38,19 +38,20 @@ export const TUNING = {
   // keeps Relaxed/30 WPM points ≤ 35 s and Lightning/90 WPM rallies at 3+ shots with the spec's
   // pace multipliers (balance simulation, spec §6).
   speed: { base: 0.875, perCps: 0.025, cpsRef: 3, min: 0.8, max: 1.3, stretchMult: 0.9, minSpanS: 0.05 },
-  kmh: { base: 95, tierBonus: { easy: 1.0, medium: 1.05, hard: 1.1 } as Record<Tier, number>, serveMult: 1.25 },
+  kmh: { base: 95, tierBonus: { easy: 1.0, medium: 1.05, hard: 1.1, insane: 1.2 } as Record<Tier, number>, serveMult: 1.25 },
+  // Insane (power-meter spec §4.3): σ0 0.04 m keeps a flawless insane shot 0.139 m < its 0.15 m margin inside the lines.
   accuracy: {
-    sigma0: { easy: 0.10, medium: 0.12, hard: 0.10 } as Record<Tier, number>,
-    sigmaE: { easy: 0.25, medium: 0.35, hard: 0.5 } as Record<Tier, number>,
+    sigma0: { easy: 0.10, medium: 0.12, hard: 0.10, insane: 0.04 } as Record<Tier, number>,
+    sigmaE: { easy: 0.25, medium: 0.35, hard: 0.5, insane: 0.8 } as Record<Tier, number>,
     stretchSigma: 0.5,
-    netRate: { easy: 0.01, medium: 0.03, hard: 0.06 } as Record<Tier, number>,
+    netRate: { easy: 0.01, medium: 0.03, hard: 0.06, insane: 0.10 } as Record<Tier, number>,
     stretchNet: 0.05,
     pNetMax: 0.9,
     maxSlips: 3,
   },
   trajectory: {
     bounceFrac: 0.6,
-    arcH: { easy: 2.0, medium: 1.7, hard: 1.4 } as Record<Tier, number>,
+    arcH: { easy: 2.0, medium: 1.7, hard: 1.4, insane: 1.2 } as Record<Tier, number>,
     serveArcH: 0.9,
     netClearZ: 1.3,
     postBounceDist: 3.0,

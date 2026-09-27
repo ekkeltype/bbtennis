@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { seedRng } from '../../src/core/rng';
 import { TUNING } from '../../src/core/tuning';
-import { TIERS, type PickerState, type RngState, type Tier, type WordOption, type WordPackId } from '../../src/core/types';
+import { ALL_TIERS, TIERS, type PickerState, type RngState, type Tier, type WordOption, type WordPackId } from '../../src/core/types';
 import { MISLEADING_WORDS, PACKS, packWords, tierOfLength } from '../../src/core/words/lists';
 import { QWERTY_ADJ, createPicker, initialsOk, pickFixed, pickTriple, toOption } from '../../src/core/words/picker';
 
-const MIN_WORDS: Record<Tier, number> = { easy: 120, medium: 120, hard: 80 };
-const LENGTHS: Record<Tier, [number, number]> = { easy: [3, 5], medium: [6, 9], hard: [10, 14] };
+const MIN_WORDS: Record<Tier, number> = { easy: 120, medium: 120, hard: 80, insane: 60 };
+const LENGTHS: Record<Tier, [number, number]> = { easy: [2, 4], medium: [5, 7], hard: [8, 11], insane: [12, 15] };
 const HISTORY = TUNING.words.historySize;
 
 /** Every WordPackId, as a record so the typecheck fails if the union gains or loses a pack. */
@@ -36,7 +36,7 @@ function initialsClash(words: readonly string[]): boolean {
 
 describe('word packs', () => {
   for (const pack of PACK_IDS) {
-    for (const tier of TIERS) {
+    for (const tier of ALL_TIERS) {
       describe(`${pack} ${tier}`, () => {
         const words = packWords(pack, tier);
         const [min, max] = LENGTHS[tier];
@@ -75,7 +75,7 @@ describe('misleading words', () => {
   });
 
   for (const pack of PACK_IDS) {
-    const words = TIERS.flatMap((tier) => packWords(pack, tier));
+    const words = ALL_TIERS.flatMap((tier) => packWords(pack, tier));
 
     it(`${pack}: no word is on the blocklist`, () => {
       expect(words.filter((w) => MISLEADING_WORDS.has(w))).toEqual([]);
@@ -88,9 +88,11 @@ describe('misleading words', () => {
 });
 
 describe('tierOfLength', () => {
-  it('maps lengths to tiers by the spec bounds (easy 3–5, medium 6–9, hard 10–14)', () => {
-    const lengths = [0, 2, 3, 5, 6, 9, 10, 14, 15];
-    expect(lengths.map((n) => tierOfLength(n))).toEqual([null, null, 'easy', 'easy', 'medium', 'medium', 'hard', 'hard', null]);
+  it('maps lengths to tiers by the bands (easy 2–4, medium 5–7, hard 8–11, insane 12–15)', () => {
+    const lengths = [0, 1, 2, 4, 5, 7, 8, 11, 12, 15, 16];
+    expect(lengths.map((n) => tierOfLength(n))).toEqual([
+      null, null, 'easy', 'easy', 'medium', 'medium', 'hard', 'hard', 'insane', 'insane', null,
+    ]);
   });
 });
 
@@ -101,12 +103,12 @@ describe('packWords', () => {
 
   it('returns the everyday, sports and dojo lists as defined', () => {
     for (const pack of ['everyday', 'sports', 'dojo'] as const) {
-      for (const tier of TIERS) expect(packWords(pack, tier)).toEqual(PACKS[pack][tier]);
+      for (const tier of ALL_TIERS) expect(packWords(pack, tier)).toEqual(PACKS[pack][tier]);
     }
   });
 
   it('mixed is the deduplicated union of the three packs', () => {
-    for (const tier of TIERS) {
+    for (const tier of ALL_TIERS) {
       const mixed = packWords('mixed', tier);
       expect(duplicatesOf(mixed)).toEqual([]);
       expect(new Set(mixed)).toEqual(new Set([...PACKS.everyday[tier], ...PACKS.sports[tier], ...PACKS.dojo[tier]]));
@@ -248,7 +250,7 @@ describe('pickTriple determinism', () => {
 
 describe('pickFixed', () => {
   const list = [
-    ['ball', 'topspin', 'quarterfinal'],
+    ['ball', 'topspin', 'tiebreaker'],
     ['net', 'backhand', 'tournament'],
   ];
 
@@ -256,7 +258,7 @@ describe('pickFixed', () => {
     expect(pickFixed(createPicker(), list, 'serve')).toEqual([
       { word: 'ball', len: 4, tier: 'easy' },
       { word: 'topspin', len: 7, tier: 'medium' },
-      { word: 'quarterfinal', len: 12, tier: 'hard' },
+      { word: 'tiebreaker', len: 10, tier: 'hard' },
     ]);
   });
 
@@ -283,13 +285,14 @@ describe('pickFixed', () => {
 
 describe('toOption', () => {
   it('computes length and tier', () => {
-    expect(toOption('ball')).toEqual({ word: 'ball', len: 4, tier: 'easy' });
+    expect(toOption('ox')).toEqual({ word: 'ox', len: 2, tier: 'easy' });
     expect(toOption('topspin')).toEqual({ word: 'topspin', len: 7, tier: 'medium' });
-    expect(toOption('serveandvolley')).toEqual({ word: 'serveandvolley', len: 14, tier: 'hard' });
+    expect(toOption('tiebreaker')).toEqual({ word: 'tiebreaker', len: 10, tier: 'hard' });
+    expect(toOption('serveandvolley')).toEqual({ word: 'serveandvolley', len: 14, tier: 'insane' });
   });
 
-  it('throws on anything but a 3–14-letter lowercase a–z word', () => {
-    for (const bad of ['Ball', '', 'ab', 'abcdefghijklmno', 'ball!', 'ba ll', 'café']) {
+  it('throws on anything but a 2–15-letter lowercase a–z word', () => {
+    for (const bad of ['Ball', '', 'a', 'abcdefghijklmnop', 'ball!', 'ba ll', 'café']) {
       expect(() => toOption(bad), bad).toThrow();
     }
   });

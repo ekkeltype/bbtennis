@@ -167,9 +167,12 @@ Success criteria:
 
 ## 6. Presentation and audio (amends main spec §4.2–§4.4)
 
-- **Colour**: insane uses Okabe–Ito reddish purple `#CC79A7` (snapped to the palette), plus a typed
-  shade that meets the same rules as the other tiers: ≥ 4.5:1 against the plate fill, and a
-  remaining/typed luminance ratio ≥ 1.8. Palette contrast and colour-blindness tests cover it.
+- **Colour**: insane uses Okabe–Ito reddish purple `#CC79A7`; its typed shade is the crowd purple,
+  re-tinted to `#B06FA0` (the palette's 48-colour cap). Tests: ≥ 4.5:1 on the fill, typed shade ≤ 1/1.8
+  of the remaining letters' luminance, and CIEDE2000 ≥ 20 from every other tier in normal vision and
+  ≥ 12 under each colour-vision deficiency. Measured: 14.1 from sky under protan, 15.5 under deutan,
+  14.0 from vermillion under tritan. Only near-white or grey reach ≥ 20 there, and they vanish on the
+  court lines the insane rings sit beside. Insane is never shown by colour alone.
 - **Pips and ring**: insane plates carry 4 pips. Its ground ring is an 8-point burst (13×7 bitmap,
   distinct from the circle, diamond and 4-point star).
 - **Plate width**: `6n + 11` px as now, but the maximum grows to **101 px** (15 letters). A locked

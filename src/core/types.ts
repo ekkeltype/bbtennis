@@ -3,10 +3,14 @@ export type PlayerId = 0 | 1;
 /** The other player. */
 export const other = (p: PlayerId): PlayerId => (p === 0 ? 1 : 0);
 
-/** Word difficulty tier by length: easy 3–5, medium 6–9, hard 10–14 letters (spec §3.10). */
-export type Tier = 'easy' | 'medium' | 'hard';
-/** All tiers, easiest first (the order of serve and choice options). */
+/** Word difficulty tier by length: easy 2–4, medium 5–7, hard 8–11, insane 12–15 letters (power-meter spec §3). */
+export type Tier = 'easy' | 'medium' | 'hard' | 'insane';
+/** The tiers every serve and choice prompt offers, easiest first (options 0–2). */
 export const TIERS: readonly Tier[] = ['easy', 'medium', 'hard'];
+/** The fourth option (index 3), offered only while the owner's power meter is full (power-meter spec §4.2). */
+export const INSANE: Tier = 'insane';
+/** Every tier, easiest first. */
+export const ALL_TIERS: readonly Tier[] = [...TIERS, INSANE];
 /** Service side: deuce when the game (or tiebreak) point count is even, ad when odd (spec §3.2). */
 export type Side = 'deuce' | 'ad';
 /** Court surface; cosmetic only, never affects outcomes (spec §3.0). */

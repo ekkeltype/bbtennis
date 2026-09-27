@@ -1,7 +1,7 @@
 import type { Surface, Tier } from '../core/types';
 
 /**
- * Scene/UI master palette (spec §4.1): 47 named colours, ≤ 48 unique. Shades within a family run
+ * Scene/UI master palette (spec §4.1): 48 named colours, ≤ 48 unique. Shades within a family run
  * light → dark (…Hi, base, …Lo); every other scene/UI table in this file snaps to these values.
  */
 export const PAL = {
@@ -19,6 +19,7 @@ export const PAL = {
   tierSky: '#56B4E9',
   tierYellow: '#F0E442',
   tierVermillion: '#D55E00',
+  tierPurple: '#CC79A7',
   // Typed-letter shade for the yellow tier (see TIER_TYPED).
   tierYellowTyped: '#9C9230',
   // Stadium: sky, crowd, ad boards and umpire chair, ball.
@@ -26,7 +27,7 @@ export const PAL = {
   skyHorizon: '#A4C6F0',
   crowdRed: '#B5474B',
   crowdBlue: '#4A62B0',
-  crowdPurple: '#7E5AA6',
+  crowdPurple: '#B06FA0', // also the insane tier's typed shade (TIER_TYPED).
   gold: '#E0A83E',
   skinLight: '#EEC19C',
   skinDark: '#8C573A',
@@ -62,23 +63,25 @@ export const PAL = {
   tatamiLo: '#958C50',
 } satisfies Record<string, string>;
 
-/** Word-tier colours (Okabe–Ito, spec §4.2): easy sky blue, medium yellow, hard vermillion. */
+/** Word-tier colours (Okabe–Ito, spec §4.2): easy sky blue, medium yellow, hard vermillion, insane reddish purple. */
 export const TIER_COLOR: Record<Tier, string> = {
   easy: PAL.tierSky,
   medium: PAL.tierYellow,
   hard: PAL.tierVermillion,
+  insane: PAL.tierPurple,
 };
 
 /**
  * Typed-letter shade per tier (spec §4.2): a muted/darker shade of the tier colour, ≥ 4.5:1 on
  * `PLATE.fill` and at most 1/1.8 of the remaining letters' luminance, so typed and remaining letters
  * stay apart (plain yellow is only 1.18:1 from near-white). Snapped to existing palette colours
- * where one fits: hard-court blue for sky, clay for vermillion.
+ * where one fits: hard-court blue for sky, clay for vermillion, the (re-tinted) crowd purple for insane.
  */
 export const TIER_TYPED: Record<Tier, string> = {
   easy: PAL.hardHi,
   medium: PAL.tierYellowTyped,
   hard: PAL.clay,
+  insane: PAL.crowdPurple,
 };
 
 /** Shared 1 px silhouette/mark outline, darker than every ramp shade. */

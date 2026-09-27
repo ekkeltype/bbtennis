@@ -28,7 +28,7 @@ export const TRAINING_WORDS: { readonly serve: readonly (readonly string[])[]; r
   choice: [
     ['tree', 'candle', 'motorcycle'],
     ['bird', 'kitchen', 'skateboard'],
-    ['lamp', 'cheese', 'thunderstorm'],
+    ['lamp', 'cheese', 'typewriter'],
     ['fish', 'bottle', 'peppermint'],
     ['cake', 'summer', 'microphone'],
     ['star', 'puzzle', 'toothbrush'],

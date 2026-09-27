@@ -28,9 +28,9 @@ const MILESTONE_LEVELS = [0, 3, 6, 9, 12, 13, 14];
 // Hand-built TurnState fixtures (turn.ts is built in parallel and is not imported here).
 
 const RANDOMS: ShotRandoms = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5];
-const SERVE_WORDS = ['lob', 'forehand', 'tournament'];
-const SPARE_SERVE_WORDS = ['ace', 'volley', 'groundstroke'];
-const CHOICE_WORDS = ['drop', 'topspin', 'passingshot'];
+const SERVE_WORDS = ['lob', 'fencing', 'tournament'];
+const SPARE_SERVE_WORDS = ['ace', 'volley', 'basketball'];
+const CHOICE_WORDS = ['drop', 'topspin', 'interesting'];
 /** A mid-table typist used where the exact profile does not matter. */
 const PROFILE: CpuProfile = { wpm: 60, err: 0.03, reactionMs: 600, aggression: 0.5 };
 /** No typing errors, so choice estimates are exact: est(len) = 500 + 200·len ms. */
@@ -400,11 +400,11 @@ describe('CpuBrain — serve turns', () => {
   });
 
   it('judges fit against tossAt + 2·tossApexMs·pace minus 250 ms', () => {
-    // est: easy (3) 1100, medium (8) 2100, hard (10) 2500 ms; probed 1 ms either side.
+    // est: easy (3) 1100, medium (7) 1900, hard (10) 2500 ms; probed 1 ms either side.
     const tier = (tossApexMs: number, pace: number): Tier | undefined =>
       serveTier(new CpuBrain(0, CLEAN, 5), serveTurn({ tossApexMs, pace }));
-    expect(tier(1175.5, 1)).toBe('medium'); // 2351 − 250 = 2101 ≥ 2100
-    expect(tier(1174.5, 1)).toBe('easy');
+    expect(tier(1075.5, 1)).toBe('medium'); // 2151 − 250 = 1901 ≥ 1900
+    expect(tier(1074.5, 1)).toBe('easy');
     expect(tier(1375.5, 1)).toBe('hard'); // 2751 − 250 = 2501 ≥ 2500
     expect(tier(1374.5, 1)).toBe('medium');
     expect(tier(2751, 0.5)).toBe('hard'); // pace scales the apex
@@ -412,7 +412,7 @@ describe('CpuBrain — serve turns', () => {
   });
 
   it('judges a serve word it first sees late against the time left from then (deadline − now)', () => {
-    // est: medium (8) 2100 ms; deadline tossAt + 2600 ⇒ medium fits when first seen ≤ 250 ms after the toss.
+    // est: medium (7) 1900 ms; deadline tossAt + 2600 ⇒ medium fits when first seen ≤ 450 ms after the toss.
     const tier = (lateMs: number): Tier | undefined => {
       const brain = new CpuBrain(0, CLEAN, 5);
       const t = serveTurn({ tossApexMs: 1300 });
@@ -421,15 +421,15 @@ describe('CpuBrain — serve turns', () => {
       return lockedTier(t.prompts[0]?.options ?? [], brain.plan(t));
     };
     expect(tier(0)).toBe('medium');
-    expect(tier(249)).toBe('medium'); // 2600 − 249 − 250 = 2101 ≥ 2100
-    expect(tier(251)).toBe('easy');
+    expect(tier(449)).toBe('medium'); // 2600 − 449 − 250 = 1901 ≥ 1900
+    expect(tier(451)).toBe('easy');
   });
 
   it('counts expected error time in the estimate', () => {
-    // err 0.1: est(medium 8) = 500 + 8·200·(1 + 0.1/0.9) + 0.1·8·225 ≈ 2458 ms > 2600 − 250.
+    // err 0.1: est(medium 7) = 500 + 7·200·(1 + 0.1/0.9) + 0.1·7·225 ≈ 2213 ms > 2400 − 250.
     const sloppy: CpuProfile = { ...CLEAN, err: 0.1 };
-    expect(serveTier(new CpuBrain(0, CLEAN, 5), serveTurn({ tossApexMs: 1300 }))).toBe('medium');
-    expect(serveTier(new CpuBrain(0, sloppy, 5), serveTurn({ tossApexMs: 1300 }))).toBe('easy');
+    expect(serveTier(new CpuBrain(0, CLEAN, 5), serveTurn({ tossApexMs: 1200 }))).toBe('medium');
+    expect(serveTier(new CpuBrain(0, sloppy, 5), serveTurn({ tossApexMs: 1200 }))).toBe('easy');
   });
 
   it('takes the hardest fitting word with probability = aggression, otherwise one of the other fitting words uniformly', () => {
@@ -496,7 +496,7 @@ describe('CpuBrain — return turns', () => {
   });
 
   it('judges the choice against T from the moment the choice is shown', () => {
-    // est: easy 'drop' 1300, medium 'topspin' 1900, hard 'passingshot' 2700 ms; probed 1 ms either side.
+    // est: easy 'drop' 1300, medium 'topspin' 1900, hard 'interesting' 2700 ms; probed 1 ms either side.
     for (let seed = 0; seed < 20; seed++) {
       const probe = returnTurn();
       drive(new CpuBrain(0, CLEAN, seed), probe);

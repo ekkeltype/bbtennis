@@ -41,7 +41,7 @@ const WRONG_MS = 80;
 /** Horizontal shake offsets over the wrong-key window, in buffer pixels. */
 const SHAKE = [2, -2, 1, -1];
 const REMOTE_FILL_ALPHA = 0.7;
-const PIPS: Record<Tier, number> = { easy: 1, medium: 2, hard: 3 };
+const PIPS: Record<Tier, number> = { easy: 1, medium: 2, hard: 3, insane: 4 };
 
 /**
  * Plate geometry at 1× (spec §4.2, width 6n + 11, height 16): 1 px dark stroke, 1 px tier outline,
@@ -120,10 +120,16 @@ function drawLetters(ctx: CanvasRenderingContext2D, p: PlateDraw, x: number, y: 
   }
 }
 
+/**
+ * The tier's pips in the 2 px pip column: 1–3 square 2×2 pips, or for insane 4 bars of 2×1 so the
+ * column (7 px) stays clear of the tier outline; 1 px apart, centred on the letter cells.
+ */
 function drawPips(ctx: CanvasRenderingContext2D, tier: Tier, x: number, y: number, s: 1 | 2, color: string): void {
   const n = PIPS[tier];
-  const top = CELL_Y + Math.floor((FONT.cellH - (3 * n - 1)) / 2);
-  for (let i = 0; i < n; i++) rect(ctx, x + PIP_X * s, y + (top + 3 * i) * s, 2 * s, 2 * s, color);
+  const pipH = n > 3 ? 1 : 2;
+  const step = pipH + 1;
+  const top = CELL_Y + Math.floor((FONT.cellH - (step * n - 1)) / 2);
+  for (let i = 0; i < n; i++) rect(ctx, x + PIP_X * s, y + (top + step * i) * s, 2 * s, pipH * s, color);
 }
 
 /**
@@ -199,7 +205,7 @@ function drawNameChip(
  * must read over the crowd), a dim dot per letter, typed letters as 3×5 tier blocks. Remote plates
  * shake on a wrong key but never flash. The name chip is painted in `oppColor` with white or dark
  * text, above the plate or, in the far prompt band, beside it; a dark chip gets a light rim. Every
- * plate has 1/2/3 tier pips and a 1 px dark stroke; red is never used. Canvas state is restored
+ * plate has 1/2/3/4 tier pips and a 1 px dark stroke; red is never used. Canvas state is restored
  * afterwards.
  */
 export function drawPlate(ctx: CanvasRenderingContext2D, p: PlateDraw): void {
@@ -232,7 +238,8 @@ export function drawPlate(ctx: CanvasRenderingContext2D, p: PlateDraw): void {
 
 /**
  * Ground-ring bitmaps (13×7, centred on the target, flattened like the ground plane): easy circle,
- * medium diamond, hard 4-point star. `#` is tier ink; the 1 px near-black outline is derived.
+ * medium diamond, hard 4-point star, insane 8-point burst. `#` is tier ink; the 1 px near-black
+ * outline is derived.
  */
 const RING_ART: Record<Tier, string[]> = {
   easy: [
@@ -263,6 +270,16 @@ const RING_ART: Record<Tier, string[]> = {
     '.............',
     '.....###.....',
     '......#......',
+  ],
+  // Eight separate rays (vertical, horizontal and diagonal) around an open centre: never the 4-point star.
+  insane: [
+    '..#...#...#..',
+    '...#..#..#...',
+    '.............',
+    '###.......###',
+    '.............',
+    '...#..#..#...',
+    '..#...#...#..',
   ],
 };
 
@@ -308,6 +325,7 @@ const RINGS: Record<Tier, ReturnType<typeof ringShape>> = {
   easy: ringShape(RING_ART.easy),
   medium: ringShape(RING_ART.medium),
   hard: ringShape(RING_ART.hard),
+  insane: ringShape(RING_ART.insane),
 };
 
 /**

@@ -15,8 +15,8 @@ import type {
 /** Shot randoms all at 0.5: every shot lands on its target and nothing clips the net. */
 export const HALF: ShotRandoms = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5];
 
-/** Spec §3.10 tier of a word length. */
-export const tierOf = (len: number): Tier => (len <= 5 ? 'easy' : len <= 9 ? 'medium' : 'hard');
+/** Tier of a word length (power-meter spec §3: easy 2–4, medium 5–7, hard 8–11, insane 12–15). */
+export const tierOf = (len: number): Tier => (len <= 4 ? 'easy' : len <= 7 ? 'medium' : len <= 11 ? 'hard' : 'insane');
 
 /** A word option for `word`. */
 export const opt = (word: string): WordOption => ({ word, len: word.length, tier: tierOf(word.length) });

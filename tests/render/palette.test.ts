@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TIERS } from '../../src/core/types';
+import { ALL_TIERS, TIERS } from '../../src/core/types';
 import { BELT_COLOR, OUTLINE, PAL, PLATE, RAMPS, SURFACE_PAL, TIER_COLOR, TIER_TYPED } from '../../src/render/palette';
 import {
   ciede2000,
@@ -191,7 +191,7 @@ describe('PAL (scene/UI master palette)', () => {
 
 describe('TIER_COLOR', () => {
   it('uses the Okabe–Ito sky blue, yellow and vermillion', () => {
-    expect(TIER_COLOR).toEqual({ easy: '#56B4E9', medium: '#F0E442', hard: '#D55E00' });
+    expect(TIER_COLOR).toEqual({ easy: '#56B4E9', medium: '#F0E442', hard: '#D55E00', insane: '#CC79A7' });
   });
 
   it('keeps every pair ≥ 20 CIEDE2000 apart for normal vision and each simulated CVD', () => {
@@ -310,6 +310,43 @@ describe('SURFACE_PAL', () => {
   it('draws court lines that stand out from every court shade (≥ 1.8:1)', () => {
     for (const [name, s] of Object.entries(SURFACE_PAL)) {
       for (const c of s.court) expect(contrastRatio(s.lines, c), name).toBeGreaterThanOrEqual(1.8);
+    }
+  });
+});
+
+describe('insane tier colours (power-meter spec §6)', () => {
+  it('is Okabe–Ito reddish purple, typed in the crowd purple re-tinted to #B06FA0', () => {
+    expect(TIER_COLOR.insane).toBe('#CC79A7');
+    expect(PAL.tierPurple).toBe('#CC79A7');
+    expect(PAL.crowdPurple).toBe('#B06FA0');
+    expect(TIER_TYPED.insane).toBe(PAL.crowdPurple);
+  });
+
+  // Recorded deviation (plan Task 1): ≥ 20 against every other tier is only reachable with
+  // near-white or grey, which would vanish on the court lines under the insane rings. Tier is never
+  // shown by colour alone (4 pips, burst ring, outermost slot, longest words).
+  it('stays ≥ 20 CIEDE2000 from every other tier in normal vision and ≥ 12 under each colour-vision deficiency', () => {
+    for (const t of TIERS) {
+      expect(ciede2000(TIER_COLOR.insane, TIER_COLOR[t]), t).toBeGreaterThanOrEqual(20);
+      for (const view of CVD_KINDS) {
+        const d = ciede2000(simulateCvd(TIER_COLOR.insane, view), simulateCvd(TIER_COLOR[t], view));
+        expect(d, `${view} insane/${t}`).toBeGreaterThanOrEqual(12);
+      }
+    }
+  });
+
+  it('meets the typed-shade rules: ≥ 4.5:1 on the fill, ≤ 1/1.8 of the remaining letters, nearer its own tier', () => {
+    expect(contrastRatio(TIER_COLOR.insane, PLATE.fill)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(TIER_TYPED.insane, PLATE.fill)).toBeGreaterThanOrEqual(4.5);
+    expect(relativeLuminance(PLATE.text) / relativeLuminance(TIER_TYPED.insane)).toBeGreaterThanOrEqual(1.8);
+    const own = ciede2000(TIER_TYPED.insane, TIER_COLOR.insane);
+    for (const t of TIERS) expect(own, t).toBeLessThan(ciede2000(TIER_TYPED.insane, TIER_COLOR[t]));
+  });
+
+  it('keeps every tier table complete', () => {
+    for (const t of ALL_TIERS) {
+      expect(palValues, t).toContain(TIER_COLOR[t]);
+      expect(palValues, t).toContain(TIER_TYPED[t]);
     }
   });
 });

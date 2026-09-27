@@ -210,6 +210,22 @@ describe('drawPlate — local active', () => {
     }
   });
 
+  it('carries 4 insane-coloured pips as 2×1 bars, one court row apart and clear of the tier outline', () => {
+    const g = scene();
+    const p = plate('photosynthesis', { opt: { word: 'photosynthesis', len: 14, tier: 'insane' } });
+    drawPlate(as2d(g), p);
+    const ink = TIER_COLOR.insane;
+    const { x, y } = p.box;
+    const rows: number[] = [];
+    for (let py = y + 2; py < y + 14; py++) {
+      if (at(g, x + 3, py) === ink) {
+        expect(at(g, x + 4, py)).toBe(ink);
+        rows.push(py - y);
+      }
+    }
+    expect(rows).toEqual([4, 6, 8, 10]);
+  });
+
   it("draws typed letters in the tier's typed shade, the next letter as an inverse block, the rest near-white", () => {
     const g = scene();
     const p = plate('rally', { typed: 2, isNextCursor: true });
@@ -801,6 +817,15 @@ describe('drawTierRing', () => {
         }
       }
     }
+  });
+
+  it('draws the insane ring as an 8-point burst: ink on 8 rays around an open centre', () => {
+    const g = scene(40, 20);
+    drawTierRing(as2d(g), 'insane', 20, 10);
+    const ink = TIER_COLOR.insane;
+    expect(at(g, 20, 10)).not.toBe(ink);
+    const rays = [[0, -3], [0, 3], [-6, 0], [6, 0], [-4, -3], [4, -3], [-4, 3], [4, 3]];
+    for (const [dx, dy] of rays) expect(at(g, 20 + dx!, 10 + dy!), `${dx},${dy}`).toBe(ink);
   });
 });
 

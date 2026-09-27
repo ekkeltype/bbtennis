@@ -98,7 +98,7 @@ export function pickFixed(picker: PickerState, list: string[][], which: 'serve' 
   return triple.map(toOption);
 }
 
-/** Wraps a word as a WordOption with its length and tier; throws unless it is lowercase a–z of a tier length. */
+/** Wraps a word as a WordOption with its length and tier; throws unless it is lowercase a–z of a tier length (2–15 letters). */
 export function toOption(word: string): WordOption {
   const tier = /^[a-z]+$/.test(word) ? tierOfLength(word.length) : null;
   if (tier === null) throw new Error(`toOption: invalid word ${JSON.stringify(word)}`);

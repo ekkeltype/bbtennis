@@ -5,7 +5,7 @@ import type { BallFlight, PlayerId, ShotOutcome, Tier, Vec2, Vec3 } from '../../
 
 type FlightArgs = Parameters<typeof buildFlight>[0];
 
-const TIER_ARC: Record<Tier, number> = { easy: 2.0, medium: 1.7, hard: 1.4 };
+const TIER_ARC: Record<Tier, number> = { easy: 2.0, medium: 1.7, hard: 1.4, insane: 1.2 };
 const SERVE_ARC = 0.9;
 
 /** A rally shot from player 0's baseline to player 1's half. */

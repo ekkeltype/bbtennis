@@ -5,12 +5,12 @@ import { addFigure, addRow, addSection, newCanvas, scaled } from './dom';
 
 const K = 4;
 const SURFACES: readonly Surface[] = ['hard', 'clay', 'grass', 'dojo'];
-const TIERS: readonly Tier[] = ['easy', 'medium', 'hard'];
+const TIERS: readonly Tier[] = ['easy', 'medium', 'hard', 'insane'];
 /** One column per surface shade, holding a ring of each tier 16 px apart. */
 const COL_W = 52;
 const RING_GAP = 16;
 /** Leader start offsets per tier (a plate end up and to the side of the ring), and the ring rows. */
-const LEADER_DX = [-6, 0, 6];
+const LEADER_DX = [-6, 0, 6, 12];
 const LEADER_TOP = 2;
 const RING_Y = 30;
 const LINE_Y = 50;
@@ -35,7 +35,7 @@ function marksCanvas(surface: Surface): HTMLCanvasElement {
   g.fillRect(0, LINE_Y, canvas.width, 1);
   shades.forEach((_, col) => {
     TIERS.forEach((tier, t) => {
-      const x = col * COL_W + COL_W / 2 + (t - 1) * RING_GAP;
+      const x = col * COL_W + COL_W / 2 + (t - 1.5) * RING_GAP;
       drawLeader(g, { x: x + (LEADER_DX[t] ?? 0), y: LEADER_TOP }, { x, y: RING_Y }, tier);
       drawTierRing(g, tier, x, RING_Y);
       drawTierRing(g, tier, x, LINE_Y);
