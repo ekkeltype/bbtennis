@@ -1,4 +1,4 @@
-import { rallyTargets, serveTargets } from '../../src/core/court';
+import { insaneRallyTarget, insaneServeTarget, rallyTargets, serveTargets } from '../../src/core/court';
 import { buildFlight } from '../../src/core/trajectory';
 import type {
   BallFlight,
@@ -29,7 +29,7 @@ export const serveSet = (
   side: Side = 'deuce',
 ): ServeWordSet => ({
   options: words.map(opt),
-  targets: serveTargets(receiver, side, variant),
+  targets: [...serveTargets(receiver, side, variant), insaneServeTarget(receiver, side, variant)].slice(0, words.length),
   variant,
 });
 
@@ -56,6 +56,7 @@ export function serveData(over: Partial<ServeTurnData> = {}): ServeTurnData {
     wordSets: [serveSet(SET_A), serveSet(SET_B, 'wide')],
     randoms: HALF,
     freezeFirst: false,
+    power: 0,
     ...over,
   };
 }
@@ -82,6 +83,16 @@ export const RALLY_OUT = flight({ landing: { x: 4.6, y: 9 }, outcome: 'out' });
 /** The choice words of `returnData`. */
 export const CHOICE = ['drop', 'volley', 'crosscourt'];
 
+/** An insane word (14 letters; initial p, clear of CHOICE's d, v, c) for 4-option prompts. */
+export const INSANE_WORD = 'photosynthesis';
+
+/** `returnData`'s choice with the insane option a full meter pre-picks (targets for m = +1 on player 0's half). */
+export const CHOICE_4: ReturnTurnData['choice'] = {
+  options: [...CHOICE, INSANE_WORD].map(opt),
+  targets: [...rallyTargets(0, 1), insaneRallyTarget(0, 1)],
+  m: 1,
+};
+
 /** Receiver 1 returning a rally ball struck by player 0 at depth n = 1 (so the reply flies at n = 2, one pressure step). */
 export function returnData(over: Partial<ReturnTurnData> = {}): ReturnTurnData {
   return {
@@ -98,6 +109,7 @@ export function returnData(over: Partial<ReturnTurnData> = {}): ReturnTurnData {
     pace: 1,
     randoms: HALF,
     freezeFirst: false,
+    power: 0,
     ...over,
   };
 }

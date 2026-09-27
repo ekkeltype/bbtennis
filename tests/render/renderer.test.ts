@@ -42,7 +42,7 @@ const OVERLAY: Overlay = {
 
 function matchState(turn: TurnState | null, lastTurn: TurnState | null = null, over: Partial<MatchState> = {}): MatchState {
   return {
-    v: 1,
+    v: 2,
     config: { format: 'short', pace: 'normal', surface: 'clay', wordPack: 'everyday', deuceRule: 'advantage', training: null },
     players: [
       { name: 'Alex', look: LOOK, kind: 'human', cpuLevel: null },
@@ -54,6 +54,7 @@ function matchState(turn: TurnState | null, lastTurn: TurnState | null = null, o
     lastTurn,
     rallyStrikes: 1,
     longestRally: 0,
+    power: [0, 0],
     pointNo: 1,
     status: 'playing',
     winner: null,

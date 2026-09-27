@@ -26,7 +26,7 @@ const zeroStats = (): PlayerStats => ({
 
 function publicState(names: [string, string] = ['ALEX', 'Sam-2']): PublicState {
   return {
-    v: 1,
+    v: 2,
     config,
     players: [
       { name: names[0], look, kind: 'human', cpuLevel: null },
@@ -41,6 +41,7 @@ function publicState(names: [string, string] = ['ALEX', 'Sam-2']): PublicState {
     lastTurn: null,
     rallyStrikes: 0,
     longestRally: 4,
+    power: [1, 4],
     pointNo: 7,
     status: 'playing',
     winner: null,
@@ -100,8 +101,8 @@ const find = <K extends NetMsg['type']>(type: K): Extract<NetMsg, { type: K }> =
   samples.find((m) => m.type === type) as Extract<NetMsg, { type: K }>;
 
 describe('constants', () => {
-  it('protocol version is 1 and messages are capped at 32 KB of JSON', () => {
-    expect(PROTO).toBe(1);
+  it('protocol version is 2 and messages are capped at 32 KB of JSON', () => {
+    expect(PROTO).toBe(2);
     expect(MAX_MSG_CHARS).toBe(32 * 1024);
   });
 
@@ -385,7 +386,7 @@ describe('parseMsg rejects', () => {
     ['frame ev entry with string τ', samples[13]!, (x) => (x.ev[1].τ = '812')],
     ['frame s null', samples[14]!, (x) => (x.s = null)],
     ['frame s array', samples[14]!, (x) => (x.s = [])],
-    ['frame s with v 2', samples[14]!, (x) => (x.s.v = 2)],
+    ['frame s with v 1', samples[14]!, (x) => (x.s.v = 1)],
     ['frame s without v', samples[14]!, (x) => delete x.s.v],
     ['frame s with one player', samples[14]!, (x) => x.s.players.pop()],
     ['frame s with three players', samples[14]!, (x) => x.s.players.push(x.s.players[0])],
@@ -484,5 +485,28 @@ describe('parseMsg clamps names and looks', () => {
     expect(start).toMatchObject({ guestProfile: { look: { racket: 5 } } });
     const frame = parseMsg(tampered(samples[14]!, (x) => (x.s.players[1].look.skin = 40)));
     expect(frame).toMatchObject({ s: { players: [{}, { look: { skin: 5 } }] } });
+  });
+});
+
+describe('frame states and the power meter (PROTO 2)', () => {
+  /** A frame carrying state `s`, as it arrives on the wire (JSON text, decoded by decodeMsg). */
+  const frame = (s: unknown): string => JSON.stringify({ type: 'frame', turn: 11, τ: 900, s });
+
+  it('accepts a v2 state and keeps its meter levels', () => {
+    const m = decodeMsg(frame(publicState()));
+    expect(m?.type === 'frame' && m.s?.power).toEqual([1, 4]);
+  });
+
+  it('clamps levels to 0–4 and rejects a missing, non-array or non-finite meter, and a v1 state', () => {
+    const clamped = decodeMsg(frame({ ...publicState(), power: [-3, 9] }));
+    expect(clamped?.type === 'frame' && clamped.s?.power).toEqual([0, 4]);
+    for (const power of [undefined, null, 3, [1], [1, 'x'], [1, NaN]]) {
+      expect(decodeMsg(frame({ ...publicState(), power })), JSON.stringify(power)).toBeNull();
+    }
+    expect(decodeMsg(frame({ ...publicState(), v: 1 }))).toBeNull();
+  });
+
+  it('is protocol version 2', () => {
+    expect(PROTO).toBe(2);
   });
 });

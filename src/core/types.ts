@@ -82,7 +82,7 @@ export type PromptKind = 'serve' | 'chase' | 'choice';
 export interface PromptState {
   id: number;
   kind: PromptKind;
-  options: WordOption[];      // chase: 1; serve/choice: 3 in tier order easy, medium, hard
+  options: WordOption[];      // chase: 1; serve/choice: 3 or 4 in tier order easy, medium, hard[, insane]
   locked: number | null;      // chase: 0 from creation
   typed: number;              // correct letters typed in the locked option
   correctKeys: number;
@@ -129,7 +129,7 @@ export interface BallFlight {
 
 /** One toss's three pre-picked serve words with their service-box targets (spec §3.2). */
 export interface ServeWordSet {
-  options: WordOption[];   // [easy, medium, hard]
+  options: WordOption[];   // [easy, medium, hard] or [easy, medium, hard, insane] at a full meter
   targets: Vec2[];         // world coords, same order
   variant: 'T' | 'wide';
 }
@@ -159,6 +159,7 @@ export interface ServeTurnData {
   wordSets: ServeWordSet[]; // [current, spare, ...]; engine appends on catch
   randoms: ShotRandoms;
   freezeFirst: boolean;     // training: freeze until first key
+  power: number | null;    // owner's meter level when the turn was created; null = meter off (training)
 }
 
 /** Start data of a return turn, owned by the receiver: incoming ball, chase word and choice prompt (spec §3.3). */
@@ -172,10 +173,11 @@ export interface ReturnTurnData {
   chase: WordOption;        // the striker's exact word
   isServeReturn: boolean;
   n: number;                // rally depth used for incoming T (spec §3.4)
-  choice: { options: WordOption[]; targets: Vec2[]; m: 1 | -1 };
+  choice: { options: WordOption[]; targets: Vec2[]; m: 1 | -1 }; // 3 options, or 4 (insane last) at a full meter
   pace: number;
   randoms: ShotRandoms;
   freezeFirst: boolean;
+  power: number | null;    // owner's meter level when the turn was created; null = meter off (training)
 }
 
 /** Start data of either kind of turn. */
@@ -286,7 +288,7 @@ export interface PickerState {
 
 /** Complete authoritative match state; plain JSON-safe data. */
 export interface MatchState {
-  v: 1;
+  v: 2;
   config: MatchConfig;
   players: [PlayerInfo, PlayerInfo];
   score: ScoreState;
@@ -295,6 +297,7 @@ export interface MatchState {
   lastTurn: TurnState | null;   // previous turn (renderers finish its visuals)
   rallyStrikes: number;         // in-play strikes in the current point (serve included)
   longestRally: number;
+  power: [number, number];      // each player's meter level 0..max (power-meter spec §4.1)
   pointNo: number;
   status: 'playing' | 'over';
   winner: PlayerId | null;
@@ -326,6 +329,7 @@ export type GameEvent = { turn: number; τ: number } & (
   | { type: 'keyBad'; player: PlayerId; prompt: number }
   | { type: 'wordDone'; player: PlayerId; prompt: number; wpm: number }
   | { type: 'strike'; player: PlayerId; word: string; tier: Tier; kmh: number; isServe: boolean; stretch: boolean; forehand: boolean }
+  | { type: 'power'; player: PlayerId; from: number; to: number }   // a meter level changed (power-meter spec §4.4)
   | { type: 'bounce'; at: Vec2; inCourt: boolean }
   | { type: 'netHit' }
   | { type: 'call'; call: CallKind; player: PlayerId }

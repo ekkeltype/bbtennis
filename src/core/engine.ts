@@ -76,7 +76,7 @@ export class Engine {
     const firstServer: PlayerId = uniform(rng) < 0.5 ? 0 : 1;
     const config = jsonCopy(opts.config);
     this.state = {
-      v: 1,
+      v: 2,
       config,
       players: jsonCopy(opts.players),
       score: createScore(config.format, config.deuceRule, firstServer),
@@ -85,6 +85,7 @@ export class Engine {
       lastTurn: null,
       rallyStrikes: 0,
       longestRally: 0,
+      power: [0, 0],
       pointNo: 0,
       status: 'playing',
       winner: null,
@@ -309,6 +310,7 @@ export class Engine {
       wordSets: [first, spare],
       randoms: drawShotRandoms(this.rng()),
       freezeFirst: this.freezes(owner),
+      power: this.meterFor(owner),
     });
   }
 
@@ -336,6 +338,7 @@ export class Engine {
       pace: PACE_MULT[config.pace],
       randoms: drawShotRandoms(this.rng()),
       freezeFirst: this.freezes(owner),
+      power: this.meterFor(owner),
     });
   }
 
@@ -343,6 +346,12 @@ export class Engine {
   private freezes(owner: PlayerId): boolean {
     const { config, players } = this.state;
     return config.training?.freezeUntilFirstKey === true && players[owner].kind !== 'cpu';
+  }
+
+  /** The owner's meter level for a new turn's start data, or null in training (meter off, power-meter spec §4.1). */
+  private meterFor(owner: PlayerId): number | null {
+    const { config, power } = this.state;
+    return config.training !== null ? null : power[owner];
   }
 
   /** One toss's serve words (none of `avoid`) with their targets in the receiver's box. */

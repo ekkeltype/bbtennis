@@ -83,6 +83,7 @@ function serveTurn(o: ServeOpts = {}): TurnState {
     })),
     randoms: RANDOMS,
     freezeFirst: false,
+    power: 0,
   };
   return newTurn(data, 'preServe', leadInMs);
 }
@@ -125,6 +126,7 @@ function returnTurn(o: ReturnOpts = {}): TurnState {
     pace: 1,
     randoms: RANDOMS,
     freezeFirst: false,
+    power: 0,
   };
   const t = newTurn(data, 'chase', 0);
   t.prompts.push(createPrompt(data.promptBase, 'chase', [chase], 0));

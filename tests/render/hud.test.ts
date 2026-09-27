@@ -44,7 +44,7 @@ const PREFS: DisplayPrefs = { largeWords: false, reduceEffects: false, showWpm: 
 
 function matchState(turn: TurnState | null, lastTurn: TurnState | null = null, over: Partial<MatchState> = {}): MatchState {
   return {
-    v: 1,
+    v: 2,
     config: { format: 'bo3', pace: 'normal', surface: 'hard', wordPack: 'everyday', deuceRule: 'advantage', training: null },
     players: [
       { name: 'Alexandra', look: LOOK, kind: 'human', cpuLevel: null },
@@ -56,6 +56,7 @@ function matchState(turn: TurnState | null, lastTurn: TurnState | null = null, o
     lastTurn,
     rallyStrikes: 0,
     longestRally: 0,
+    power: [0, 0],
     pointNo: 1,
     status: 'playing',
     winner: null,

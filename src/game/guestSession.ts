@@ -442,7 +442,7 @@ export class GuestSession implements Session {
 /** A state with no turn yet, for the view until the host's first frame. */
 function waitingState(config: MatchConfig, players: [PlayerInfo, PlayerInfo]): PublicState {
   return {
-    v: 1,
+    v: 2,
     config,
     players,
     score: createScore(config.format, config.deuceRule, 0),
@@ -451,6 +451,7 @@ function waitingState(config: MatchConfig, players: [PlayerInfo, PlayerInfo]): P
     lastTurn: null,
     rallyStrikes: 0,
     longestRally: 0,
+    power: [0, 0],
     pointNo: 0,
     status: 'playing',
     winner: null,

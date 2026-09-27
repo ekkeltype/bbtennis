@@ -1,10 +1,11 @@
+import { POWER_MAX } from '../core/power';
 import { sanitizeName } from '../core/text';
 import type {
   DeuceRule, FormatId, GameEvent, Look, MatchConfig, PaceId, PlayerInfo, Profile, PublicState, Surface, TrainingFlags, WordPackId,
 } from '../core/types';
 
 /** Protocol version; bump on any change to the protocol, PublicState, TurnRunner or key classification (spec §5.3). */
-export const PROTO = 1;
+export const PROTO = 2;
 
 /** Application id sent in `hello` and `reject`. */
 export const APP_ID = 'bbtennis';
@@ -128,13 +129,22 @@ function parsePlayer(v: unknown): PlayerInfo | null {
 
 /** Top-level structural check of a PublicState; player names and looks are clamped, the rest passes through. */
 function parseState(v: unknown): PublicState | null {
-  if (!isRec(v) || v.v !== 1 || !isRec(v.score) || !isStr(v.status)) return null;
+  if (!isRec(v) || v.v !== 2 || !isRec(v.score) || !isStr(v.status)) return null;
   if (v.turn !== null && !isRec(v.turn)) return null;
   if (!Array.isArray(v.players) || v.players.length !== 2) return null;
   const p0 = parsePlayer(v.players[0]);
   const p1 = parsePlayer(v.players[1]);
   if (!p0 || !p1) return null;
-  return { ...(v as unknown as PublicState), players: [p0, p1] };
+  const power = parsePower(v.power);
+  if (power === null) return null;
+  return { ...(v as unknown as PublicState), players: [p0, p1], power };
+}
+
+/** Both meter levels: two finite numbers, clamped to 0..POWER_MAX (power-meter spec §5). */
+function parsePower(v: unknown): [number, number] | null {
+  if (!Array.isArray(v) || v.length !== 2 || !v.every((n) => isNum(n))) return null;
+  const clampLevel = (n: number): number => Math.min(POWER_MAX, Math.max(0, n));
+  return [clampLevel(v[0] as number), clampLevel(v[1] as number)];
 }
 
 function parseReady(v: unknown): [boolean, boolean] | null {
