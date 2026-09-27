@@ -1,4 +1,4 @@
-import { CPU_LEVELS, isMilestone } from '../core/cpu';
+import { CPU_LEVELS } from '../core/cpu';
 import { NAME_CHARS, NAME_MAX, sanitizeName } from '../core/text';
 import type { DeuceRule, FormatId, Look, PaceId, Profile, Surface, WordPackId } from '../core/types';
 import { RAMPS } from '../render/palette';
@@ -146,16 +146,34 @@ export function isCareer(v: unknown): v is Career {
 
 /**
  * The career after a finished vs-CPU match at `level`: one more played (and won) there, the best
- * average WPM kept, and on a win over a milestone level (a belt with no stripes, or a dan grade) that
- * belt earned (spec §3.11). Returns a new object; an invalid level leaves the career as it was.
+ * average WPM kept, and on a win the level's belt colour earned, whatever its stripes or dan grade
+ * (spec §3.11). Returns a new object; an invalid level leaves the career as it was.
  */
 export function recordCareer(c: Career, level: number, won: boolean, wpm: number): Career {
   const info = Number.isInteger(level) ? CPU_LEVELS[level] : undefined;
   if (info === undefined) return c;
   const perLevel = c.perLevel.map((r, i) => (i === level ? { played: r.played + 1, won: r.won + (won ? 1 : 0) } : { ...r }));
   const bestWpm = Number.isFinite(wpm) && wpm > c.bestWpm ? wpm : c.bestWpm;
-  const earned = won && isMilestone(level) && !c.earned.includes(info.belt) ? [...c.earned, info.belt] : [...c.earned];
+  const earned = won && !c.earned.includes(info.belt) ? [...c.earned, info.belt] : [...c.earned];
   return { perLevel, bestWpm, earned };
+}
+
+/** True once the career holds a win at `level` (the vs-CPU belt strip ticks it). */
+export function beaten(c: Career, level: number): boolean {
+  return (c.perLevel[level]?.won ?? 0) > 0;
+}
+
+/**
+ * The career with the belt colour of every beaten level earned (spec §3.11): wins stored while only
+ * a level without stripes earned its belt still count. Missing colours are added after the earned
+ * ones, in level order. Returns a new object.
+ */
+export function creditBeatenLevels(c: Career): Career {
+  const earned = [...c.earned];
+  CPU_LEVELS.forEach((info, level) => {
+    if (beaten(c, level) && !earned.includes(info.belt)) earned.push(info.belt);
+  });
+  return { perLevel: c.perLevel.map((r) => ({ ...r })), bestWpm: c.bestWpm, earned };
 }
 
 /** The highest belt earned so far, or null. */

@@ -5,10 +5,12 @@ import { Engine } from '../../src/core/engine';
 import type { MatchState, PlayerId } from '../../src/core/types';
 import { BELT_COLOR } from '../../src/render/palette';
 import { PlayerStore } from '../../src/ui/playerStore';
-import { DEFAULT_PROFILE, DEFAULT_SETTINGS } from '../../src/ui/settings';
+import { DEFAULT_CAREER, DEFAULT_PROFILE, DEFAULT_SETTINGS } from '../../src/ui/settings';
 import { STORAGE_PREFIX } from '../../src/ui/storage';
 
 const WHITE = CPU_LEVELS.findIndex((l) => l.belt === 'white' && l.stripes === 0);
+const BROWN_1 = CPU_LEVELS.findIndex((l) => l.belt === 'brown' && l.stripes === 1);
+const BROWN_2 = CPU_LEVELS.findIndex((l) => l.belt === 'brown' && l.stripes === 2);
 const stored = (key: string): unknown => JSON.parse(window.localStorage.getItem(STORAGE_PREFIX + key) ?? 'null');
 
 /** A finished vs-CPU match against level 0 won by `winner` (the player is 0). */
@@ -93,7 +95,7 @@ describe('PlayerStore: stored data', () => {
 
   it('records a finished vs-CPU match: career, matches played and the earned belt as headband', () => {
     const store = new PlayerStore();
-    expect(store.recordCpuMatch(WHITE, finished(0))).toBe('white');
+    expect(store.recordCpuMatch(WHITE, finished(0)).newBelt).toBe('white');
     const again = new PlayerStore();
     expect(again.career.perLevel[WHITE]).toEqual({ played: 1, won: 1 });
     expect(again.career.earned).toEqual(['white']);
@@ -104,8 +106,35 @@ describe('PlayerStore: stored data', () => {
   it('keeps a headband the player chose in Customize, on later visits too', () => {
     new PlayerStore().setProfile({ ...DEFAULT_PROFILE, look: { ...DEFAULT_PROFILE.look, headband: 9 } }, true);
     const store = new PlayerStore();
-    expect(store.recordCpuMatch(WHITE, finished(0))).toBe('white');
+    expect(store.recordCpuMatch(WHITE, finished(0)).newBelt).toBe('white');
     expect(store.profile.look.headband).toBe(9);
+  });
+});
+
+describe('PlayerStore: wins stored before striped levels earned their colour', () => {
+  /** Stores a career with one won match at each of `levels` and the belts `earned`. */
+  function storeCareer(levels: number[], earned: string[] = []): void {
+    const career = structuredClone(DEFAULT_CAREER);
+    for (const l of levels) career.perLevel[l] = { played: 1, won: 1 };
+    window.localStorage.setItem(`${STORAGE_PREFIX}career`, JSON.stringify({ ...career, earned }));
+  }
+
+  it('earns brown on load for wins at brown with 1 and 2 stripes, stores it and wears it as the headband', () => {
+    storeCareer([BROWN_1, BROWN_2], ['white']);
+    const store = new PlayerStore();
+    expect(store.career.earned).toEqual(['white', 'brown']);
+    expect(stored('career')).toMatchObject({ earned: ['white', 'brown'] });
+    expect(store.profile.look.headband).toBe(BELT_COLOR.brown);
+  });
+
+  it('leaves a headband the player chose, and stores nothing when no colour is missing', () => {
+    new PlayerStore().setProfile({ ...DEFAULT_PROFILE, look: { ...DEFAULT_PROFILE.look, headband: 9 } }, true);
+    storeCareer([BROWN_2]);
+    expect(new PlayerStore().profile.look.headband).toBe(9);
+    storeCareer([WHITE], ['white']);
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    expect(new PlayerStore().career.earned).toEqual(['white']);
+    expect(setItem).not.toHaveBeenCalled();
   });
 });
 

@@ -80,7 +80,8 @@ countdown.
   |---|---|---|---|---|---|---|---|
   | WPM | 25 · 28 · 31 | 35 · 38 · 41 | 45 · 51 · 58 | 65 · 72 · 81 | 90 | 105 | 120 |
 
-  Beat a level without stripes to earn its belt. Your highest belt colours your default headband. Every
+  Beat any level of a colour, stripes and dan grades included, to earn that belt; every level you have
+  beaten gets a tick on the belt strip. Your highest belt colours your default headband. Every
   level is always open. You also choose the format, pace, court (Hard, Clay, Grass or Dojo; the court
   is cosmetic), word pack and deuce rule, and setup remembers your last choices. Pace scales the
   ball's flight time: Relaxed ×1.5 (~30 WPM), Normal ×1.0 (~50 WPM), Fast ×0.75 (~70 WPM) and

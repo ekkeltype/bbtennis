@@ -1,4 +1,4 @@
-import { CPU_LEVELS, isMilestone, type CpuLevelInfo } from '../../core/cpu';
+import { CPU_LEVELS, type CpuLevelInfo } from '../../core/cpu';
 import { BELT_COLOR, RAMPS } from '../../render/palette';
 import { button, panel, pickerRow, spinner, swatch } from '../controls';
 import type { UiContext } from '../context';
@@ -7,7 +7,7 @@ import { icon } from '../icons';
 import { DEUCE_CHOICES, FORMAT_CHOICES, PACE_CHOICES, PACK_CHOICES, SURFACE_CHOICES } from '../options';
 import { cpuPlayer } from '../players';
 import type { ScreenFactory } from '../router';
-import type { Settings } from '../settings';
+import { beaten, type Career, type Settings } from '../settings';
 
 /** "GREEN BELT, 2 STRIPES" / "BLACK BELT, 2ND DAN". */
 export function rankText(l: CpuLevelInfo): string {
@@ -17,23 +17,24 @@ export function rankText(l: CpuLevelInfo): string {
   return `${belt}, ${l.stripes} ${l.stripes === 1 ? 'STRIPE' : 'STRIPES'}`;
 }
 
-/** One level of the belt strip: the belt in its colour with a dark tip carrying its stripes (white) or dan bars (gold). */
-function beltItem(l: CpuLevelInfo, earned: readonly string[]): HTMLElement {
+/**
+ * One level of the belt strip: the belt in its colour with a dark tip carrying its stripes (white) or
+ * dan bars (gold), ticked once the player has beaten it.
+ */
+function beltItem(l: CpuLevelInfo, career: Readonly<Career>): HTMLElement {
   const bars = l.dan !== 0 ? l.dan : l.stripes;
   const tip = h('span', { class: `tip${l.dan !== 0 ? ' dan' : ''}` }, ...Array.from({ length: bars }, () => h('span', { class: 'bar' })));
-  const milestone = isMilestone(l.level);
   return h(
     'span',
-    { class: `belt${milestone ? ' milestone' : ''}`, title: rankText(l) },
-    milestone ? h('span', { class: 'mark' }, icon('diamond')) : null,
+    { class: 'belt', title: rankText(l) },
     swatch(RAMPS.cloth[BELT_COLOR[l.belt]], 'belt-body'),
     tip,
-    milestone && earned.includes(l.belt) ? h('span', { class: 'earned' }, icon('tick')) : null,
+    beaten(career, l.level) ? h('span', { class: 'earned' }, icon('tick')) : null,
   );
 }
 
 /**
- * vs CPU setup (spec §4.6): the 15 levels as a belt strip (milestones marked, earned belts ticked) with
+ * vs CPU setup (spec §4.6): the 15 levels as a belt strip (beaten levels ticked) with
  * the opponent's name, rank and WPM, then format, pace, court, word pack and deuce rule. Every change
  * is stored at once, so the screen remembers the last choices; Start has the focus.
  */
@@ -53,7 +54,7 @@ export function cpuSetupScreen(ctx: UiContext): ScreenFactory {
         set({ cpuLevel });
         showRecord();
       },
-      item: (i) => beltItem(CPU_LEVELS[i]!, ctx.career.earned),
+      item: (i) => beltItem(CPU_LEVELS[i]!, ctx.career),
       describe: (i) => {
         const l = CPU_LEVELS[i]!;
         return `${cpuPlayer(i).name.toUpperCase()} · ${rankText(l)} · ${l.wpm} WPM`;
@@ -69,7 +70,7 @@ export function cpuSetupScreen(ctx: UiContext): ScreenFactory {
         'PLAY VS CPU',
         'setup',
         levels,
-        h('p', { class: 'legend' }, icon('diamond'), ' BEAT TO EARN THE BELT', h('span', { class: 'gap' }), icon('tick'), ' EARNED'),
+        h('p', { class: 'legend' }, icon('tick'), ' BEATEN', h('span', { class: 'gap' }), 'BEAT ANY LEVEL TO EARN ITS BELT'),
         record,
         spinner({ label: 'FORMAT', choices: FORMAT_CHOICES, get: () => ctx.settings.format, set: (format) => set({ format }) }),
         spinner({ label: 'PACE', choices: PACE_CHOICES, get: () => ctx.settings.pace, set: (pace) => set({ pace }) }),

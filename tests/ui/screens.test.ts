@@ -214,14 +214,18 @@ describe('vs CPU setup', () => {
     expect(belts.querySelector('.value')?.textContent).toContain('WHITE BELT, 1 STRIPE');
   });
 
-  it('shows all 15 levels, marks the milestones and ticks earned belts', () => {
+  it('shows all 15 levels and ticks every beaten one, striped and dan levels included', () => {
     const ctx = fakeContext();
-    ctx.career.earned = ['white', 'green'];
+    ctx.career.earned = ['white', 'brown', 'black'];
+    for (const level of [0, 10, 11, 13]) ctx.career.perLevel[level] = { played: 2, won: 1 };
+    ctx.career.perLevel[12] = { played: 1, won: 0 };
     router.register('cpuSetup', cpuSetupScreen(ctx));
     router.go('cpuSetup');
-    expect(root.querySelectorAll('.belt')).toHaveLength(15);
-    expect(root.querySelectorAll('.belt.milestone')).toHaveLength(7);
-    expect(root.querySelectorAll('.belt .earned')).toHaveLength(2);
+    const belts = [...root.querySelectorAll('.belt')];
+    expect(belts).toHaveLength(15);
+    const ticked = belts.flatMap((b, level) => (b.querySelector('.earned') ? [level] : []));
+    expect(ticked).toEqual([0, 10, 11, 13]);
+    expect(root.querySelector('.legend')?.textContent).toContain('BEAT ANY LEVEL TO EARN ITS BELT');
   });
 
   it('Start starts the match', () => {
@@ -273,6 +277,17 @@ describe('results', () => {
     expect(labels()).toEqual(['REMATCH', 'MENU']);
     press('Escape');
     expect(ctx.quitMatch).toHaveBeenCalledOnce();
+  });
+
+  it('a first win at a striped or dan level: NEW STRIPE / NEW DAN EARNED; a new belt takes its place', () => {
+    const ctx = fakeContext();
+    router.register('results', resultsScreen(ctx));
+    router.go('results', { kind: 'cpu', result: finished(), viewer: 0, newBelt: null, newLevel: 11, canRematch: true });
+    expect(root.querySelector('.belt-earned')?.textContent).toBe('NEW STRIPE EARNED: BROWN BELT, 2 STRIPES!');
+    router.go('results', { kind: 'cpu', result: finished(), viewer: 0, newBelt: null, newLevel: 13, canRematch: true });
+    expect(root.querySelector('.belt-earned')?.textContent).toBe('NEW DAN EARNED: BLACK BELT, 2ND DAN!');
+    router.go('results', { kind: 'cpu', result: finished(), viewer: 0, newBelt: 'brown', newLevel: 11, canRematch: true });
+    expect([...root.querySelectorAll('.belt-earned')].map((e) => e.textContent)).toEqual(['NEW BELT EARNED: BROWN!']);
   });
 
   it("shows the scoreboard's score line: games per set with the tiebreak loser's points as a superscript beside the winner's games", () => {

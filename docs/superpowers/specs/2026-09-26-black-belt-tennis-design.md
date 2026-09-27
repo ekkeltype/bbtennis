@@ -268,8 +268,12 @@ Per player per match: points won, aces, double faults, winners, errors (rally OU
 excluded), average WPM = `12·Σ(n − 1)/ΣΔt` over completed words, top WPM = max per-word WPM over
 words with n ≥ 5, accuracy = correct / (correct + wrong) keys (ignored keys excluded), fastest serve
 (km/h), longest rally (in-play strikes incl. the serve).
-Career (local only, vs CPU only): matches played/won per level, best WPM. Beating a milestone level
-earns that belt; the highest earned belt colours the default headband. All levels always selectable.
+Career (local only, vs CPU only): matches played/won per level, best WPM. Beating any level earns
+its belt colour, stripes and dan grades included (amended 2026-09-27: it was milestone levels only;
+wins stored before the change earn their colour on the next load). The vs-CPU belt strip ticks every
+beaten level, and Results announce a new belt or else a first win at a striped or dan level ("NEW
+STRIPE EARNED: …" / "NEW DAN EARNED: …"). The highest earned belt colours the default headband. All
+levels always selectable.
 
 ### 3.12 Training (onboarding)
 First main-menu item until completed once; offered on first launch. A LocalSession vs a scripted

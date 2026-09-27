@@ -1,14 +1,16 @@
 import type { MatchState } from '../core/types';
-import { recordCpuMatch } from './matchLifecycle';
+import { BELT_COLOR } from '../render/palette';
+import { recordCpuMatch, type CpuCredit } from './matchLifecycle';
 import {
+  creditBeatenLevels,
   DEFAULT_CAREER,
   DEFAULT_PROFILE,
   DEFAULT_SETTINGS,
+  highestBelt,
   isCareer,
   isProfile,
   isSettings,
   offerTraining,
-  type Belt,
   type Career,
   type Profile,
   type Settings,
@@ -40,9 +42,26 @@ export class PlayerStore {
     this.firstLaunch = settings === null;
     this.settings = settings ?? clone(DEFAULT_SETTINGS);
     this.profile = load('profile', clone(DEFAULT_PROFILE), isProfile);
-    this.career = load('career', clone(DEFAULT_CAREER), isCareer);
     this.headbandChosen = load('headbandChosen', false, isBoolean);
     this.offerDismissed = load('trainingOfferDismissed', false, isBoolean);
+    this.career = load('career', clone(DEFAULT_CAREER), isCareer);
+    this.creditBeatenLevels();
+  }
+
+  /**
+   * Wins stored before every level earned its belt colour (spec §3.11: once only levels without
+   * stripes did) earn it now: the career is stored again, and the highest belt becomes the headband
+   * unless the player chose one. Nothing is stored when no colour is missing.
+   */
+  private creditBeatenLevels(): void {
+    const credited = creditBeatenLevels(this.career);
+    if (credited.earned.length === this.career.earned.length) return;
+    this.career = credited;
+    this.save('career', this.career);
+    const best = highestBelt(credited);
+    const look = this.profile.look;
+    if (this.headbandChosen || best === null || look.headband === BELT_COLOR[best]) return;
+    this.setProfile({ ...this.profile, look: { ...look, headband: BELT_COLOR[best] } }, false);
   }
 
   /** Applies and stores a settings change. */
@@ -61,8 +80,8 @@ export class PlayerStore {
     }
   }
 
-  /** Stores what a finished vs-CPU match at `level` changes (see `recordCpuMatch`); returns the belt it earned, or null. */
-  recordCpuMatch(level: number, result: MatchState): Belt | null {
+  /** Stores what a finished vs-CPU match at `level` changes (see `recordCpuMatch`); returns what it earned. */
+  recordCpuMatch(level: number, result: MatchState): CpuCredit {
     const look = this.profile.look;
     const progress = { career: this.career, matchesPlayed: this.settings.matchesPlayed, headband: look.headband, headbandChosen: this.headbandChosen };
     const r = recordCpuMatch(progress, level, result);
@@ -70,7 +89,7 @@ export class PlayerStore {
     this.save('career', this.career);
     this.setSettings({ matchesPlayed: r.matchesPlayed });
     if (r.headband !== look.headband) this.setProfile({ ...this.profile, look: { ...look, headband: r.headband } }, false);
-    return r.newBelt;
+    return { newBelt: r.newBelt, ...(r.newLevel !== undefined ? { newLevel: r.newLevel } : {}) };
   }
 
   /** True while the main menu offers Training (see `offerTraining`). */

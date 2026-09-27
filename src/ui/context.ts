@@ -10,7 +10,8 @@ export type MatchKind = 'cpu' | 'training' | 'online';
  * Params of the Results screen: a finished match, or how a Training session ended. Online:
  * `opponentGone`, the opponent has gone ('left' or 'disconnect'), so Rematch is disabled and a note
  * says "OPPONENT LEFT" / "OPPONENT DISCONNECTED"; `endedBy`, their going cut the match short, so the
- * banner says it instead of a winner (spec §5.3).
+ * banner says it instead of a winner (spec §5.3). vs CPU: `newBelt`, a belt colour the match earned;
+ * `newLevel`, a level with stripes or a dan grade won for the first time (spec §3.11).
  */
 export type ResultsParams =
   | {
@@ -18,6 +19,7 @@ export type ResultsParams =
       result: MatchState;
       viewer: PlayerId;
       newBelt: Belt | null;
+      newLevel?: number;
       canRematch: boolean;
       opponentGone?: Departure;
       endedBy?: Departure;

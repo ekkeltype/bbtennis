@@ -20,6 +20,7 @@ import {
   resultsAfterLeave,
   trainingEnd,
   type CareerState,
+  type CpuCredit,
   type Match,
   type TrainingFrame,
 } from '../../src/ui/matchLifecycle';
@@ -29,6 +30,8 @@ import { DEFAULT_CAREER, DEFAULT_PROFILE, type Belt, type Career } from '../../s
 const WHITE = CPU_LEVELS.findIndex((l) => l.belt === 'white' && l.stripes === 0);
 const WHITE_STRIPE = CPU_LEVELS.findIndex((l) => l.belt === 'white' && l.stripes === 1);
 const GREEN = CPU_LEVELS.findIndex((l) => l.belt === 'green' && l.stripes === 0);
+const BROWN_2 = CPU_LEVELS.findIndex((l) => l.belt === 'brown' && l.stripes === 2);
+const BLACK_2ND_DAN = CPU_LEVELS.findIndex((l) => l.belt === 'black' && l.dan === 2);
 
 /** A finished vs-CPU match won by `winner`, the player (0) typing at `typingMs` for `intervalSum` intervals. */
 function finished(winner: PlayerId, typing = { intervalSum: 0, typingMs: 0 }): MatchState {
@@ -150,7 +153,7 @@ describe('recordWhenDecided (vs CPU: the career is written as the final point is
   const playing = (): MatchState => ({ ...finished(0), status: 'playing', winner: null });
 
   it('records a decided vs-CPU match exactly once, at its level with its final state, and keeps the earned belt for Results', () => {
-    const record = vi.fn((_level: number, _r: MatchState): Belt | null => 'white');
+    const record = vi.fn((_level: number, _r: MatchState): CpuCredit => ({ newBelt: 'white' }));
     const m = match('cpu');
     recordWhenDecided(m, playing(), record);
     expect(record).not.toHaveBeenCalled();
@@ -163,7 +166,7 @@ describe('recordWhenDecided (vs CPU: the career is written as the final point is
   });
 
   it('a match that earned no belt is recorded once too', () => {
-    const record = vi.fn((): Belt | null => null);
+    const record = vi.fn((): CpuCredit => ({ newBelt: null }));
     const m = match('cpu');
     recordWhenDecided(m, finished(1), record);
     recordWhenDecided(m, finished(1), record);
@@ -171,8 +174,14 @@ describe('recordWhenDecided (vs CPU: the career is written as the final point is
     expect(m.recorded).toEqual({ newBelt: null });
   });
 
+  it('keeps a first striped-level win for Results with the belt', () => {
+    const m = match('cpu');
+    recordWhenDecided(m, finished(0), () => ({ newBelt: null, newLevel: BROWN_2 }));
+    expect(m.recorded).toEqual({ newBelt: null, newLevel: BROWN_2 });
+  });
+
   it('never records Training or online matches', () => {
-    const record = vi.fn((): Belt | null => null);
+    const record = vi.fn((): CpuCredit => ({ newBelt: null }));
     for (const kind of ['training', 'online'] as const) {
       const m = match(kind);
       recordWhenDecided(m, finished(0), record);
@@ -183,7 +192,7 @@ describe('recordWhenDecided (vs CPU: the career is written as the final point is
 
   it('records a real match on the frame its state says over, 3 s before session.over hands its result to Results', () => {
     const { session } = playedToTheEnd();
-    const record = vi.fn((): Belt | null => null);
+    const record = vi.fn((): CpuCredit => ({ newBelt: null }));
     const m = { ...match('cpu'), session };
     recordWhenDecided(m, session.view!.pub, record);
     expect(session.over).toBe(false);
@@ -243,12 +252,29 @@ describe('recordCpuMatch (career, matches played, headband default)', () => {
     expect(r.headband).toBe(BELT_COLOR.white);
   });
 
-  it('earns nothing new for a loss, a non-milestone level or a belt already earned', () => {
+  it('earns nothing new for a loss or a belt already earned', () => {
     expect(recordCpuMatch(state(), WHITE, finished(1)).newBelt).toBeNull();
-    expect(recordCpuMatch(state(), WHITE_STRIPE, finished(0)).newBelt).toBeNull();
+    expect(recordCpuMatch(state(), WHITE_STRIPE, finished(1)).newBelt).toBeNull();
     const again = recordCpuMatch(state({ career: career(['white']) }), WHITE, finished(0));
     expect(again.newBelt).toBeNull();
     expect(again.career.perLevel[WHITE]).toEqual({ played: 1, won: 1 });
+  });
+
+  it('a win at a striped level earns its colour too: brown with 2 stripes earns brown', () => {
+    const r = recordCpuMatch(state({ career: career(['white']), headband: BELT_COLOR.white }), BROWN_2, finished(0));
+    expect(r.newBelt).toBe('brown');
+    expect(r.career.earned).toEqual(['white', 'brown']);
+    expect(r.headband).toBe(BELT_COLOR.brown);
+  });
+
+  it('reports the first win at a striped or dan level, and nothing for a plain belt, a loss or a second win', () => {
+    expect(recordCpuMatch(state({ career: career(['brown']) }), BROWN_2, finished(0)).newLevel).toBe(BROWN_2);
+    expect(recordCpuMatch(state({ career: career(['black']) }), BLACK_2ND_DAN, finished(0)).newLevel).toBe(BLACK_2ND_DAN);
+    expect(recordCpuMatch(state(), WHITE, finished(0)).newLevel).toBeUndefined();
+    expect(recordCpuMatch(state(), BROWN_2, finished(1)).newLevel).toBeUndefined();
+    const once = recordCpuMatch(state({ career: career(['brown']) }), BROWN_2, finished(0));
+    const twice = recordCpuMatch({ ...state(), career: once.career }, BROWN_2, finished(0));
+    expect(twice.newLevel).toBeUndefined();
   });
 
   it('dresses the player in the highest earned belt, even on a match that earned nothing', () => {
