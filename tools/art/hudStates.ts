@@ -64,15 +64,22 @@ function games(...players: PlayerId[]): string {
 /**
  * A started serve turn (in its lead-in at τ 0, no toss yet) with `leadIn`, in a match of `players` at
  * `score`. The turn keeps the coin-toss winner as server and the deuce side; the HUD shows neither (its
- * serve dot follows the score).
+ * serve dot follows the score). Optional `power` sets both meters and the turn owner's start level.
  */
-function servingState(players: [PlayerInfo, PlayerInfo], score: ScoreState, leadIn: LeadIn): MatchState {
+function servingState(
+  players: [PlayerInfo, PlayerInfo],
+  score: ScoreState,
+  leadIn: LeadIn,
+  power: [number, number] = [0, 0],
+): MatchState {
   const engine = new Engine({ config: { ...liveSetup('hard').config, format: score.format }, players, seed: 1 });
   const s = engine.state;
   const d = s.turn?.data;
   if (d?.kind !== 'serve') throw new Error('hud: a new engine has no serve turn');
   s.score = score;
   d.leadIn = leadIn;
+  s.power = power;
+  d.power = power[d.owner];
   engine.start(d.owner);
   return s;
 }
@@ -94,8 +101,14 @@ function matchOver(label: string, players: [PlayerInfo, PlayerInfo]): HudSample 
 }
 
 /** A PRE_SERVE sample: the serve turn after an ordinary point, `atMs` into PRE_SERVE. */
-function preServe(label: string, players: [PlayerInfo, PlayerInfo], score: ScoreState, atMs = PRE_SERVE_AT_MS): HudSample {
-  return { label, frame: frameOf(servingState(players, score, AFTER_POINT), AFTER_POINT.ms + atMs) };
+function preServe(
+  label: string,
+  players: [PlayerInfo, PlayerInfo],
+  score: ScoreState,
+  atMs = PRE_SERVE_AT_MS,
+  power: [number, number] = [0, 0],
+): HudSample {
+  return { label, frame: frameOf(servingState(players, score, AFTER_POINT, power), AFTER_POINT.ms + atMs) };
 }
 
 /**
@@ -110,8 +123,8 @@ export function scoreboardSamples(): HudSample[] {
     preServe('tiebreak, first point (white belt)', [ALEX, cpuPlayer(0)], scored('tiebreak', '')),
     preServe('tiebreak 6-5 (yellow belt)', [ALEX, cpuPlayer(3)], scored('tiebreak', TIEBREAK_6_5)),
     preServe('short set 2-1, 15-40 (green belt)', [ALEX, cpuPlayer(6)], scored('short', games(0, 1, 0) + '0111')),
-    preServe('short set 3-3, deuce (brown belt)', [ALEX, BRUNO], scored('short', games(0, 1, 0, 1, 0, 1) + '010101')),
-    preServe('short set 3-3, advantage Bruno', [ALEX, BRUNO], scored('short', games(0, 1, 0, 1, 0, 1) + '0101011')),
+    preServe('short set 3-3, deuce (brown belt)', [ALEX, BRUNO], scored('short', games(0, 1, 0, 1, 0, 1) + '010101'), PRE_SERVE_AT_MS, [4, 1]),
+    preServe('short set 3-3, advantage Bruno', [ALEX, BRUNO], scored('short', games(0, 1, 0, 1, 0, 1) + '0101011'), PRE_SERVE_AT_MS, [2, 4]),
     preServe('best of three 4-2 3-5 2-2, 0-40; 12-letter names; black-belt headband vs 3rd dan', [alexandra, cpuPlayer(14)], bo3),
     matchOver('match over: Alex won the tiebreak 7-5 (black belt)', [ALEX, cpuPlayer(12)]),
   ];

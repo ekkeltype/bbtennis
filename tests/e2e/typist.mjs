@@ -26,9 +26,9 @@ export function pageSnapshot(w = window) {
   };
 }
 
-/** The medium option of three (serve, choice), else the first (chase). */
+/** The medium option of three or four (serve, choice), else the first (chase). */
 export function mediumOption(words) {
-  return words.length === 3 ? 1 : 0;
+  return words.length >= 3 ? 1 : 0;
 }
 
 /** The hardest option (options come in tier order): the widest, riskiest shot, so rallies end sooner. */

@@ -12,6 +12,12 @@ const RULES: Record<string, { title: string; text: string }> = {
   typos: { title: '4. TYPOS COST YOU', text: "A wrong key doesn't advance and makes the shot riskier: out, or into the net." },
 };
 
+/** The power meter rule (power-meter spec §6), under the illustrated rules. */
+export const POWER_TEXT =
+  'POWER METER: every serve or shot you type without a wrong key fills one of four segments. ' +
+  'While it is full you also get an INSANE word: a near-winner into the corner, but one typo sends it out. ' +
+  'Any wrong key, or losing a point, empties the meter.';
+
 /** How to Play (spec §4.6): the rules illustrated with the real plate art, the controls, and the OFL font credits. */
 export function howToScreen(ctx: UiContext): ScreenFactory {
   return () => {
@@ -26,6 +32,7 @@ export function howToScreen(ctx: UiContext): ScreenFactory {
         'HOW TO PLAY',
         'how-to',
         h('div', { class: 'cards' }, ...cards),
+        h('p', { class: 'power' }, POWER_TEXT),
         h(
           'p',
           { class: 'keys' },

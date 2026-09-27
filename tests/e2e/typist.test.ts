@@ -59,6 +59,12 @@ describe('option policies', () => {
     expect(mediumOption(['moon'])).toBe(0);
   });
 
+  it('mediumOption takes the medium word of 3 or 4 options, the only word of a chase', () => {
+    expect(mediumOption(['a', 'b', 'c'])).toBe(1);
+    expect(mediumOption(['a', 'b', 'c', 'd'])).toBe(1);
+    expect(mediumOption(['a'])).toBe(0);
+  });
+
   it('hardestOption picks the last (hardest) word', () => {
     expect(hardestOption(['cat', 'garden', 'strawberry'])).toBe(2);
     expect(hardestOption(['moon'])).toBe(0);

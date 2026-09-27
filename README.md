@@ -48,6 +48,10 @@ your shot word raises the chance of hitting the net or out, most of all on hard 
 chase word only cost time. A shot typed without a slip and struck in time never goes out or into
 the net.
 
+POWER METER: every serve or shot you type without a wrong key fills one of four segments. While it
+is full you also get an INSANE word: a near-winner into the corner, but one typo sends it out. Any
+wrong key, or losing a point, empties the meter.
+
 **Scoring** is real tennis scoring. Formats: Tiebreak (a single tiebreak to 7, win by 2), Short set
 (first to 4 games, tiebreak at 4–4), Full set (first to 6 games, tiebreak at 6–6) and Best of 3 short
 sets. A new player's first vs-CPU setup is a White belt at Relaxed pace in the Tiebreak format. After
@@ -95,7 +99,7 @@ countdown.
 
 Pick a pack in Options, in vs CPU setup or in the host lobby: **Everyday** (the default, common
 English words), **Sports** (words from many sports), **Dojo** (martial arts) or **Mixed** (all
-three). Words are lowercase a–z: easy words have 3–5 letters, medium 6–9 and hard 10–14. The three
+three). Words are easy (2–4 letters), medium (5–7) or hard (8–11). The three
 options always start with different letters that are not neighbours on a QWERTY keyboard. None of
 the last 20 words offered comes back. No word names a shot or a direction (forehand, lob, wide,
 deep, and so on), so a word never contradicts where the ball actually goes.

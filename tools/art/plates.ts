@@ -7,11 +7,16 @@ import { project } from '../../src/render/projection';
 import { addFigure, addHeading, addRow, addSection, newCanvas, scaled } from './dom';
 
 const K = 4;
-/** One word per tier at lengths 3, 8 and 14 (tiers follow length), with ascenders and descenders. */
+/** One word per tier at lengths 3, 7 and 8 (tiers follow length, power-meter spec §3), with ascenders and descenders. */
 const WORDS: readonly WordOption[] = [
   { word: 'jog', len: 3, tier: 'easy' },
-  { word: 'skipping', len: 8, tier: 'medium' },
-  { word: 'counterpuncher', len: 14, tier: 'hard' },
+  { word: 'jumping', len: 7, tier: 'medium' },
+  { word: 'skipping', len: 8, tier: 'hard' },
+];
+/** The insane sample: 14 letters, the widest common plate. */
+const INSANE_WORDS: readonly WordOption[] = [
+  { word: 'counterpuncher', len: 14, tier: 'insane' },
+  { word: '', len: 14, tier: 'insane', hidden: true },
 ];
 const HIDDEN: readonly WordOption[] = WORDS.map(({ len, tier }) => ({ word: '', len, tier, hidden: true }));
 /** Plates are shown over the hard court's mid shade, as in a match. */
@@ -98,7 +103,7 @@ const pick = <T>(values: readonly T[], i: number): T => values[i] ?? values[0]!;
 export const plateStates = (): { label: string; plates: PlateDraw[] }[] => [
   { label: 'idle: unlocked options, first letter as a tier block', plates: trio(() => ({ locked: false, showInitialBlock: true })) },
   { label: 'next: locked, cursor on the first letter', plates: trio(() => ({ isNextCursor: true })) },
-  { label: 'typed: 1 / 4 / 9 letters', plates: trio((i) => ({ typed: pick([1, 4, 9], i), isNextCursor: true })) },
+  { label: 'typed: 1 / 4 / 7 letters', plates: trio((i) => ({ typed: pick([1, 4, 7], i), isNextCursor: true })) },
   { label: 'done: every letter typed', plates: trio((_, o) => ({ typed: o.len, isNextCursor: true })) },
   {
     label: 'wrong key: fill flash (80 ms), no shake',
@@ -113,10 +118,10 @@ export const plateStates = (): { label: string; plates: PlateDraw[] }[] => [
     plates: trio((i) => ({ locked: false, showInitialBlock: true, faded: pick([0.25, 0.5, 0.75], i) })),
   },
   {
-    label: 'remote: typed 1 / 4 / 9, name chips (white, yellow, green belts)',
+    label: 'remote: typed 1 / 4 / 7, name chips (white, yellow, green belts)',
     plates: trio((i) => ({
       style: 'remote',
-      typed: pick([1, 4, 9], i),
+      typed: pick([1, 4, 7], i),
       nameChip: pick(['alexandra', 'bo', 'kim'], i),
       oppColor: belt(pick<Belt>(['white', 'yellow', 'green'], i)),
     })),
@@ -126,7 +131,7 @@ export const plateStates = (): { label: string; plates: PlateDraw[] }[] => [
     plates: trio(
       (i) => ({
         style: 'remote',
-        typed: pick([2, 5, 11], i),
+        typed: pick([2, 5, 7], i),
         nameChip: pick(['sam', 'jo', 'Zoe'], i),
         oppColor: belt(pick<Belt>(['brown', 'black', 'white'], i)),
       }),
@@ -144,7 +149,7 @@ export const plateStates = (): { label: string; plates: PlateDraw[] }[] => [
   },
   { label: 'hidden remote: all typed', plates: trio((_, o) => ({ style: 'hiddenRemote', typed: o.len }), { words: HIDDEN }) },
   { label: '2× (large words): next', plates: trio(() => ({ isNextCursor: true }), { scale: 2 }) },
-  { label: '2× (large words): typed 1 / 4 / 9', plates: trio((i) => ({ typed: pick([1, 4, 9], i), isNextCursor: true }), { scale: 2 }) },
+  { label: '2× (large words): typed 1 / 4 / 7', plates: trio((i) => ({ typed: pick([1, 4, 7], i), isNextCursor: true }), { scale: 2 }) },
   { label: 'near serve stack (layoutServeNear)', plates: laidOut(layoutServeNear([3, 8, 14], 240, 150)) },
   { label: 'far serve row (layoutServeFar)', plates: laidOut(layoutServeFar([3, 8, 14], 240)) },
   {
@@ -158,6 +163,10 @@ export const plateStates = (): { label: string; plates: PlateDraw[] }[] => [
       all: { style: 'hiddenRemote' },
       locked: { typed: 5, nameChip: 'kai', oppColor: belt('brown') },
     }),
+  },
+  {
+    label: 'insane: 4 pips, 5 letters typed; hidden remote with 3 typed',
+    plates: trio((i) => (i === 0 ? { typed: 5, isNextCursor: true } : { style: 'hiddenRemote', typed: 3 }), { words: INSANE_WORDS }),
   },
 ];
 

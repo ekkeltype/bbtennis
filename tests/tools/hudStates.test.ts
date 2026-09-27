@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bannerFor, Hud, scoreRows, serveClockSeconds, speedReadout } from '../../src/render/hud';
+import { bannerFor, Hud, meterLevels, scoreRows, serveClockSeconds, speedReadout } from '../../src/render/hud';
 import { bannerSamples, readoutSample, scoreboardSamples, serveClockSamples } from '../../tools/art/hudStates';
 
 const PREFS = { largeWords: false, reduceEffects: false, showWpm: true };
@@ -28,6 +28,12 @@ describe('HUD samples', () => {
     expect(serving.at(-1)).toBeNull();
     expect(new Set(rows.map(([, b]) => b.belt)).size).toBeGreaterThanOrEqual(5);
     expect(Math.max(...rows.flat().map((r) => r.name.length))).toBe(12);
+  });
+
+  it('scoreboards: some sample shows a full meter and some a part-filled one', () => {
+    const levels = scoreboardSamples().map((s) => meterLevels(s.frame));
+    expect(levels.some((l) => l !== null && l.includes(4))).toBe(true);
+    expect(levels.some((l) => l !== null && l.some((n) => n > 0 && n < 4))).toBe(true);
   });
 
   it('serve clocks: 30, 10, 5 (the last seconds) and 1 during PRE_SERVE', () => {
