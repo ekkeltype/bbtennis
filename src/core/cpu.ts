@@ -1,8 +1,9 @@
-import { choiceOptions } from './power';
+import { insaneOffered, levelFromKeys } from './power';
 import { chance, forkSeed, intBelow, normalIH, seedRng, uniform } from './rng';
 import { CPU_LEVEL_WPM, CPU_MILESTONES } from './tuning';
 import { isComplete } from './typing';
 import type { PlayerId, PromptState, ReturnTurnData, RngState, ServeTurnData, TurnState, WordOption } from './types';
+import { TIERS } from './types';
 import { clamp, lerp } from './util';
 
 /** A CPU typist's parameters (spec §3.8): speed, per-key error rate, reaction before a prompt's first key, aggression. */
@@ -79,8 +80,8 @@ export function cpuProfile(level: number): CpuProfile {
   };
 }
 
-/** How the CPU picks a serve/choice word: spec §3.8's adaptive rule, or a fixed strategy for balance checks. */
-export type CpuPolicy = 'adaptive' | 'alwaysEasy' | 'alwaysHard' | 'neverHard';
+/** How the CPU picks a serve/choice word: spec §3.8's adaptive rule, or a fixed strategy for balance checks. neverHard never picks hard or insane; neverInsane never picks insane. */
+export type CpuPolicy = 'adaptive' | 'alwaysEasy' | 'alwaysHard' | 'neverHard' | 'neverInsane';
 
 /**
  * Optional CpuBrain settings: `policy` defaults to 'adaptive'; `chaseReactionMs` (ms, finite, ≥ 0)
@@ -162,7 +163,7 @@ export class CpuBrain {
     }
     const prompt = t.phase === 'toss' && t.active !== null ? t.prompts[t.active] : undefined;
     if (prompt?.kind !== 'serve') return [];
-    const plan = this.promptPlan(t, prompt.id, prompt.shownAt, () => {
+    const plan = this.promptPlan(t, prompt.id, prompt.shownAt, prompt.options.length, () => {
       const deadline = (t.tossAt ?? prompt.shownAt) + 2 * d.tossApexMs * d.pace;
       const aggression = this.profile.aggression * (d.serveNo === 2 ? CPU.secondServeAggression : 1);
       const option = this.choose(prompt.options, deadline - Math.max(prompt.shownAt, t.τ), aggression);
@@ -180,16 +181,17 @@ export class CpuBrain {
     const choice = t.prompts.find((p) => p.kind === 'choice');
     const chaseShownAt = chase?.shownAt ?? 0;
     const chaseReactionMs = this.chaseReactionMs ?? this.profile.reactionMs * (d.isServeReturn ? 1 : CPU.rallyChaseReaction);
-    const chasePlan = this.promptPlan(t, chase?.id ?? d.promptBase, chaseShownAt, () =>
+    const chasePlan = this.promptPlan(t, chase?.id ?? d.promptBase, chaseShownAt, 1, () =>
       this.newPlan([d.chase], 0, chaseShownAt, chaseReactionMs, t.τ),
     );
     const chaseKeys = this.rest(chasePlan, chase, t.τ);
     const choiceShownAt = choice?.shownAt ?? chaseKeys[chaseKeys.length - 1]?.τ;
     if (choiceShownAt === undefined) return chaseKeys;
-    const choicePlan = this.promptPlan(t, choice?.id ?? d.promptBase + 1, choiceShownAt, () => {
-      // Prefer the shown prompt's options (insane may have been dropped after a chase slip); else
-      // choiceOptions at the planned show time so a pre-plan does not pick a word that will not appear.
-      const options = choice?.options ?? choiceOptions(t, d, choiceShownAt);
+    // A planned wrong key in the rest of the chase empties the meter, so the choice will show 3 options.
+    const chaseClean = chaseKeys.length === d.chase.len - (chase?.typed ?? 0);
+    const level = chaseClean ? levelFromKeys(t, t.τ) : 0;
+    const options = choice?.options ?? (insaneOffered(level) ? d.choice.options : d.choice.options.slice(0, TIERS.length));
+    const choicePlan = this.promptPlan(t, choice?.id ?? d.promptBase + 1, choiceShownAt, options.length, () => {
       const option = this.choose(options, d.incoming.T - Math.max(choiceShownAt, t.τ), this.profile.aggression);
       return this.newPlan(options, option, choiceShownAt, this.profile.reactionMs, t.τ);
     });
@@ -208,13 +210,13 @@ export class CpuBrain {
   }
 
   /**
-   * The plan of a prompt shown (or expected) at `shownAt`, made once. A plan made for another shownAt
-   * is replaced: a choice pre-planned after a chase that was then re-planned is shown later than planned.
+   * The plan of a prompt shown (or expected) at `shownAt`, made once. A plan made for another shownAt,
+   * or aimed at an option the prompt no longer offers, is replaced.
    */
-  private promptPlan(t: TurnState, id: number, shownAt: number, make: () => PromptPlan): PromptPlan {
+  private promptPlan(t: TurnState, id: number, shownAt: number, optionCount: number, make: () => PromptPlan): PromptPlan {
     const key = `${t.data.turnId}:${id}`;
     const cached = this.promptPlans.get(key);
-    if (cached?.shownAt === shownAt) return cached;
+    if (cached?.shownAt === shownAt && cached.option < optionCount) return cached;
     const plan = make();
     this.promptPlans.set(key, plan);
     return plan;
@@ -251,16 +253,17 @@ export class CpuBrain {
   }
 
   /**
-   * Option index to type (options are in tier order easy, medium, hard). Adaptive: an option fits if
+   * Option index to type (options are in tier order easy, medium, hard[, insane]). Adaptive: an option fits if
    * its estimate ≤ budget − 250 ms; with probability `aggression` the hardest fitting one, otherwise
    * a uniform pick among the other fitting ones; easy if none fits.
    */
   private choose(options: readonly WordOption[], budgetMs: number, aggression: number): number {
     if (this.policy === 'alwaysEasy') return 0;
     if (this.policy === 'alwaysHard') return options.length - 1;
-    const fitting = options.flatMap((o, i) =>
-      (this.policy === 'neverHard' && o.tier === 'hard') || this.estimateMs(o.len) > budgetMs - CPU.safetyMs ? [] : [i],
-    );
+    const banned = (o: WordOption): boolean =>
+      (this.policy === 'neverHard' && (o.tier === 'hard' || o.tier === 'insane')) ||
+      (this.policy === 'neverInsane' && o.tier === 'insane');
+    const fitting = options.flatMap((o, i) => (banned(o) || this.estimateMs(o.len) > budgetMs - CPU.safetyMs ? [] : [i]));
     const hardest = fitting[fitting.length - 1];
     if (hardest === undefined) return 0;
     const others = fitting.slice(0, -1);
@@ -294,7 +297,7 @@ export class CpuBrain {
       const letter = word.word.charAt(i);
       if (i > from) {
         τ += this.intervalMs() * f * (1 + CPU.intervalSpread * (uniform(rng) + uniform(rng) - 1));
-        if (word.tier === 'hard' && chance(rng, CPU.hesitation.chance)) τ += uniformIn(rng, CPU.hesitation.min, CPU.hesitation.max);
+        if ((word.tier === 'hard' || word.tier === 'insane') && chance(rng, CPU.hesitation.chance)) τ += uniformIn(rng, CPU.hesitation.min, CPU.hesitation.max);
       }
       if (i > 0 && chance(rng, this.profile.err)) {
         keys.push({ key: wrongLetter(rng, letter), τ });

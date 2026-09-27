@@ -3,6 +3,7 @@ import { CPU_LEVELS, CpuBrain, cpuProfile, isMilestone } from '../../src/core/cp
 import type { CpuPolicy, CpuProfile, PlannedKey } from '../../src/core/cpu';
 import { forkSeed, seedRng, uniform } from '../../src/core/rng';
 import { CPU_LEVEL_WPM, CPU_MILESTONES } from '../../src/core/tuning';
+import { createTurn, startTurn, turnInput } from '../../src/core/turn';
 import { applyLetter, createPrompt, lockedWord } from '../../src/core/typing';
 import type { KeyResult } from '../../src/core/typing';
 import { other } from '../../src/core/types';
@@ -21,6 +22,7 @@ import type {
 } from '../../src/core/types';
 import { packWords } from '../../src/core/words/lists';
 import { createPicker, pickSet, toOption } from '../../src/core/words/picker';
+import { CHOICE_4, INSANE_WORD, returnData, serveData, serveSet, SET_A } from './turnFixtures';
 
 const MILESTONE_LEVELS = [0, 3, 6, 9, 12, 13, 14];
 
@@ -810,5 +812,46 @@ describe('CpuBrain — plan contract', () => {
       { ...PROFILE, aggression: Number.NaN },
     ];
     for (const profile of bad) expect(() => new CpuBrain(0, profile, 1)).toThrow(RangeError);
+  });
+});
+
+describe('CPU and the insane option (power-meter spec §5)', () => {
+  const EXACT = { wpm: 120, err: 0, reactionMs: 300, aggression: 1 };
+
+  /** The first key the plan types after the chase word's last correct letter: the chosen option's initial. */
+  function choiceInitial(keys: { key: string }[], chase: string): string | undefined {
+    let i = 0;
+    let typed = 0;
+    for (; i < keys.length && typed < chase.length; i++) if (keys[i]!.key === chase[typed]) typed++;
+    return keys[i]?.key;
+  }
+
+  it('serves the insane word when it fits and aggression is 1', () => {
+    const t = createTurn(serveData({ owner: 0, power: 4, wordSets: [serveSet([...SET_A, 'quarterfinalist'])] }));
+    startTurn(t);
+    turnInput(t, 'toss', 2600);
+    const keys = new CpuBrain(0, EXACT, 1).plan(t);
+    expect(keys.map((k) => k.key).join('')).toBe('quarterfinalist');
+  });
+
+  it('plans the insane word for a clean chase, and never after a planned wrong key in the chase', () => {
+    const clean = createTurn(returnData({ power: 4, choice: CHOICE_4 }));
+    startTurn(clean);
+    expect(choiceInitial(new CpuBrain(1, EXACT, 1).plan(clean), 'ball')).toBe(INSANE_WORD[0]);
+    for (let seed = 1; seed <= 20; seed++) {
+      const t = createTurn(returnData({ power: 4, choice: CHOICE_4 }));
+      startTurn(t);
+      const keys = new CpuBrain(1, { ...EXACT, err: 0.99 }, seed).plan(t);
+      expect(choiceInitial(keys, 'ball'), `seed ${seed}`).not.toBe(INSANE_WORD[0]);
+    }
+  });
+
+  it('neverInsane never picks insane; neverHard picks neither hard nor insane', () => {
+    for (const [policy, banned] of [['neverInsane', ['p']], ['neverHard', ['c', 'p']]] as const) {
+      const t = createTurn(returnData({ power: 4, choice: CHOICE_4 }));
+      startTurn(t);
+      const initial = choiceInitial(new CpuBrain(1, EXACT, 1, { policy }).plan(t), 'ball');
+      expect(banned, policy).not.toContain(initial);
+    }
   });
 });

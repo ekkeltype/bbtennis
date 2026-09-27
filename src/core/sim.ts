@@ -3,6 +3,7 @@ import { Engine } from './engine';
 import { forkSeed } from './rng';
 import { nextDeadline } from './turn';
 import type { GameEvent, Look, MatchConfig, PlayerId, PlayerInfo, PointReason } from './types';
+import { TIERS } from './types';
 import { clamp, lerp } from './util';
 
 /**
@@ -15,9 +16,21 @@ export interface SimTypist { profile: CpuProfile; policy?: CpuPolicy; chaseReact
  * One simulated point: in-play strikes (serve included, as the engine counts a rally), duration in
  * ms (every turn of the point, the lead-in banner that opens it included), how it ended and who won.
  */
-export interface PointRecord { shots: number; ms: number; reason: PointReason; serverWon: boolean; winner: PlayerId }
+export interface PointRecord {
+  shots: number;
+  ms: number;
+  reason: PointReason;
+  serverWon: boolean;
+  winner: PlayerId;
+  /** Clean insane strikes (no slip, landing in) in the point. */
+  insaneClean: number;
+  /** How many of those the receiver struck back in. */
+  insaneReturned: number;
+  /** Whether any serve or choice prompt of the point offered the insane word. */
+  insaneOffered: boolean;
+}
 
-/** Balance figures of a run of points (spec §6); rates are shares of all points. */
+/** Balance figures of a run of points (spec §6); rates are shares of all points. insaneReturnRate = returned / clean (0 with none); fullMeterRate = share of points offering insane. */
 export interface SimSummary {
   medianShots: number;
   p90Shots: number;
@@ -26,6 +39,9 @@ export interface SimSummary {
   dfRate: number;
   serverWinRate: number;
   medianSecPerPoint: number;
+  insaneShotsClean: number;
+  insaneReturnRate: number;
+  fullMeterRate: number;
 }
 
 /** Spec §6 human model: error rate and reaction interpolate linearly in WPM between these rows. */
@@ -132,6 +148,8 @@ export function summarize(points: readonly PointRecord[]): SimSummary {
   const shots = points.map((p) => p.shots).sort(ascending);
   const ms = points.map((p) => p.ms).sort(ascending);
   const share = (pred: (p: PointRecord) => boolean): number => points.filter(pred).length / n;
+  const clean = points.reduce((sum, p) => sum + p.insaneClean, 0);
+  const returned = points.reduce((sum, p) => sum + p.insaneReturned, 0);
   return {
     medianShots: median(shots),
     p90Shots: item(shots, Math.ceil((9 * n) / 10) - 1),
@@ -140,6 +158,9 @@ export function summarize(points: readonly PointRecord[]): SimSummary {
     dfRate: share((p) => p.reason === 'doubleFault'),
     serverWinRate: share((p) => p.serverWon),
     medianSecPerPoint: median(ms) / 1000,
+    insaneShotsClean: clean,
+    insaneReturnRate: clean === 0 ? 0 : returned / clean,
+    fullMeterRate: share((p) => p.insaneOffered),
   };
 }
 
@@ -152,6 +173,7 @@ function* matchPoints(config: MatchConfig, typists: [SimTypist, SimTypist], seed
   const brains: [CpuBrain, CpuBrain] = [brainFor(0, typists[0], seed), brainFor(1, typists[1], seed)];
   let server: PlayerId | null = null;
   let ms = 0;
+  let insane = { clean: 0, returned: 0, offered: false, pending: false };
   for (let turns = 0; ; turns++) {
     const owner = engine.owner();
     if (owner === null) break;
@@ -159,13 +181,29 @@ function* matchPoints(config: MatchConfig, typists: [SimTypist, SimTypist], seed
     // A point's first turn is its serve turn, owned by the server; the rally count only changes when a turn ends.
     server ??= owner;
     const shots = engine.state.rallyStrikes;
-    for (const e of playTurn(engine, brains[owner], owner)) {
+    const events = playTurn(engine, brains[owner], owner);
+    const ended = engine.state.lastTurn;
+    if (ended !== null) {
+      insane.offered ||= ended.prompts.some((p) => p.options.length > TIERS.length);
+      const o = ended.outcome;
+      if (insane.pending) {
+        if (o?.kind === 'strike' && o.strike.shot.outcome === 'in') insane.returned++;
+        insane.pending = false;
+      }
+      if (o?.kind === 'strike' && o.strike.word.tier === 'insane' && o.strike.slips === 0 && o.strike.shot.outcome === 'in') {
+        insane.clean++;
+        insane.pending = true;
+      }
+    }
+    for (const e of events) {
       if (e.type === 'turnEnd') {
         ms += e.endτ;
       } else if (e.type === 'point') {
-        yield { shots, ms, reason: e.reason, serverWon: e.winner === server, winner: e.winner };
+        yield { shots, ms, reason: e.reason, serverWon: e.winner === server, winner: e.winner,
+          insaneClean: insane.clean, insaneReturned: insane.returned, insaneOffered: insane.offered };
         server = null;
         ms = 0;
+        insane = { clean: 0, returned: 0, offered: false, pending: false };
       }
     }
   }

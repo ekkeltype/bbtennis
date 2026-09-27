@@ -70,7 +70,7 @@ function humanServeLock(seed: number, wpm: number, serveNo: 1 | 2): number {
 
 /** A record with defaults for the fields a summarize test does not care about. */
 function rec(over: Partial<PointRecord> = {}): PointRecord {
-  return { shots: 3, ms: 10000, reason: 'winner', serverWon: true, winner: 0, ...over };
+  return { shots: 3, ms: 10000, reason: 'winner', serverWon: true, winner: 0, insaneClean: 0, insaneReturned: 0, insaneOffered: false, ...over };
 }
 
 /**
@@ -262,3 +262,27 @@ describe('simulateMatch', () => {
 function serverOf(p: PointRecord): PlayerId {
   return p.serverWon ? p.winner : p.winner === 0 ? 1 : 0;
 }
+
+describe('insane metrics (power-meter spec §7)', () => {
+  it('summarize: clean insane shots, the share returned, and the share of points offering insane', () => {
+    const base = { shots: 3, ms: 1000, reason: 'winner' as const, serverWon: true, winner: 0 as const };
+    const s = summarize([
+      { ...base, insaneClean: 2, insaneReturned: 1, insaneOffered: true },
+      { ...base, insaneClean: 1, insaneReturned: 0, insaneOffered: true },
+      { ...base, insaneClean: 0, insaneReturned: 0, insaneOffered: false },
+      { ...base, insaneClean: 0, insaneReturned: 0, insaneOffered: false },
+    ]);
+    expect(s.insaneShotsClean).toBe(3);
+    expect(s.insaneReturnRate).toBeCloseTo(1 / 3, 12);
+    expect(s.fullMeterRate).toBe(0.5);
+    expect(summarize([{ ...base, insaneClean: 0, insaneReturned: 0, insaneOffered: false }]).insaneReturnRate).toBe(0);
+  });
+
+  it('fast, accurate equal players reach full meters and hit clean insane shots', { timeout: 30000 }, () => {
+    const CONFIG_NORMAL: MatchConfig = { format: 'full', pace: 'normal', surface: 'hard', wordPack: 'everyday', deuceRule: 'advantage', training: null };
+    const points = simulatePoints({ config: CONFIG_NORMAL, typists: [humanTypist(120), humanTypist(120)], seed: 7, points: 400 });
+    const s = summarize(points);
+    expect(s.fullMeterRate).toBeGreaterThan(0);
+    expect(s.insaneShotsClean).toBeGreaterThan(0);
+  });
+});
