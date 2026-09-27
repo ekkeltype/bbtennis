@@ -3,7 +3,7 @@ import { seedRng } from '../../src/core/rng';
 import { TUNING } from '../../src/core/tuning';
 import { ALL_TIERS, TIERS, type PickerState, type RngState, type Tier, type WordOption, type WordPackId } from '../../src/core/types';
 import { MISLEADING_WORDS, PACKS, packWords, tierOfLength } from '../../src/core/words/lists';
-import { QWERTY_ADJ, createPicker, initialsOk, pickFixed, pickTriple, toOption } from '../../src/core/words/picker';
+import { QWERTY_ADJ, createPicker, initialsOk, pickFixed, pickSet, toOption } from '../../src/core/words/picker';
 
 const MIN_WORDS: Record<Tier, number> = { easy: 120, medium: 120, hard: 80, insane: 60 };
 const LENGTHS: Record<Tier, [number, number]> = { easy: [2, 4], medium: [5, 7], hard: [8, 11], insane: [12, 15] };
@@ -162,7 +162,7 @@ describe('createPicker', () => {
   });
 });
 
-describe('pickTriple', () => {
+describe('pickSet', () => {
   for (const pack of PACK_IDS) {
     it(`${pack}: 2,000 picks obey tiers, initials and the ${HISTORY}-word history`, () => {
       const rng = seedRng(20260926);
@@ -171,7 +171,7 @@ describe('pickTriple', () => {
       const problems: string[] = [];
       for (let i = 0; i < 2000; i++) {
         const recent = offered.slice(-HISTORY);
-        const options = pickTriple(rng, picker, pack);
+        const options = pickSet(rng, picker, pack);
         const words = wordsOf(options);
         const label = `pick ${i} [${words.join(' ')}]`;
         if (options.map((o) => o.tier).join() !== TIERS.join()) problems.push(`${label}: tiers`);
@@ -189,7 +189,7 @@ describe('pickTriple', () => {
 
   it('records the three offered words in history, newest last', () => {
     const picker = createPicker();
-    const words = wordsOf(pickTriple(seedRng(3), picker, 'sports'));
+    const words = wordsOf(pickSet(seedRng(3), picker, 'sports'));
     expect(picker.history).toEqual(words);
   });
 
@@ -199,7 +199,7 @@ describe('pickTriple', () => {
     const picker = createPicker();
     const returned: string[] = [];
     for (let i = 0; i < 2000; i++) {
-      returned.push(...wordsOf(pickTriple(rng, picker, 'everyday', avoid)).filter((w) => avoid.includes(w)));
+      returned.push(...wordsOf(pickSet(rng, picker, 'everyday', avoid)).filter((w) => avoid.includes(w)));
     }
     expect(returned).toEqual([]);
   });
@@ -212,7 +212,7 @@ describe('pickTriple', () => {
     let repeats = 0;
     for (let i = 0; i < 50; i++) {
       const recent = [...picker.history];
-      const words = wordsOf(pickTriple(rng, picker, 'dojo', avoid));
+      const words = wordsOf(pickSet(rng, picker, 'dojo', avoid));
       expect(allowedEasy, `pick ${i}`).toContain(words[0]);
       expect(initialsClash(words), `pick ${i}: ${words.join(' ')}`).toBe(false);
       if (words.some((w) => recent.includes(w))) repeats++;
@@ -222,13 +222,13 @@ describe('pickTriple', () => {
   });
 
   it('throws when no triple can satisfy the avoid and initials rules', () => {
-    expect(() => pickTriple(seedRng(1), createPicker(), 'sports', PACKS.sports.easy)).toThrow(/pickTriple/);
+    expect(() => pickSet(seedRng(1), createPicker(), 'sports', PACKS.sports.easy)).toThrow(/pickSet/);
   });
 });
 
-describe('pickTriple determinism', () => {
+describe('pickSet determinism', () => {
   const run = (rng: RngState, picker: PickerState, pack: WordPackId, n: number): string[] =>
-    Array.from({ length: n }, () => wordsOf(pickTriple(rng, picker, pack)).join(' '));
+    Array.from({ length: n }, () => wordsOf(pickSet(rng, picker, pack)).join(' '));
 
   it('gives the same sequence for the same seed and picker state', () => {
     expect(run(seedRng(42), createPicker(), 'mixed', 300)).toEqual(run(seedRng(42), createPicker(), 'mixed', 300));
@@ -245,6 +245,44 @@ describe('pickTriple determinism', () => {
 
   it('gives different sequences for different seeds', () => {
     expect(run(seedRng(1), createPicker(), 'everyday', 20)).not.toEqual(run(seedRng(2), createPicker(), 'everyday', 20));
+  });
+});
+
+describe('pickSet with the insane option (power-meter spec §4.2)', () => {
+  it('returns [easy, medium, hard, insane] with pairwise distinct, non-adjacent initials, recording all four', () => {
+    for (const pack of PACK_IDS) {
+      for (let seed = 1; seed <= 300; seed++) {
+        const picker = createPicker();
+        const options = pickSet(seedRng(seed), picker, pack, [], true);
+        expect(options.map((o) => o.tier), `${pack} ${seed}`).toEqual(ALL_TIERS);
+        expect(initialsClash(wordsOf(options)), `${pack} ${seed}`).toBe(false);
+        expect(picker.history).toEqual(wordsOf(options));
+      }
+    }
+  });
+
+  it('keeps the avoid list and the 20-word history for all four words', () => {
+    const rng = seedRng(9);
+    const picker = createPicker();
+    const seen: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const recent = seen.slice(-HISTORY);
+      const words = wordsOf(pickSet(rng, picker, 'everyday', [], true));
+      expect(words.filter((w) => recent.includes(w)), `pick ${i}`).toEqual([]);
+      seen.push(...words);
+    }
+    const avoid = wordsOf(pickSet(seedRng(3), createPicker(), 'sports', [], true));
+    for (let seed = 0; seed < 50; seed++) {
+      const words = wordsOf(pickSet(seedRng(seed), createPicker(), 'sports', avoid, true));
+      expect(words.filter((w) => avoid.includes(w))).toEqual([]);
+    }
+  });
+
+  it('draws exactly as a 3-word pick when insane is off', () => {
+    const a = pickSet(seedRng(77), createPicker(), 'mixed', ['cat']);
+    const b = pickSet(seedRng(77), createPicker(), 'mixed', ['cat'], false);
+    expect(b).toEqual(a);
+    expect(a).toHaveLength(3);
   });
 });
 

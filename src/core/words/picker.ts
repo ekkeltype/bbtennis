@@ -1,6 +1,6 @@
 import { intBelow, shuffleInPlace } from '../rng';
 import { TUNING } from '../tuning';
-import { TIERS, type PickerState, type RngState, type WordOption, type WordPackId } from '../types';
+import { ALL_TIERS, TIERS, type PickerState, type RngState, type WordOption, type WordPackId } from '../types';
 import { packWords, tierOfLength } from './lists';
 
 /** Rejection-sampling attempts with every rule enforced before the history rule is relaxed. */
@@ -40,24 +40,32 @@ export function createPicker(): PickerState {
 }
 
 /**
- * One word per tier satisfying all rules; records all three in history. `avoid` = words that must not
- * appear (previous toss). Rejection-samples up to MAX_ATTEMPTS triples with every rule; if none passes,
- * relaxes the history rule for this pick only (the initials and `avoid` rules always hold) and searches
- * exhaustively, so it never loops unboundedly. Throws only if no triple can satisfy those two rules.
+ * One word per tier satisfying all rules: easy, medium and hard, plus insane when `insane` (a full
+ * power meter, power-meter spec §4.2); records every word in history. `avoid` = words that must not
+ * appear (previous toss). Rejection-samples up to MAX_ATTEMPTS sets with every rule; if none passes,
+ * relaxes the history rule for this pick only (the initials and `avoid` rules always hold) and
+ * searches exhaustively, so it never loops unboundedly. With `insane` off the draws are exactly
+ * those of a 3-word pick. Throws only if no set can satisfy those two rules.
  */
-export function pickTriple(rng: RngState, picker: PickerState, pack: WordPackId, avoid: readonly string[] = []): WordOption[] {
-  const lists = TIERS.map((tier) => packWords(pack, tier));
+export function pickSet(
+  rng: RngState,
+  picker: PickerState,
+  pack: WordPackId,
+  avoid: readonly string[] = [],
+  insane = false,
+): WordOption[] {
+  const lists = (insane ? ALL_TIERS : TIERS).map((tier) => packWords(pack, tier));
   const words =
-    sampleTriple(rng, lists, new Set([...picker.history, ...avoid])) ??
-    searchTriple(rng, lists.map((list) => list.filter((w) => !avoid.includes(w))));
-  if (words === null) throw new Error(`pickTriple: no ${pack} triple satisfies the avoid and initials rules`);
+    sampleSet(rng, lists, new Set([...picker.history, ...avoid])) ??
+    searchSet(rng, lists.map((list) => list.filter((w) => !avoid.includes(w))));
+  if (words === null) throw new Error(`pickSet: no ${pack} set satisfies the avoid and initials rules`);
   picker.history.push(...words);
   picker.history.splice(0, Math.max(0, picker.history.length - TUNING.words.historySize));
   return words.map(toOption);
 }
 
 /** Up to MAX_ATTEMPTS uniform draws of one word per list; the first with valid initials and no blocked word wins. */
-function sampleTriple(rng: RngState, lists: readonly (readonly string[])[], blocked: ReadonlySet<string>): string[] | null {
+function sampleSet(rng: RngState, lists: readonly (readonly string[])[], blocked: ReadonlySet<string>): string[] | null {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const words = lists.map((list) => list[intBelow(rng, list.length)] as string);
     if (initialsOk(words) && !words.some((w) => blocked.has(w))) return words;
@@ -66,7 +74,7 @@ function sampleTriple(rng: RngState, lists: readonly (readonly string[])[], bloc
 }
 
 /** Randomised depth-first search over initials for one word per pool with valid initials; null if none exists. */
-function searchTriple(rng: RngState, pools: readonly (readonly string[])[]): string[] | null {
+function searchSet(rng: RngState, pools: readonly (readonly string[])[]): string[] | null {
   const groups = pools.map(groupByInitial);
   const extend = (chosen: string[]): string[] | null => {
     const group = groups[chosen.length];

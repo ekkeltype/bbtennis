@@ -31,7 +31,7 @@ import {
 import { isComplete, wordCps, wpmOf } from './typing';
 import { jsonCopy } from './util';
 import { tierOfLength } from './words/lists';
-import { createPicker, initialsOk, pickFixed, pickTriple } from './words/picker';
+import { createPicker, initialsOk, pickFixed, pickSet } from './words/picker';
 
 /** Everything a match starts from: its options, its two players and the match-RNG seed. */
 export interface EngineOptions { config: MatchConfig; players: [PlayerInfo, PlayerInfo]; seed: number }
@@ -320,7 +320,7 @@ export class Engine {
     const options =
       fixed !== null
         ? pickFixed(this.picker(), fixed.choice, 'choice')
-        : pickTriple(this.rng(), this.picker(), config.wordPack, [strike.word.word]);
+        : pickSet(this.rng(), this.picker(), config.wordPack, [strike.word.word]);
     const m = uniform(this.rng()) < 0.5 ? 1 : -1;
     const owner = other(strike.player);
     return this.newTurn({
@@ -352,7 +352,7 @@ export class Engine {
     const options =
       fixed !== null
         ? pickFixed(this.picker(), fixed.serve, 'serve')
-        : pickTriple(this.rng(), this.picker(), config.wordPack, avoid);
+        : pickSet(this.rng(), this.picker(), config.wordPack, avoid);
     const variant = uniform(this.rng()) < 0.5 ? 'T' : 'wide';
     return { options, targets: serveTargets(receiver, side, variant), variant };
   }

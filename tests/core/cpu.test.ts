@@ -20,7 +20,7 @@ import type {
   WordOption,
 } from '../../src/core/types';
 import { packWords } from '../../src/core/words/lists';
-import { createPicker, pickTriple, toOption } from '../../src/core/words/picker';
+import { createPicker, pickSet, toOption } from '../../src/core/words/picker';
 
 const MILESTONE_LEVELS = [0, 3, 6, 9, 12, 13, 14];
 
@@ -208,7 +208,7 @@ function typeWords(profile: CpuProfile, seed: number, chaseWords: readonly strin
   const picker = createPicker();
   const typed: Typed[] = [];
   chaseWords.forEach((chase, i) => {
-    const choice = pickTriple(rng, picker, 'mixed').map((o) => o.word);
+    const choice = pickSet(rng, picker, 'mixed').map((o) => o.word);
     const t = returnTurn({ turnId: i + 1, chase, choice, T: 1e7 });
     const fed = drive(brain, t);
     for (const prompt of t.prompts) {
