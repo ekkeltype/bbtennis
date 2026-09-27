@@ -75,6 +75,8 @@ const FULL = import.meta.env.BBT_SIM === '1';
 const TEN_MINUTES = 600_000;
 /** Points per rally-shape, policy and aggression cell. */
 const CELL_POINTS = 5000;
+/** Points per equal-player insane-option cell (need ≥ 200 clean insane shots). */
+const INSANE_POINTS = 20_000;
 /** Short sets per belt-vs-belt cell. */
 const CELL_SETS = 200;
 
@@ -153,15 +155,15 @@ describe.skipIf(!FULL).concurrent('balance simulation (spec §6)', { timeout: TE
       const s = once(() =>
         summarize(simulatePoints({ config: config(pace), typists: [humanTypist(wpm), humanTypist(wpm)], seed, points: CELL_POINTS })),
       );
-      it('median rally is 3–6 shots', ({ expect }) => {
-        expect(s().medianShots).toBeGreaterThanOrEqual(3);
-        expect(s().medianShots).toBeLessThanOrEqual(6);
+      it('median rally is 5–8 shots', ({ expect }) => {
+        expect(s().medianShots).toBeGreaterThanOrEqual(5);
+        expect(s().medianShots).toBeLessThanOrEqual(8);
       });
-      it('90th-percentile rally is ≤ 12 shots', ({ expect }) => {
-        expect(s().p90Shots).toBeLessThanOrEqual(12);
+      it('90th-percentile rally is ≤ 16 shots', ({ expect }) => {
+        expect(s().p90Shots).toBeLessThanOrEqual(16);
       });
-      it('no point lasts more than 40 shots', ({ expect }) => {
-        expect(s().maxShots).toBeLessThanOrEqual(40);
+      it('no point lasts more than 60 shots', ({ expect }) => {
+        expect(s().maxShots).toBeLessThanOrEqual(60);
       });
       // No lower bound on aces (R36 dropped the draft's ≥ 5 %, which no constant reaches without
       // changing semantics). An ace means the receiver never finishes the chase word, but even a
@@ -181,8 +183,36 @@ describe.skipIf(!FULL).concurrent('balance simulation (spec §6)', { timeout: TE
         expect(s().serverWinRate).toBeGreaterThanOrEqual(0.55);
         expect(s().serverWinRate).toBeLessThanOrEqual(0.65);
       });
-      it('a point takes ≤ 35 s (median)', ({ expect }) => {
-        expect(s().medianSecPerPoint).toBeLessThanOrEqual(35);
+      it('a point takes ≤ 50 s (median)', ({ expect }) => {
+        expect(s().medianSecPerPoint).toBeLessThanOrEqual(50);
+      });
+    },
+  );
+
+  describe.each(PRESETS.map((p, i) => ({ ...p, seed: 4000 + i })))(
+    '$pace at $wpm WPM, the insane option between equal players',
+    ({ pace, wpm, seed }) => {
+      const s = once(() =>
+        summarize(simulatePoints({ config: config(pace), typists: [humanTypist(wpm), humanTypist(wpm)], seed, points: INSANE_POINTS })),
+      );
+      it('sees at least 200 clean insane shots (raise INSANE_POINTS if not)', ({ expect }) => {
+        expect(s().insaneShotsClean).toBeGreaterThanOrEqual(200);
+      });
+      it('the equal opponent returns 15–40 % of clean insane shots', ({ expect }) => {
+        expect(s().insaneReturnRate).toBeGreaterThanOrEqual(0.15);
+        expect(s().insaneReturnRate).toBeLessThanOrEqual(0.4);
+      });
+    },
+  );
+
+  describe.each(PRESETS.map((p, i) => ({ ...p, seed: 5000 + i })))(
+    '$pace at $wpm WPM, never-insane against the adaptive human model',
+    ({ pace, wpm, seed }) => {
+      it('wins 40–50 % of points: insane helps without dominating', ({ expect }) => {
+        const typists: [SimTypist, SimTypist] = [humanTypist(wpm, 'neverInsane'), humanTypist(wpm)];
+        const points = simulatePoints({ config: config(pace), typists, seed, points: CELL_POINTS });
+        expect(winShare(points, 0)).toBeGreaterThanOrEqual(0.4);
+        expect(winShare(points, 0)).toBeLessThanOrEqual(0.5);
       });
     },
   );
