@@ -236,15 +236,6 @@ export class CpuBrain {
     if (prompt === undefined) return plan.keys;
     if (isComplete(prompt)) return [];
     const used = prompt.correctKeys + prompt.wrongKeys;
-    // Shown options can shrink (insane dropped after a chase slip) while a cached plan still points at
-    // the missing index — re-pick or every key is ignored and the driver loops forever at this τ.
-    const optIdx = prompt.locked ?? plan.option;
-    if (prompt.options[optIdx] === undefined) {
-      plan.option = this.choose(prompt.options, Number.POSITIVE_INFINITY, this.profile.aggression);
-      plan.from = used;
-      plan.keys = this.typeWord(prompt.options[plan.option], prompt.typed, τ);
-      return plan.keys;
-    }
     const keys = plan.keys.slice(used - plan.from);
     if (keys[0] === undefined || keys[0].τ >= τ) return keys;
     plan.from = used;
