@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   COURT,
   endSign,
+  insaneRallyTarget,
+  insaneServeTarget,
   inServiceBox,
   inSinglesHalf,
   netHeightAt,
@@ -299,5 +301,40 @@ describe('netHeightAt', () => {
   it('stays at post height beyond the posts', () => {
     expect(netHeightAt(8)).toBeCloseTo(1.07, 12);
     expect(netHeightAt(-10)).toBeCloseTo(1.07, 12);
+  });
+});
+
+describe('insane targets (power-meter spec §4.3)', () => {
+  it('serve: on medium\'s half of the box, 0.15 m inside the side or centre line and the service line', () => {
+    expect(insaneServeTarget(1, 'deuce', 'T')).toEqual({ x: -3.965, y: 6.25 });
+    expect(insaneServeTarget(1, 'deuce', 'wide')).toEqual({ x: -0.15, y: 6.25 });
+    for (const receiver of [0, 1] as const) {
+      for (const side of ['deuce', 'ad'] as const) {
+        for (const variant of ['T', 'wide'] as const) {
+          const t = insaneServeTarget(receiver, side, variant);
+          const [, medium] = serveTargets(receiver, side, variant);
+          expect(inServiceBox(t, receiver, side)).toBe(true);
+          expect(Math.sign(t.x)).toBe(Math.sign(medium!.x));
+          const a = Math.abs(t.x);
+          expect(Math.min(a, COURT.singlesHalfWidth - a)).toBeCloseTo(0.15, 9);
+          expect(COURT.serviceLine - Math.abs(t.y)).toBeCloseTo(0.15, 9);
+        }
+      }
+    }
+  });
+
+  it('rally: the deep corner on medium\'s side, 0.15 m inside the sideline and the baseline', () => {
+    expect(insaneRallyTarget(1, 1)).toEqual({ x: -3.965, y: 11.735 });
+    for (const dest of [0, 1] as const) {
+      for (const m of [1, -1] as const) {
+        const t = insaneRallyTarget(dest, m);
+        const [, medium, hard] = rallyTargets(dest, m);
+        expect(inSinglesHalf(t, dest)).toBe(true);
+        expect(Math.sign(t.x)).toBe(Math.sign(medium!.x));
+        expect(Math.sign(t.x)).toBe(-Math.sign(hard!.x));
+        expect(COURT.singlesHalfWidth - Math.abs(t.x)).toBeCloseTo(0.15, 9);
+        expect(COURT.halfLength - Math.abs(t.y)).toBeCloseTo(0.15, 9);
+      }
+    }
   });
 });

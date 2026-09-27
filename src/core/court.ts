@@ -21,6 +21,10 @@ const SERVE_MEDIUM = { T: { a: 3.115, b: 5.4 }, wide: { a: 1.0, b: 5.4 } };
 const RALLY_EASY = { a: 0, b: 8.885 };
 const RALLY_MEDIUM = { a: 2.865, b: 9.385 };
 const RALLY_HARD = { a: -3.615, b: 11.385 };
+/** Box coordinates of the insane serve target, keyed by the hard target's variant (power-meter spec §4.3). */
+const SERVE_INSANE = { T: { a: 3.965, b: 6.25 }, wide: { a: 0.15, b: 6.25 } };
+/** Half coordinates of the insane rally target for m = +1: medium's side, 0.15 m inside both lines. */
+const RALLY_INSANE = { a: 3.965, b: 11.735 };
 
 /** Court sign of an end (spec §3.0): end 0 → +1, end 1 → −1. */
 export function endSign(end: PlayerId): 1 | -1 {
@@ -65,6 +69,19 @@ export function serveTargets(receiver: PlayerId, side: Side, variant: 'T' | 'wid
 export function rallyTargets(dest: PlayerId, m: 1 | -1): Vec2[] {
   const s = endSign(dest);
   return [RALLY_EASY, RALLY_MEDIUM, RALLY_HARD].map(({ a, b }) => halfPoint(s, s, m * a, b));
+}
+
+/** The insane serve target in `receiver`'s box for `side`: the corner on medium's half (power-meter spec §4.3). */
+export function insaneServeTarget(receiver: PlayerId, side: Side, variant: 'T' | 'wide'): Vec2 {
+  const s = endSign(receiver);
+  const { a, b } = SERVE_INSANE[variant];
+  return halfPoint(s, s * sideSign(side), a, b);
+}
+
+/** The insane rally target on `dest`'s half: the deep corner on medium's side `m` (power-meter spec §4.3). */
+export function insaneRallyTarget(dest: PlayerId, m: 1 | -1): Vec2 {
+  const s = endSign(dest);
+  return halfPoint(s, s, m * RALLY_INSANE.a, RALLY_INSANE.b);
 }
 
 /** True if `p` lies in `dest`'s singles half, lines included. */
