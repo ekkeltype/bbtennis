@@ -30,8 +30,9 @@ Success criteria:
 
 ### 1.2 Assumptions (ours, not in design.txt)
 - Exactly one player types at any moment; turns alternate.
-- The three offered words start with **different letters that are not adjacent on US QWERTY**; the
-  first matching keystroke **locks** that option.
+- The three offered words (four with the insane word at a full power meter) start with **different
+  letters that are not adjacent on US QWERTY**; the first matching keystroke **locks** that option.
+  (amended: power-meter spec 2026-09-27)
 - Only letters a–z are game keys; everything else is ignored without penalty (Space tosses in
   PRE_SERVE). Input is case-insensitive.
 - Players never change ends. Each client renders its own player at the bottom (near side).
@@ -41,11 +42,15 @@ Success criteria:
 ## 2. Glossary
 - **Striker / receiver**: player hitting the current shot / player the ball travels to.
 - **Prompt**: words shown to the active typist, with a monotonically increasing `promptId`.
-  **Single prompt** = 1 word (chase word). **Choice prompt** = 3 words (easy/medium/hard).
+  **Single prompt** = 1 word (chase word). **Choice prompt** = 3 words (easy/medium/hard), plus a
+  4th, insane, word while the owner's power meter is full (amended: power-meter spec 2026-09-27).
 - **Lock**: typing the first letter of one option of a choice prompt.
 - **Slip**: a maximal run of consecutive wrong keys (one blocked cursor event).
 - **Pace**: global time multiplier (§3.9). **cps**: chars/s; WPM = cps × 12.
-- **Tier / d**: easy, medium, hard.
+- **Tier / d**: easy, medium, hard, insane (amended: power-meter spec 2026-09-27).
+- **Power meter**: per player, 0–4. Each serve or choice word struck with no wrong key adds 1; any
+  wrong key, or a lost point, empties it; at 4 the insane word is offered. Always 0 and hidden in
+  Training (power-meter spec 2026-09-27 §4).
 
 ## 3. Gameplay
 
@@ -96,7 +101,9 @@ Keys from a player who is not the active typist are always dropped: never errors
    the serve words and markers are visible only to a local human server** (§4.2 describes what the
    opponent sees). Attract mode shows everything.
 3. Toss timeline: `a = 1.93 s × pace` (apex; tuned by the balance simulation), tooLow = `2a`. Ball height
-   `z(t) = 1.8 + 1.4·(1 − ((t − a)/a)²)`.
+   `z(t) = 1.8 + 1.4·(1 − ((t − a)/a)²)`. A serve turn whose server's power meter is full when it is
+   created uses `a = 1.93 s × 1.2 × pace` (the power toss, so the 12–15-letter insane word can fit),
+   carried in the turn's start data (amended: power-meter spec 2026-09-27).
 4. Outcomes:
    - Word completed at `t ≤ 2a` → strike at t. **Contact factor** = 1.0 if `t ≤ a`, falling
      linearly to 0.85 at `2a`. The serve's launch height z0 = z(t).
@@ -114,6 +121,9 @@ Keys from a player who is not the active typist are always dropped: never errors
    - hard: T `(0.40, 6.00)` or wide `(3.715, 6.00)`, 50/50
    - medium: on the opposite half of the box from hard: `(3.115, 5.40)` if hard is T,
      `(1.00, 5.40)` if hard is wide.
+   - insane (full power meter only): the corner of medium's half, 0.15 m inside the lines:
+     `(3.965, 6.25)` if hard is T, `(0.15, 6.25)` if hard is wide (amended: power-meter spec
+     2026-09-27).
    World mapping for receiver sign `s_r` and side σ: `x = s_r·σ·a`, `y = −s_r·b`.
 
 ### 3.3 Return turn (τ = 0 when the ball leaves the striker's racket)
@@ -123,13 +133,17 @@ Keys from a player who is not the active typist are always dropped: never errors
 2. Typing the chase word moves the receiver: `feetTarget = lerp(start, inPosition,
    easeOutQuad(correctKeys/len))`; the sprite moves toward it at up to 7 m/s (§3.4 geometry).
 3. When the chase word completes, the **CHOICE** prompt appears (its words and targets were
-   pre-picked with the return turn's start data): three words on the **opponent's half**, visible to both players with live
+   pre-picked with the return turn's start data): three words (a fourth, insane, one while the
+   receiver's power meter is still full: pre-picked at a full meter, dropped if a wrong key in the
+   chase emptied it) on the **opponent's half**, visible to both players with live
    typing progress (§4.2 layout). Targets are on the destination half, with `a` = lateral offset
    positive toward the destination player's right and `b` = distance from the net; world
    `x = s_dest·a`, `y = −s_dest·b`; `m = ±1` random:
    - easy `(0, 8.885)` (3.0 m inside the baseline)
    - medium `(m·2.865, 9.385)` (1.25 m inside the sideline, 2.5 m inside the baseline)
    - hard `(−m·3.615, 11.385)` (0.5 m inside the sideline and the baseline; opposite side to medium)
+   - insane `(m·3.965, 11.735)` (0.15 m inside the sideline and the baseline, medium's side; amended:
+     power-meter spec 2026-09-27)
 4. The ball reaches the receiver's contact point at `τ = T` (§3.4).
    - Both words completed before `T` → **QUEUED**: the shot is resolved immediately (§3.5); the
      strike (and the end of the turn) happens at `τ = T` when the ball arrives (no volleys, no
@@ -147,26 +161,29 @@ Keys from a player who is not the active typist are always dropped: never errors
 Pace multiplies exactly: toss apex/tooLow, T and grace. It does **not** scale the serve clock,
 CPU toss delay, reaction/key intervals, call/banner durations, lag compensation, v or km/h.
 
-- **Typing speed** for a completed word of n letters (n ≥ 3):
+- **Typing speed** for a completed word of n letters (n ≥ 2; amended: power-meter spec 2026-09-27):
   `cps = (n − 1) / max(0.05 s, tLast − tFirst)`, tFirst = first correct key (the lock key for a
   choice), tLast = final correct key; wrong-key/correction time inside the word is included.
 - **Speed factor** `v = clamp(0.875 + 0.025·(cps − 3), 0.80, 1.30)` (tuned by the balance
   simulation; a playtest knob), clamped once; then serves ×
   contact factor, stretch shots × 0.9 (no re-clamp).
 - **Flight to contact**:
-  `T = pace × (2.2 s + 0.10 s × len(chaseWord)) / v × place[d] × 0.85^⌊n/2⌋`
+  `T = pace × (2.2 s + 0.10 s × len(chaseWord)) / v × place[d] × P(n)`
   plus `(0.25 s + 0.75 s × pace)` when the chased shot is a serve (reading allowance: the receiver
   has never seen a serve word).
-  - `place` = easy 1.00, medium 0.85, hard 0.70 for rally shots; 1.00 for all serve tiers.
+  - **Rally pressure** `P(n) = max(0.65, 0.93^⌊n/2⌋)` (was `0.85^⌊n/2⌋` with no floor; amended:
+    power-meter spec 2026-09-27), computed by repeated multiplication.
+  - `place` = easy 1.00, medium 0.85, hard 0.70, insane 0.55 for rally shots; 1.00 for easy, medium
+    and hard serves, 0.75 for an insane serve (amended: power-meter spec 2026-09-27).
   - `n` = number of rally strikes after the serve before the chased one (return of serve n = 0,
     server's first chase n = 1, then 2, 3 …), so both players face the same pressure at each
     exchange depth.
 - **Grace** = `0.4 s × pace`.
-- **Displayed speed** (flavour): `km/h = round(95 × v × {1.00, 1.05, 1.10}[d] / 0.85^⌊n/2⌋)`,
-  × 1.25 for serves.
+- **Displayed speed** (flavour): `km/h = round(95 × v × {1.00, 1.05, 1.10, 1.20}[d] / P(n))`,
+  × 1.25 for serves (amended: power-meter spec 2026-09-27).
 - **Ball path** (analytic; renderers evaluate it, never integrate):
   - Pre-bounce: horizontal linear from strike point P0 to landing L over `0.6T`;
-    `z(u) = z0·(1 − u) + 4h·u·(1 − u)`, `u = t/(0.6T)`, h = 2.0/1.7/1.4 m for easy/medium/hard
+    `z(u) = z0·(1 − u) + 4h·u·(1 − u)`, `u = t/(0.6T)`, h = 2.0/1.7/1.4/1.2 m for easy/medium/hard/insane
     rally shots and 0.9 m for serves, raised if needed so z ≥ 1.3 m at the net plane for non-NET
     shots. Rally z0 = 1.0 m.
   - Post-bounce: continues in the same horizontal direction for 3.0 m over `0.4T`,
@@ -185,15 +202,17 @@ CPU toss delay, reaction/key intervals, call/banner durations, lag compensation,
 Inputs: tier d, slips e (on the **shot** word only, capped at 3; chase-word slips only cost time),
 stretch flag. Draw order from the match RNG:
 1. `pNet = min(0.9, netRate[d] × e + (stretch ? 0.05 : 0))`, netRate = easy 0.01, medium 0.03,
-   hard 0.06. Draw r_net; if `r_net < pNet` → NET.
+   hard 0.06, insane 0.10. Draw r_net; if `r_net < pNet` → NET.
 2. Otherwise draw zx then zy, each `z = (u1 + u2 + u3 + u4 − 2) × √3` (unit variance,
    |z| ≤ 3.46). Landing = target + σ·(zx, zy) with
    `σ = σ0[d] + σe[d] × e + (stretch ? 0.5 : 0)`,
-   σ0 = easy 0.10, medium 0.12, hard 0.10 m; σe = easy 0.25, medium 0.35, hard 0.50 m.
+   σ0 = easy 0.10, medium 0.12, hard 0.10, insane 0.04 m; σe = easy 0.25, medium 0.35, hard 0.50,
+   insane 0.80 m (insane values: power-meter spec 2026-09-27).
 3. OUT if the landing point is outside the singles court (outside the target service box for
    serves). Lines are in.
 - Guarantee (unit-tested): with e = 0 and no stretch, no shot of any tier is ever out or net.
-- Expected (tested): hard rally shot with e = 1 fails (out+net) 35–55 %; medium with e = 1 ≤ 5 %.
+- Expected (tested): hard rally shot with e = 1 fails (out+net) 35–55 %; medium with e = 1 ≤ 5 %;
+  insane with e = 1 fails 60–85 % (amended: power-meter spec 2026-09-27).
 
 ### 3.6 Scoring
 Real scoring: 0/15/30/40, deuce/advantage or **golden point** (option; golden point is served from
@@ -250,15 +269,19 @@ Relaxed ×1.5 (~30 WPM), **Normal ×1.0** (~50 WPM, default), Fast ×0.75 (~70 W
 Lightning ×0.6 (~90 WPM).
 
 ### 3.10 Words
-- Lowercase a–z only. Tiers by length: easy 3–5, medium 6–9, hard 10–14.
+- Lowercase a–z only. Tiers by length: easy 2–4, medium 5–7, hard 8–11, insane 12–15 (amended:
+  power-meter spec 2026-09-27; was easy 3–5, medium 6–9, hard 10–14). Each pack is one word pool,
+  split into tiers by length.
 - Packs (selectable in Options, vs-CPU setup and the host lobby): **Everyday** (default; common
   English words), **Sports** (vocabulary from many sports), **Dojo** (martial arts), **Mixed**
-  (union). Each pack ≥ 120 easy, ≥ 120 medium, ≥ 80 hard words; no duplicates; no offensive words.
+  (union). Each pack ≥ 120 easy, ≥ 120 medium, ≥ 80 hard, ≥ 60 insane words; no duplicates; no
+  offensive words.
 - **No misleading words**: no pack contains a word that names a shot, stroke, spin, shot outcome or
   direction (e.g. forehand, backhand, lob, volley, smash, slice, topspin, dropshot, crosscourt, ace,
   left, right, wide, short, deep, long, high, low, middle, corner, line), because a word must never
   contradict where the ball actually goes. A shared blocklist enforces this in tests.
-- Picker: one word per tier from the seeded match RNG; pairwise-distinct initials that are not
+- Picker: one word per tier (insane included at a full power meter) from the seeded match RNG;
+  pairwise-distinct initials that are not
   adjacent on US QWERTY (no shared edge or diagonal); none of the last 20 **offered** words (every
   word ever shown or pre-picked, including unchosen options and dropped tosses); a re-toss never
   repeats any of the previous toss's three words.
@@ -333,10 +356,15 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
 
 ### 4.2 Word plates and turn signalling
 - **Tier colours** (Okabe–Ito, snapped to palette): easy sky `#56B4E9`, medium yellow `#F0E442`,
-  hard vermillion `#D55E00`. Tier is never shown by colour alone: plates carry 1/2/3 pips (2×2 px)
-  at the left edge; ground rings are shaped (circle / diamond / 4-point star). Every court-space UI
-  mark has a 1 px near-black outline; plates get a 1 px dark stroke outside the tier outline.
-- **Plate**: dark fill; width `6n + 11` px (incl. pips), height 16; max 95 px.
+  hard vermillion `#D55E00`, insane reddish purple `#CC79A7` (typed shade `#B06FA0`, the re-tinted
+  crowd purple). Tier is never shown by colour alone: plates carry 1/2/3 pips (2×2 px) at the left
+  edge, or 4 bars (2×1 px) for insane; ground rings are shaped (circle / diamond / 4-point star /
+  8-point burst for insane). The insane colour clears CIEDE2000 ≥ 20 from every other tier in
+  normal vision but only ≥ 12 under colour-vision deficiency, which only near-white or grey could
+  beat (and they would vanish on the court lines). Every court-space UI mark has a 1 px near-black
+  outline; plates get a 1 px dark stroke outside the tier outline. (Insane: amended: power-meter
+  spec 2026-09-27.)
+- **Plate**: dark fill; width `6n + 11` px (incl. pips), height 16; max 101 px (15 letters; was 95).
   Remaining letters near-white (≥ 12:1 vs fill); typed letters in the tier's **typed shade** (a
   muted/darker shade of the tier colour, ≥ 4.5:1 vs fill and clearly darker than the remaining
   letters: luminance ratio remaining/typed ≥ 1.8); next
@@ -346,17 +374,19 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
 - **Layout**:
   - Choice plates use three fixed slots in the band of the targeted half, slot centres
     x = 90 / 240 / 390; easy always in the centre slot, medium and hard in the left/right slot on
-    their target's side. Each plate joins its ground ring with a 1 px tier-coloured leader
-    (1 px dark outline).
+    their target's side. With the insane option (4 plates) the slot centres are x = 60 / 180 / 300 /
+    420, handed out in the order of the targets' screen x, so insane is outermost on medium's side
+    (amended: power-meter spec 2026-09-27). Each plate joins its ground ring with a 1 px
+    tier-coloured leader (1 px dark outline).
   - Serve plates never cover the toss column (the ball rises above the server's head): near server →
-    vertical stack (easy, medium, hard top to bottom, 3 px gaps) beside the head on the side toward
+    vertical stack (easy, medium, hard[, insane] top to bottom, 3 px gaps) beside the head on the side toward
     the screen centre; far server → horizontal row in the far band centred on the server's x with a
     ≥ 12 px gap over the server, clamped to x 4–476.
   - Chase plates appear 4 px above the owner's head where it stood when the turn began (they don't follow).
   - **Large words** option: 2× applies only to single prompts and to a locked word (redrawn at 2× in
     place, clamped to x 4–476). Unlocked options stay 1×.
-  - Unit test: for all word lengths 3–14 and both target sides, no two plates intersect and every
-    plate lies within x 4–476, y 22–266.
+  - Unit test: for every word length of each tier's band (2–15), 3 and 4 options and both target
+    sides, no two plates intersect and every plate lies within x 4–476, y 22–266.
 - **Timing bar**: 2 px, white, under the slot row until lock then under the locked plate; shows the
   remaining time to tooLow / contact; switches to a 2 px checker pattern in the grace window.
 - **Feedback**: red is never used for feedback. Wrong key: plate fill flashes light grey for 80 ms,
@@ -375,12 +405,18 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
 TV-style scoreboard (top-left, x 2–150): names, belt colour, sets, games, points, serve dot. Serve
 clock top-centre during serves. Shot speed / last-word WPM (option) on the right. Call banners:
 FAULT, DOUBLE FAULT, OUT, NET, ACE!, WINNER, DEUCE, ADVANTAGE, GAME, SET, MATCH POINT, etc.
-On-screen pause icon (clickable).
+On-screen pause icon (clickable). **Power meters** (amended: power-meter spec 2026-09-27): four 3×5
+segments right of each scoreboard row (x ≤ 170), lit in the insane colour, pulsing every 400 ms at
+a full meter (steady with Reduce effects), hidden in Training; the turn owner's meter follows its
+typing live, so a wrong key empties it on screen at once. An insane shot leaves a short purple
+trail (off with Reduce effects).
 
 ### 4.4 Audio (WebAudio, synthesized; no files)
 Racket hit, bounce (surface-dependent), net cord, key click, error buzz, lock tick, word-complete
 chime, "your turn" tick, crowd murmur loop + applause / "ooh" swells, procedural chiptune title
-theme. Volumes: master / music / sfx. The AudioContext is created/resumed on the start-gate click.
+theme. Power meter (amended: power-meter spec 2026-09-27): a rising 3-note cue when a meter fills,
+a soft falling sweep when a full one empties (the opponent's quieter); an insane strike plays the
+hard hit and the crowd "ooh". Volumes: master / music / sfx. The AudioContext is created/resumed on the start-gate click.
 **Umpire voice** via `speechSynthesis` (toggle): choose a voice after `voiceschanged`, preferring
 `lang` en* with `localService === true` (none → option disabled); `cancel()` before every
 `speak()`; drop calls whose event is > 800 ms old; speak words, not digits ("Fifteen love",
@@ -563,7 +599,9 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
     `forfeit`; `leave`.
   - `proto` is an integer checked in hello/welcome only; bumped on any change to protocol,
     PublicState, TurnRunner or key classification. Mismatch text: "Versions differ (host vA,
-    you vB) — reload with Ctrl+Shift+R".
+    you vB) — reload with Ctrl+Shift+R". It is **2** since the power meter (PublicState `v: 2`
+    carries `power: [number, number]`, each clamped to 0–4 on receipt; the guest's scoreboard
+    snapshot per displayed turn includes it; amended: power-meter spec 2026-09-27).
 - **Secrecy**: `redact` sends serve words (and the spare set) and a turn's pre-drawn randomness only
   to that turn's owner; choice words are public. Stale inputs (turn ≠ current turn) are dropped
   silently.
@@ -599,10 +637,13 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
   JSON round-trip of state and PublicState, plate layout, palette contrast/CVD checks.
 - **Balance simulation** (≥ 5,000 points per cell; human model: interval 12/WPM ± 35 %, 12 %
   per-word variation, error rate 7 % @ 25 → 1.5 % @ 120 WPM, reaction 0.9 → 0.4 s, chase reaction
-  0.25 s, "hardest option that fits" policy). For each preset at its reference WPM (Relaxed 30,
-  Normal 50, Fast 70, Lightning 90), equal players: median rally 3–6 shots, p90 ≤ 12, no point > 40
-  shots; aces ≤ 15 % (between equal players aces are rare by design; a ≥ 5 % floor proved
-  unreachable under the rules); double faults 1–6 %; server wins 55–65 %; ≤ 35 s per point. Always-easy,
+  0.25 s, "hardest option that fits" policy, insane included). For each preset at its reference WPM
+  (Relaxed 30, Normal 50, Fast 70, Lightning 90), equal players: median rally Relaxed 10–14,
+  Normal 7–11, Fast 4–7, Lightning 3–5 shots, p90 ≤ 22, no point > 60 shots; aces ≤ 15 % (between
+  equal players aces are rare by design; a ≥ 5 % floor proved unreachable under the rules); double
+  faults 1–8 %; server wins 55–65 %; ≤ 65 s per point; the equal opponent returns 15–40 % of clean
+  insane shots; never-insane wins 40–51 % vs adaptive (amended: power-meter spec 2026-09-27 §7, the
+  measured result accepted by the user; was median 3–6, p90 ≤ 12, max 40, DF 1–6 %, ≤ 35 s). Always-easy,
   always-hard and never-hard each win ≤ 53 % of points vs adaptive. CPU aggression 0.8 vs 0.2 at
   equal speed wins ≥ 50 %. At Normal: CPU levels ≥ 2 apart — higher wins ≥ 90 % of short sets;
   adjacent — higher wins ≥ 65 %. Constants in `tuning.ts` may be retuned to meet these; the spec's

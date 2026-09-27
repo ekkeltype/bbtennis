@@ -14,7 +14,8 @@ Three playtest changes:
    meter empties as soon as the player mistypes or loses a point.
 
 Success criteria:
-- Equal players get longer rallies: median 5–8 shots, p90 ≤ 16 (was 3–6 and ≤ 12).
+- Equal players get longer rallies: aimed at median 5–8 shots, p90 ≤ 16 (was 3–6 and ≤ 12); the
+  accepted result is Normal 9 / 13, with per-pace targets in §7.
 - Tiers by length are easy 2–4, medium 5–7, hard 8–11 and insane 12–15 letters.
 - A flawless insane shot is a near-winner, and a sloppy one is very likely an error.
 - Insane helps a player without dominating the game (§7 targets).
@@ -29,7 +30,7 @@ Success criteria:
 | Meter fill | **+1 per flawless serve or choice word** (zero wrong keys), max **4**. Chase words never fill it. |
 | Meter drop | **Empties to 0** on any wrong key, chase words included, and on any point lost. |
 | Insane use | Available on every serve or choice prompt that appears while the meter is full. Hitting the insane word does **not** use up the meter. |
-| Rally length | Median 5–8 shots, p90 ≤ 16, via a gentler pressure factor with a floor. |
+| Rally length | Median 5–8 shots, p90 ≤ 16, via a gentler pressure factor with a floor. Later accepted as measured (§7). |
 
 ## 2. Rally pacing (amends main spec §3.4, §6)
 
@@ -236,15 +237,25 @@ policy (insane included):
 
 | Target | Value |
 |---|---|
-| Median rally | 5–8 shots |
-| p90 rally | ≤ 16 shots |
+| Median rally | Relaxed 10–14, Normal 7–11, Fast 4–7, Lightning 3–5 shots |
+| p90 rally | ≤ 22 shots |
 | Longest point | ≤ 60 shots |
-| Median time per point | ≤ 50 s |
+| Median time per point | ≤ 65 s |
 | Aces | ≤ 15 % |
-| Double faults | 1–6 % |
+| Double faults | 1–8 % |
 | Server wins | 55–65 % |
 | Clean insane shots returned by the equal opponent | 15–40 % (over ≥ 200 clean insane shots per preset; run more points if needed) |
-| Never-insane policy vs adaptive | wins 40–50 % of points |
+| Never-insane policy vs adaptive | wins 40–51 % of points |
+
+**Accepted result (2026-09-27).** The first targets (median rally 5–8 at every pace, p90 ≤ 16,
+≤ 50 s per point, double faults 1–6 %, never-insane 40–50 %) could not all be met with the
+available knobs: the gentler pressure lengthened Relaxed and Normal rallies (medians 12 and 9),
+while Lightning's points are mostly decided at the serve return, before pressure starts (median 3,
+as before the change). Told this, the user accepted the measured result ("the majority of games
+will be played on Normal"), and the targets above guard it. Measured values: Relaxed 12 / 19 /
+58.8 s / DF 5.6 %, Normal 9 / 13 / 32.1 s / 6.0 %, Fast 5 / 10 / 18.6 s / 6.9 %, Lightning 3 / 8 /
+13.1 s / 7.4 % (median / p90 / s per point / double faults); clean insane returns 33.2 / 24.6 / 18.4 /
+15.6 %; never-insane wins 50.0 / 48.8 / 48.8 / 48.5 %. Full tables: `tests/sim/balance.test.ts`.
 
 These are unchanged: always-easy, always-hard and never-hard each win ≤ 53 % against adaptive; CPU
 aggression 0.8 vs 0.2 at equal speed wins ≥ 50 %; at Normal, CPU levels ≥ 2 apart ⇒ the higher
