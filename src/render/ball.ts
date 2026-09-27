@@ -1,7 +1,7 @@
 import { ballAt, tossZ } from '../core/trajectory';
 import { turnViewAt, type TurnView } from '../core/turnView';
 import type { BallFlight, PlayerId, ServeTurnData, TurnState, Vec3 } from '../core/types';
-import { OUTLINE, PAL } from './palette';
+import { OUTLINE, PAL, TIER_COLOR } from './palette';
 import type { PlayerPose } from './players';
 import { project, scaleAt, viewerEnd } from './projection';
 import { CELL, frameIndex } from './sprites/animations';
@@ -15,6 +15,9 @@ export const BALL_FADE_MS = 300;
 /** Motion trail: positions this many ms apart behind the ball. */
 const TRAIL_STEP_MS = 16;
 const TRAIL_SAMPLES = 2;
+/** The insane trail: more samples, drawn in the insane colour at falling opacity (power-meter spec §6). */
+const HOT_TRAIL_SAMPLES = 4;
+const HOT_TRAIL_ALPHA = [0.7, 0.5, 0.3, 0.15];
 /** Screen distance (px) beyond which a trail sample is drawn: the trail only shows on fast balls. */
 const TRAIL_MIN_PX = 2.5;
 
@@ -24,17 +27,18 @@ const TRAIL_MIN_PX = 2.5;
  */
 export type BallView =
   | { kind: 'held'; player: PlayerId }
-  | { kind: 'air'; pos: Vec3; alpha: number; trail: Vec3[] };
+  | { kind: 'air'; pos: Vec3; alpha: number; trail: Vec3[]; hot: boolean };
 
 const held = (player: PlayerId): BallView => ({ kind: 'held', player });
 
 const capped = (p: Vec3): Vec3 => (p.z > BALL_MAX_Z ? { x: p.x, y: p.y, z: BALL_MAX_Z } : p);
 
-/** The ball `t` ms along `flight` (height capped), with its trail. */
-function inFlight(flight: BallFlight, t: number, alpha: number): BallView {
+/** The ball `t` ms along `flight` (height capped), with its trail: 4 hot samples for an insane shot, else 2. */
+export function flightBall(flight: BallFlight, t: number, alpha: number): BallView {
+  const hot = flight.tier === 'insane';
   const trail: Vec3[] = [];
-  for (let i = 1; i <= TRAIL_SAMPLES; i++) trail.push(capped(ballAt(flight, t - i * TRAIL_STEP_MS)));
-  return { kind: 'air', pos: capped(ballAt(flight, t)), alpha, trail };
+  for (let i = 1; i <= (hot ? HOT_TRAIL_SAMPLES : TRAIL_SAMPLES); i++) trail.push(capped(ballAt(flight, t - i * TRAIL_STEP_MS)));
+  return { kind: 'air', pos: capped(ballAt(flight, t)), alpha, trail, hot };
 }
 
 /** Opacity `sinceEnd` ms after a call, pass or drop; null once faded out. */
@@ -64,7 +68,7 @@ function tossBall(
   const rot = viewerEnd(viewer) === 0 ? 1 : -1;
   const dx = (rot * tossHandDx(pose, 0)) / scaleAt(pose.feet.y, viewer);
   const z = Math.min(BALL_MAX_Z, tossZ(since, d.tossApexMs * d.pace));
-  return { kind: 'air', pos: { x: pose.feet.x + dx, y: pose.feet.y, z }, alpha, trail: [] };
+  return { kind: 'air', pos: { x: pose.feet.x + dx, y: pose.feet.y, z }, alpha, trail: [], hot: false };
 }
 
 /** The previous turn's ball carried on past its end and fading out (serve lead-ins, match end). */
@@ -75,7 +79,7 @@ function lastBall(f: WorldFrame, poses: readonly [PlayerPose, PlayerPose]): Ball
   const alpha = fading(last.view.τ - o.endτ);
   if (alpha === null) return null;
   const d = last.turn.data;
-  if (d.kind === 'return') return inFlight(d.incoming, last.view.simτ, alpha);
+  if (d.kind === 'return') return flightBall(d.incoming, last.view.simτ, alpha);
   if (o.kind === 'fault' && o.reason === 'ballDropped') return tossBall(d, last.turn, last.view, poses[d.owner], f, alpha);
   return null;
 }
@@ -91,11 +95,11 @@ function lastBall(f: WorldFrame, poses: readonly [PlayerPose, PlayerPose]): Ball
 export function ballView(f: WorldFrame, poses: readonly [PlayerPose, PlayerPose]): BallView | null {
   const { turn, view } = f;
   if (!turn || !view) return lastBall(f, poses);
-  if (view.strike) return inFlight(view.strike.flight, f.τ - view.strike.τ, 1);
+  if (view.strike) return flightBall(view.strike.flight, f.τ - view.strike.τ, 1);
   const d = turn.data;
   if (d.kind === 'return') {
     const alpha = view.outcome ? fading(f.τ - view.outcome.endτ) : 1;
-    return alpha === null ? null : inFlight(d.incoming, view.simτ, alpha);
+    return alpha === null ? null : flightBall(d.incoming, view.simτ, alpha);
   }
   switch (view.phase) {
     case 'leadIn': {
@@ -132,24 +136,27 @@ function ballScreen(ball: BallView, viewer: PlayerId | 'spectator', poses: reado
   return { x: Math.round(feet.x) - CELL.anchorX + hx + 0.5, y: Math.round(feet.y) - CELL.anchorY + hand.y - 1.5 };
 }
 
-/** Draws the ball with its motion trail when fast (spec §4.1), at the ball's opacity. */
+/** Draws the ball with its motion trail when fast, or a purple trail for an insane shot when `hotTrail` (Reduce effects off). */
 export function drawBall(
   ctx: CanvasRenderingContext2D,
   ball: BallView,
   viewer: PlayerId | 'spectator',
   poses: readonly [PlayerPose, PlayerPose],
+  hotTrail = false,
 ): void {
   const at = ballScreen(ball, viewer, poses);
   const cx = Math.round(at.x);
   const cy = Math.round(at.y);
   ctx.save();
   if (ball.kind === 'air') {
+    const hot = ball.hot && hotTrail;
     ball.trail.forEach((p, i) => {
       const s = project(p, viewer);
-      if (Math.hypot(s.x - at.x, s.y - at.y) < TRAIL_MIN_PX * (i + 1)) return;
-      ctx.globalAlpha = ball.alpha * (i === 0 ? 0.5 : 0.25);
-      ctx.fillStyle = i === 0 ? PAL.ball : PAL.ballShade;
-      ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, 3 - i, 3 - i);
+      if (!hot && Math.hypot(s.x - at.x, s.y - at.y) < TRAIL_MIN_PX * (i + 1)) return;
+      ctx.globalAlpha = ball.alpha * (hot ? (HOT_TRAIL_ALPHA[i] ?? 0.15) : i === 0 ? 0.5 : 0.25);
+      ctx.fillStyle = hot ? TIER_COLOR.insane : i === 0 ? PAL.ball : PAL.ballShade;
+      const size = hot ? 3 : 3 - i;
+      ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, size, size);
     });
     ctx.globalAlpha = ball.alpha;
   }

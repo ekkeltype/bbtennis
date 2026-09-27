@@ -4,7 +4,7 @@ import type { DirectorContext } from '../../src/audio/director';
 import type { AudioEngine, PlayOptions, SfxName } from '../../src/audio/engine';
 import type { Umpire } from '../../src/audio/speech';
 import { umpireCall } from '../../src/core/scoring';
-import type { GameEvent, PlayerId, PublicState, Surface } from '../../src/core/types';
+import type { GameEvent, PlayerId, PublicState, Surface, Tier } from '../../src/core/types';
 
 vi.mock('../../src/core/scoring', () => ({
   umpireCall: vi.fn((_score: unknown, names: [string, string], winner: PlayerId) => `SCORE ${names[winner]}`),
@@ -71,7 +71,7 @@ beforeEach(() => {
   vi.mocked(umpireCall).mockClear();
 });
 
-const strike = (tier: 'easy' | 'medium' | 'hard'): EventBody => ({
+const strike = (tier: Tier): EventBody => ({
   type: 'strike',
   player: 1,
   word: 'ball',
@@ -273,6 +273,25 @@ describe('AudioDirector umpire', () => {
     const olderTurn = context({ state: stateAt({ τ: 150, last: { turnId: 6, τ: 4200 } }) });
     director.onEvents([ev({ type: 'call', call: 'out', player: 0 }, 4000, 5)], olderTurn);
     expect(umpire.said.map((s) => s.age)).toEqual([300, 350, Number.POSITIVE_INFINITY]);
+  });
+});
+
+describe('AudioDirector power meter and insane sounds (power-meter spec §6)', () => {
+  const power = (player: PlayerId, from: number, to: number): EventBody => ({ type: 'power', player, from, to });
+
+  it('an insane strike hits hard and draws the crowd\'s "ooh"', () => {
+    director.onEvents([ev(strike('insane'))], context());
+    expect(engine.names()).toEqual(['hitHard', 'ooh']);
+  });
+
+  it('plays powerUp when a meter fills and powerDown when a full one empties; other changes are silent', () => {
+    director.onEvents([ev(power(0, 3, 4)), ev(power(0, 4, 0)), ev(power(0, 2, 0)), ev(power(0, 1, 2))], context());
+    expect(engine.names()).toEqual(['powerUp', 'powerDown']);
+  });
+
+  it('plays the opponent\'s meter cues quieter', () => {
+    director.onEvents([ev(power(1, 3, 4))], context({ viewer: 0 }));
+    expect(engine.plays).toEqual([{ name: 'powerUp', opts: { gain: 0.6 } }]);
   });
 });
 

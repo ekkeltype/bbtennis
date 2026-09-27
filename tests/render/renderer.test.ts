@@ -154,7 +154,7 @@ describe('drawWorld', () => {
     const sheets: [SpriteSheet, SpriteSheet] = [sheet(), sheet()];
     const pose = (p: PlayerId): PlayerPose => ({ feet: feet[p], anim: 'idle', frame: 0, view: p === 0 ? 'near' : 'far', flip: false });
     const { ctx, ops } = opLog();
-    drawWorld(ctx, f, { poses: [pose(0), pose(1)], ball: null, rings, leaders, sheets, effects: new Effects(), clockMs: 0 });
+    drawWorld(ctx, f, { poses: [pose(0), pose(1)], ball: null, rings, leaders, sheets, effects: new Effects(), clockMs: 0, hotTrail: true });
     return { ops, sheets };
   }
 

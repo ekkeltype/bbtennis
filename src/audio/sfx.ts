@@ -14,7 +14,9 @@ export type SfxName =
   | 'yourTurn'
   | 'applause'
   | 'ooh'
-  | 'coin';
+  | 'coin'
+  | 'powerUp'
+  | 'powerDown';
 
 /** All SfxName values, in declaration order. */
 export const SFX_NAMES: readonly SfxName[] = [
@@ -30,6 +32,8 @@ export const SFX_NAMES: readonly SfxName[] = [
   'applause',
   'ooh',
   'coin',
+  'powerUp',
+  'powerDown',
 ];
 
 /** Resolved options for one voice: output gain 0..1, stereo pan −1..1, court surface, cosmetic randomness. */
@@ -219,6 +223,19 @@ function coin(ctx: BaseAudioContext, out: AudioNode, t: number): void {
   for (const [hz, peak, decay] of partials) tone(ctx, envelope(ctx, out, t, peak, 0.002, decay), 'sine', t, decay + 0.01, hz);
 }
 
+/** Power meter full: a rising three-note arpeggio (C6, E6, G6), 70 ms apart. */
+function powerUp(ctx: BaseAudioContext, out: AudioNode, t: number): void {
+  [1047, 1319, 1568].forEach((hz, i) => {
+    const at = t + i * 0.07;
+    tone(ctx, envelope(ctx, out, at, 0.18, 0.005, 0.18), 'triangle', at, 0.2, hz);
+  });
+}
+
+/** Power meter lost: a soft falling sweep, 600 → 200 Hz over 0.35 s. */
+function powerDown(ctx: BaseAudioContext, out: AudioNode, t: number): void {
+  tone(ctx, envelope(ctx, out, t, 0.12, 0.01, 0.35), 'sine', t, 0.36, 600, 200);
+}
+
 const VOICES: Record<SfxName, Voice> = {
   hit: (ctx, out, t, v) => racket(ctx, out, t, v, false),
   hitHard: (ctx, out, t, v) => racket(ctx, out, t, v, true),
@@ -232,6 +249,8 @@ const VOICES: Record<SfxName, Voice> = {
   applause,
   ooh,
   coin,
+  powerUp,
+  powerDown,
 };
 
 /** Schedules sound `name` at context time `t` into `dest`; works on any BaseAudioContext (e.g. offline). */

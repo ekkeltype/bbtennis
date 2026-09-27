@@ -83,6 +83,7 @@ export interface WorldActors {
   sheets: readonly [SpriteSheet, SpriteSheet];
   effects: Effects;
   clockMs: number;
+  hotTrail: boolean;
 }
 
 /** Screen rows above/below the net line inside which the umpire looks across the court. */
@@ -168,11 +169,11 @@ function drawActors(ctx: CanvasRenderingContext2D, f: WorldFrame, a: WorldActors
     const at = groundAt(f, pose.feet);
     const draw = (): void => {
       drawPlayer(ctx, a.sheets[p], pose.anim, pose.view, pose.frame, at.x, at.y, pose.flip);
-      if (ball?.kind === 'held' && ball.player === p) drawBall(ctx, ball, viewer, a.poses);
+      if (ball?.kind === 'held' && ball.player === p) drawBall(ctx, ball, viewer, a.poses, a.hotTrail);
     };
     items.push({ y: at.y, rank: RANK.player, draw });
   }
-  if (ball?.kind === 'air') items.push({ y: groundAt(f, ball.pos).y, rank: RANK.ball, draw: () => drawBall(ctx, ball, viewer, a.poses) });
+  if (ball?.kind === 'air') items.push({ y: groundAt(f, ball.pos).y, rank: RANK.ball, draw: () => drawBall(ctx, ball, viewer, a.poses, a.hotTrail) });
   items.sort((i, j) => i.y - j.y || i.rank - j.rank);
   for (const item of items) item.draw();
 }

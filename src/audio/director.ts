@@ -1,3 +1,4 @@
+import { POWER_MAX } from '../core/power';
 import { umpireCall } from '../core/scoring';
 import type { KeyResult } from '../core/typing';
 import type { CallKind, GameEvent, PlayerId, PointReason, PublicState, Surface } from '../core/types';
@@ -16,6 +17,8 @@ export interface DirectorContext {
 
 /** Gain of the opponent's keystrokes relative to the local player's own. */
 const REMOTE_KEY_GAIN = 0.35;
+/** Gain of the opponent's power-meter cues relative to the local player's own. */
+const REMOTE_POWER_GAIN = 0.6;
 /** Gain of the applause for the opponent's ace or winner. */
 const POLITE_APPLAUSE_GAIN = 0.5;
 /** Crowd murmur levels: chatter before the first serve, hush for serve and rally, buzz after a point. */
@@ -106,8 +109,15 @@ export class AudioDirector {
           if (ev.player !== ctx.viewer) this.audio.play('key', { gain: REMOTE_KEY_GAIN });
           break;
         case 'strike':
-          this.audio.play(ev.tier === 'hard' ? 'hitHard' : 'hit');
+          this.audio.play(ev.tier === 'hard' || ev.tier === 'insane' ? 'hitHard' : 'hit');
+          if (ev.tier === 'insane') this.audio.play('ooh');
           break;
+        case 'power': {
+          const opts = ctx.viewer === 'spectator' || ev.player === ctx.viewer ? undefined : { gain: REMOTE_POWER_GAIN };
+          if (ev.to >= POWER_MAX && ev.from < POWER_MAX) this.audio.play('powerUp', opts);
+          else if (ev.from >= POWER_MAX && ev.to === 0) this.audio.play('powerDown', opts);
+          break;
+        }
         case 'bounce':
           this.audio.play('bounce', { surface: ctx.surface, pan: panFor(ev.at.x, ctx.viewer) });
           break;

@@ -70,7 +70,7 @@ export class Renderer {
       g.translate(shake.x, shake.y);
     }
     const sheets = this.sheetsFor(looks);
-    drawWorld(g, f, { poses, ball, rings: prompts.rings, leaders: prompts.leaders, sheets, effects: this.effects, clockMs: this.clockMs });
+    drawWorld(g, f, { poses, ball, rings: prompts.rings, leaders: prompts.leaders, sheets, effects: this.effects, clockMs: this.clockMs, hotTrail: !prefs.reduceEffects });
     g.restore();
     drawPrompts(g, prompts);
     this.hud.draw(g, f, prefs, this.clockMs);
