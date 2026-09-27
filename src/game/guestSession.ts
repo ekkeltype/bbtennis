@@ -115,6 +115,8 @@ export class GuestSession implements Session {
   private wantsRematch = false;
   private lastView: ViewModel | null = null;
   private malformedWarned = false;
+  /** Power events the local runner already held, so host frame copies of them are dropped (engine-only power is kept). */
+  private localPower = new Set<string>();
 
   /** Sets up the waiting view; only then takes the host's messages (earlier ones included). */
   constructor(opts: GuestSessionOptions) {
@@ -296,6 +298,9 @@ export class GuestSession implements Session {
   /** Events of the local runner: shown at once; its end is recorded for the desync check and ends the entry. */
   private onOwnEvents(own: OwnTurn, events: GameEvent[]): void {
     this.queue.hold(events);
+    for (const e of events) {
+      if (e.type === 'power') this.localPower.add(powerKey(e));
+    }
     const outcome = own.runner.outcome;
     if (!own.runner.ended || own.outcome !== null || outcome === null) return;
     own.outcome = summary(outcome);
@@ -391,7 +396,10 @@ export class GuestSession implements Session {
 
   /** True for a host event of a guest-owned turn that the guest's runner emitted itself (only engine events are new). */
   private shownLocally(e: GameEvent): boolean {
-    return this.queue.get(e.turn)?.local === true && !isEngineEvent(e);
+    if (this.queue.get(e.turn)?.local !== true) return false;
+    // Runner power was held locally; engine power (emptying a point's loser) was not.
+    if (e.type === 'power') return this.localPower.has(powerKey(e));
+    return !isEngineEvent(e);
   }
 
   /** A new match from the host: everything of the previous one is dropped. */
@@ -401,6 +409,7 @@ export class GuestSession implements Session {
     this.rate = new KeyRate();
     this.lastPushed = 0;
     this.own = null;
+    this.localPower.clear();
     this.life.reset();
     this.final = null;
     this.wantsRematch = false;
@@ -531,7 +540,9 @@ function appendSets(runner: TurnState, host: TurnState): void {
 
 /**
  * Events only the engine emits, between a turn's runner calls: the coin toss, the situation banner,
- * point/game/set/match, and the ACE / WINNER / DOUBLE FAULT calls. A turn's runner emits every other kind.
+ * point/game/set/match, and the ACE / WINNER / DOUBLE FAULT calls. A turn's runner emits every other
+ * kind (including in-turn power changes); emptying a point's loser is engine-only and is kept via
+ * `shownLocally`'s localPower set rather than this list.
  */
 function isEngineEvent(e: GameEvent): boolean {
   switch (e.type) {
@@ -547,6 +558,11 @@ function isEngineEvent(e: GameEvent): boolean {
     default:
       return false;
   }
+}
+
+/** Identity of a power event for dropping the host's copy of one the local runner already held. */
+function powerKey(e: Extract<GameEvent, { type: 'power' }>): string {
+  return `${e.turn}:${e.τ}:${e.player}:${e.from}:${e.to}`;
 }
 
 function copy<T>(v: T): T {

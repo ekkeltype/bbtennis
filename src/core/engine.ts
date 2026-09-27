@@ -1,4 +1,5 @@
-import { rallyTargets, serveTargets } from './court';
+import { insaneRallyTarget, insaneServeTarget, rallyTargets, serveTargets } from './court';
+import { insaneOffered, powerAt } from './power';
 import { drawShotRandoms, seedRng, uniform } from './rng';
 import { awardPoint, createScore, currentServer, serveSide, situation } from './scoring';
 import { appendWordSet, createTurn, startTurn, turnClock, turnInput } from './turn';
@@ -64,8 +65,9 @@ const FAULT_TEXT: Record<FaultReason, string> = {
  * The TurnRunner (`./turn`) runs the current turn; the engine does everything between turns. All of
  * the match lives in `state` (plain JSON data, the RNG included), so `fromState` resumes it exactly.
  *
- * Match-RNG draw order: the coin toss; then per serve turn its two word sets (words, then T/wide)
- * and its randoms; per return turn its choice words, m and its randoms; per catch one spare set.
+ * Match-RNG draw order: the coin toss; then per serve turn its two word sets (3 words, or 4 at a
+ * full meter, then T/wide) and its randoms; per return turn its choice words (3 or 4), m and its
+ * randoms; per catch one spare set.
  */
 export class Engine {
   readonly state: MatchState;
@@ -185,7 +187,7 @@ export class Engine {
     const d = t.data;
     if (d.kind !== 'serve') return;
     const avoid = d.wordSets.slice(caught).flatMap((set) => words(set.options));
-    appendWordSet(t, this.serveSet(d.receiver, d.side, avoid));
+    appendWordSet(t, this.serveSet(d.receiver, d.side, avoid, insaneOffered(d.power)));
   }
 
   /** Books the ended turn (stats, score) and creates the next turn, if the match goes on. */
@@ -197,6 +199,8 @@ export class Engine {
     const discarded = t.data.kind === 'return' && outcome.kind === 'call';
     if (!discarded) addTyping(s.stats[t.data.owner], t);
     this.seenKinds()[t.data.owner] = [...t.seenKinds];
+    const level = powerAt(t, outcome.endτ);
+    if (level !== null) s.power[t.data.owner] = level;
     for (const p of t.prompts) s.nextPromptBase = Math.max(s.nextPromptBase, p.id + 1);
     s.lastTurn = t;
     s.turn = null;
@@ -263,6 +267,12 @@ export class Engine {
     s.pointNo++;
     s.rallyStrikes = 0;
     const events = [at({ type: 'point', winner, reason })];
+    const loser = other(winner);
+    const lost = s.power[loser];
+    if (s.config.training === null && lost > 0) {
+      s.power[loser] = 0;
+      events.push(at({ type: 'power', player: loser, from: lost, to: 0 }));
+    }
     const text = [...faultCall, POINT_TEXT[reason]];
     let ms = (faultCall.length > 0 ? lead.faultMs : 0) + lead.pointMs;
     if (won.game !== null) {
@@ -293,8 +303,10 @@ export class Engine {
     const receiver = other(owner);
     const side = serveSide(score);
     const ids = this.nextIds();
-    const first = this.serveSet(receiver, side, []);
-    const spare = this.serveSet(receiver, side, words(first.options));
+    const power = this.meterFor(owner);
+    const insane = insaneOffered(power);
+    const first = this.serveSet(receiver, side, [], insane);
+    const spare = this.serveSet(receiver, side, words(first.options), insane);
     return this.newTurn({
       kind: 'serve',
       ...ids,
@@ -310,7 +322,7 @@ export class Engine {
       wordSets: [first, spare],
       randoms: drawShotRandoms(this.rng()),
       freezeFirst: this.freezes(owner),
-      power: this.meterFor(owner),
+      power,
     });
   }
 
@@ -319,12 +331,15 @@ export class Engine {
     const { config } = this.state;
     const fixed = config.training?.fixedWords ?? null;
     const ids = this.nextIds();
+    const owner = other(strike.player);
+    const power = this.meterFor(owner);
     const options =
       fixed !== null
         ? pickFixed(this.picker(), fixed.choice, 'choice')
-        : pickSet(this.rng(), this.picker(), config.wordPack, [strike.word.word]);
+        : pickSet(this.rng(), this.picker(), config.wordPack, [strike.word.word], insaneOffered(power));
     const m = uniform(this.rng()) < 0.5 ? 1 : -1;
-    const owner = other(strike.player);
+    const targets = rallyTargets(strike.player, m);
+    if (options.length > TIERS.length) targets.push(insaneRallyTarget(strike.player, m));
     return this.newTurn({
       kind: 'return',
       ...ids,
@@ -334,11 +349,11 @@ export class Engine {
       chase: strike.word,
       isServeReturn: strike.isServe,
       n: strike.isServe ? 0 : returnData(prev).n + 1,
-      choice: { options, targets: rallyTargets(strike.player, m), m },
+      choice: { options, targets, m },
       pace: PACE_MULT[config.pace],
       randoms: drawShotRandoms(this.rng()),
       freezeFirst: this.freezes(owner),
-      power: this.meterFor(owner),
+      power,
     });
   }
 
@@ -354,16 +369,18 @@ export class Engine {
     return config.training !== null ? null : power[owner];
   }
 
-  /** One toss's serve words (none of `avoid`) with their targets in the receiver's box. */
-  private serveSet(receiver: PlayerId, side: Side, avoid: string[]): ServeWordSet {
+  /** One toss's serve words (none of `avoid`) with their targets in the receiver's box; 4 words at a full meter. */
+  private serveSet(receiver: PlayerId, side: Side, avoid: string[], insane: boolean): ServeWordSet {
     const { config } = this.state;
     const fixed = config.training?.fixedWords ?? null;
     const options =
       fixed !== null
         ? pickFixed(this.picker(), fixed.serve, 'serve')
-        : pickSet(this.rng(), this.picker(), config.wordPack, avoid);
+        : pickSet(this.rng(), this.picker(), config.wordPack, avoid, insane);
     const variant = uniform(this.rng()) < 0.5 ? 'T' : 'wide';
-    return { options, targets: serveTargets(receiver, side, variant), variant };
+    const targets = serveTargets(receiver, side, variant);
+    if (options.length > TIERS.length) targets.push(insaneServeTarget(receiver, side, variant));
+    return { options, targets, variant };
   }
 
   /** The new turn's id and prompt base (R26: after every prompt id used so far, and ≥ the last base + 2). */

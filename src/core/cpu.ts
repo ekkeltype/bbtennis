@@ -1,3 +1,4 @@
+import { choiceOptions } from './power';
 import { chance, forkSeed, intBelow, normalIH, seedRng, uniform } from './rng';
 import { CPU_LEVEL_WPM, CPU_MILESTONES } from './tuning';
 import { isComplete } from './typing';
@@ -186,8 +187,11 @@ export class CpuBrain {
     const choiceShownAt = choice?.shownAt ?? chaseKeys[chaseKeys.length - 1]?.τ;
     if (choiceShownAt === undefined) return chaseKeys;
     const choicePlan = this.promptPlan(t, choice?.id ?? d.promptBase + 1, choiceShownAt, () => {
-      const option = this.choose(d.choice.options, d.incoming.T - Math.max(choiceShownAt, t.τ), this.profile.aggression);
-      return this.newPlan(d.choice.options, option, choiceShownAt, this.profile.reactionMs, t.τ);
+      // Prefer the shown prompt's options (insane may have been dropped after a chase slip); else
+      // choiceOptions at the planned show time so a pre-plan does not pick a word that will not appear.
+      const options = choice?.options ?? choiceOptions(t, d, choiceShownAt);
+      const option = this.choose(options, d.incoming.T - Math.max(choiceShownAt, t.τ), this.profile.aggression);
+      return this.newPlan(options, option, choiceShownAt, this.profile.reactionMs, t.τ);
     });
     return [...chaseKeys, ...this.rest(choicePlan, choice, t.τ)];
   }
@@ -230,6 +234,15 @@ export class CpuBrain {
     if (prompt === undefined) return plan.keys;
     if (isComplete(prompt)) return [];
     const used = prompt.correctKeys + prompt.wrongKeys;
+    // Shown options can shrink (insane dropped after a chase slip) while a cached plan still points at
+    // the missing index — re-pick or every key is ignored and the driver loops forever at this τ.
+    const optIdx = prompt.locked ?? plan.option;
+    if (prompt.options[optIdx] === undefined) {
+      plan.option = this.choose(prompt.options, Number.POSITIVE_INFINITY, this.profile.aggression);
+      plan.from = used;
+      plan.keys = this.typeWord(prompt.options[plan.option], prompt.typed, τ);
+      return plan.keys;
+    }
     const keys = plan.keys.slice(used - plan.from);
     if (keys[0] === undefined || keys[0].τ >= τ) return keys;
     plan.from = used;

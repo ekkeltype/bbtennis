@@ -6,6 +6,7 @@ import { redact } from '../../src/core/redact';
 import { seedRng, uniform } from '../../src/core/rng';
 import { TUNING } from '../../src/core/tuning';
 import {
+  ALL_TIERS,
   other,
   type GameEvent,
   type MatchConfig,
@@ -820,5 +821,57 @@ describe('Engine: stats', () => {
       wrongKeys: 1,
       fastestServeKmh: strike.kmh,
     });
+  });
+});
+
+describe('power meter in the engine (power-meter spec §4)', () => {
+  it('commits the owner\'s level at each turn end: 1 after a flawless serve, 0 after a slipped one', () => {
+    const clean = new Engine({ config: CONFIG, players: PLAYERS, seed: 3 });
+    const server = clean.owner()!;
+    new Driver(clean, [scripted(), scripted()]).playTurn();
+    expect(clean.state.power[server]).toBe(1);
+    const sloppy = new Engine({ config: CONFIG, players: PLAYERS, seed: 3 });
+    new Driver(sloppy, [scripted({ slips: 1 }), scripted({ slips: 1 })]).playTurn();
+    expect(sloppy.state.power[server]).toBe(0);
+  });
+
+  it('a player at a full meter gets a 4-word set: tiers in order, valid initials, a target each', () => {
+    const engine = new Engine({ config: CONFIG, players: PLAYERS, seed: 5 });
+    new Driver(engine, [scripted(), scripted()]).playUntil((s) => s.turn !== null && s.turn.data.power === 4);
+    const d = engine.state.turn!.data;
+    expect(engine.state.power[d.owner]).toBe(4);
+    const sets = d.kind === 'serve' ? d.wordSets : [d.choice];
+    for (const set of sets) {
+      expect(set.options.map((o) => o.tier)).toEqual(ALL_TIERS);
+      expect(set.targets).toHaveLength(4);
+      expect(initialsOk(set.options.map((o) => o.word))).toBe(true);
+    }
+  });
+
+  it('losing a point empties the loser\'s meter, with a power event after the point event', () => {
+    const engine = new Engine({ config: CONFIG, players: PLAYERS, seed: 11 });
+    const flawless = scripted();
+    const quitsWhenFull: Typist = (t) => (engine.state.power[1] === 4 ? [] : flawless(t));
+    const driver = new Driver(engine, [scripted(), quitsWhenFull]);
+    driver.playUntil((s) => s.power[1] === 4);
+    driver.playUntil((s) => s.power[1] === 0);
+    const i = driver.events.findIndex((e) => e.type === 'power' && e.player === 1 && e.from === 4 && e.to === 0);
+    expect(i).toBeGreaterThan(0);
+    const point = driver.events[i - 1]!;
+    expect(point.type).toBe('point');
+    expect(point.type === 'point' && point.winner).toBe(0);
+    expect(driver.events[i]!.τ).toBe(point.τ);
+  });
+
+  it('training: the meter stays off (null in turn data, [0, 0] in state), with no power events', () => {
+    const training = { serveClock: false, freezeUntilFirstKey: false, fixedWords: null };
+    const engine = new Engine({ config: config({ training }), players: PLAYERS, seed: 4 });
+    const driver = new Driver(engine, [scripted(), scripted()]);
+    for (let i = 0; i < 12; i++) {
+      expect(engine.state.turn?.data.power).toBeNull();
+      driver.playTurn();
+    }
+    expect(engine.state.power).toEqual([0, 0]);
+    expect(driver.events.filter((e) => e.type === 'power')).toEqual([]);
   });
 });
