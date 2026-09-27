@@ -316,7 +316,8 @@ export class Engine {
       side,
       leadIn,
       serveClockMs: training !== null && !training.serveClock ? null : TUNING.serveClockMs,
-      tossApexMs: TUNING.tossApexMs,
+      // Full-meter serve: longer toss so a 12–13 letter insane word fits (power-meter spec §4.3).
+      tossApexMs: insane ? TUNING.tossApexMs * TUNING.power.tossMult : TUNING.tossApexMs,
       catchMs: TUNING.catchMs,
       pace: PACE_MULT[config.pace],
       wordSets: [first, spare],

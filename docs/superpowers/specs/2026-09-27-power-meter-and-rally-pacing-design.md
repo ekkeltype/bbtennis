@@ -37,10 +37,17 @@ Success criteria:
   multiplication as now. Starting values: `pressure = 0.93` (was 0.85), `pressureFloor = 0.65`.
   The balance simulation (§7) sets the final values.
 - `T = pace × (2.2 s + 0.10 s × len(chaseWord)) / v × place[d] × P(n)` (+ the serve reading
-  allowance, unchanged).
+  allowance, unchanged). Rally shots and easy/medium/hard serves keep the main-spec place rules
+  (serves at place 1). An **insane serve** uses `place.insane` instead of place 1; the reading
+  allowance is still the same for every serve. There is no pace-specific pressure curve: pressure
+  only ever takes time away from a rally.
 - Displayed km/h divides by `P(n)` instead of `0.85^⌊n/2⌋`.
 - `tossApexMs` is re-tuned (§7). The new hard tier (8–11 letters) and the insane tier change which
-  serve words "fit" the toss window, and so the double-fault rate.
+  serve words "fit" the toss window, and so the double-fault rate. A **full-meter serve** only
+  (meter level 4 / `insaneOffered`) stretches the toss further: the engine writes
+  `tossApexMs = TUNING.tossApexMs × TUNING.power.tossMult` into that serve turn's start data
+  (`tossMult` starts at 1.2). Training and any serve whose meter is not full keep the global
+  `tossApexMs`.
 
 ## 3. Word tiers (amends main spec §3.10)
 
@@ -110,6 +117,16 @@ Success criteria:
   | `trajectory.arcH` (m) | 2.0 | 1.7 | 1.4 | **1.2** |
   | `kmh.tierBonus` | 1.00 | 1.05 | 1.10 | **1.20** |
 
+- **Insane serve flight**: uses `place.insane` (not place 1). Easy/medium/hard serves stay at
+  place 1. The serve reading allowance is unchanged for every serve, including insane. The same
+  `place.insane` also scales insane rally shots; split only if balance cannot hit the 15–40 %
+  clean-insane return target on both serves and rallies with one value.
+- **Power toss**: a serve turn whose owner's meter is full at creation
+  (`insaneOffered(power)` / level 4) gets `tossApexMs = TUNING.tossApexMs × TUNING.power.tossMult`
+  in its start data (`tossMult` starts at **1.2**). Training (`meterFor` returns null) and any
+  serve whose meter is not full keep the global `tossApexMs`. The global toss and the serve
+  reading allowance remain the double-fault / server-win knobs; there is no pace-specific
+  pressure curve for insane.
 - **Guarantee** (unit-tested, as for every tier): with e = 0 and no stretch, an insane shot is never
   out or net (3.46 × 0.04 = 0.139 m < 0.15 m margin).
 - **Expected** (unit-tested): an insane rally shot with e = 1 fails (out + net) 60–85 % of the time.

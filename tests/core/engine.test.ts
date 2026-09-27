@@ -848,6 +848,19 @@ describe('power meter in the engine (power-meter spec §4)', () => {
     }
   });
 
+  it('a full-meter serve tosses longer; a non-full serve keeps the base apex', () => {
+    const engine = new Engine({ config: CONFIG, players: PLAYERS, seed: 5 });
+    expect(engine.state.turn?.data).toMatchObject({ kind: 'serve', tossApexMs: TUNING.tossApexMs });
+    // Idle chase: every in-serve is an ace, so the server fills to 4 and serves again with a full meter.
+    new Driver(engine, [scripted(), scripted({ chase: false })]).playUntil(
+      (s) => s.turn !== null && s.turn.data.kind === 'serve' && s.turn.data.power === 4,
+    );
+    const d = engine.state.turn!.data;
+    expect(d.kind).toBe('serve');
+    if (d.kind !== 'serve') return;
+    expect(d.tossApexMs).toBe(TUNING.tossApexMs * TUNING.power.tossMult);
+  });
+
   it('losing a point empties the loser\'s meter, with a power event after the point event', () => {
     const engine = new Engine({ config: CONFIG, players: PLAYERS, seed: 11 });
     const flawless = scripted();

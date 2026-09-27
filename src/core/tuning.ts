@@ -72,7 +72,8 @@ export const TUNING = {
   leadIn: { introMs: 2500, faultMs: 1500, pointMs: 2000, gameExtraMs: 1500, setExtraMs: 1000, matchOverMs: 3000 },
   words: { historySize: 20 },
   // Power meter (power-meter spec §4.1): flawless serve/choice strikes fill it to `max`; a full meter offers the insane word.
-  power: { max: 4 },
+  // tossMult: a full-meter serve only stretches the toss apex (power-meter spec §4.3); training / non-full keep tossApexMs.
+  power: { max: 4, tossMult: 1.2 },
   movement: { chaseMaxSpeed: 7, jogSpeed: 4, stanceOffset: 0.7 },
   positions: { serverX: 0.8, serverY: 12.3, receiverX: 3.0, receiverY: 12.5, restY: 12.2 },
 } as const;

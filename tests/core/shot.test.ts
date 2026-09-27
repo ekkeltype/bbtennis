@@ -129,6 +129,20 @@ describe('flightTimeMs', () => {
     }
   });
 
+  it('insane serve: place.insane (not 1) plus the same reading allowance', () => {
+    const { place, serveReturnBonusMs, serveReturnBonusPaceMs } = TUNING.flight;
+    const pace = 1;
+    const chaseLen = 14;
+    const v = 1;
+    const base = (pace * (TUNING.flight.baseMs + TUNING.flight.perCharMs * chaseLen)) / v;
+    const allowance = serveReturnBonusMs + serveReturnBonusPaceMs * pace;
+    expect(flightTimeMs({ pace, chaseLen, v, tier: 'insane', isServe: true, n: 0 })).toBeCloseTo(
+      base * place.insane + allowance,
+      9,
+    );
+    expect(place.insane).toBeLessThan(1);
+  });
+
   it('never leaves more time for harder placement: T(insane) < T(hard) < T(medium) < T(easy)', () => {
     const violations: string[] = [];
     for (const pace of Object.values(PACE_MULT)) {

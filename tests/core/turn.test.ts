@@ -12,6 +12,7 @@ import {
 } from '../../src/core/turn';
 import { TUNING } from '../../src/core/tuning';
 import { serveClockτ } from '../../src/core/turnServe';
+import { flightTimeMs } from '../../src/core/shot';
 import type {
   GameEvent,
   ReturnTurnData,
@@ -893,6 +894,35 @@ describe('power meter in the turn runner (power-meter spec §4)', () => {
     expect(t.outcome?.kind).toBe('strike');
     if (t.outcome?.kind !== 'strike') return;
     expect(t.outcome.strike.target).toEqual(t.data.kind === 'serve' ? t.data.wordSets[0]!.targets[3] : null);
+  });
+
+  it('an insane serve flight uses place.insane; easy/medium/hard serves stay at place 1', () => {
+    const insane = createTurn(
+      serveData({ power: 4, wordSets: [serveSet([...SET_A, 'quarterfinalist']), serveSet([...SET_B, INSANE_WORD], 'wide')] }),
+    );
+    startTurn(insane);
+    turnInput(insane, 'toss', 2600);
+    typeAt(insane, 'quarterfinalist', 2700);
+    const s = strikeOf(insane);
+    expect(s.word.tier).toBe('insane');
+    expect(s.flight.T).toBeCloseTo(
+      flightTimeMs({ pace: insane.data.pace, chaseLen: s.word.len, v: s.v, tier: 'insane', isServe: true, n: 0 }),
+      9,
+    );
+    const base = (insane.data.pace * (TUNING.flight.baseMs + TUNING.flight.perCharMs * s.word.len)) / s.v;
+    const allowance = TUNING.flight.serveReturnBonusMs + TUNING.flight.serveReturnBonusPaceMs * insane.data.pace;
+    expect(s.flight.T).toBeCloseTo(base * TUNING.flight.place.insane + allowance, 9);
+
+    const easy = tossed(3000);
+    type(easy, 'ball', 3400);
+    const e = strikeOf(easy);
+    expect(e.word.tier).toBe('easy');
+    expect(e.flight.T).toBeCloseTo(
+      flightTimeMs({ pace: easy.data.pace, chaseLen: e.word.len, v: e.v, tier: 'easy', isServe: true, n: 0 }),
+      9,
+    );
+    const easyBase = (easy.data.pace * (TUNING.flight.baseMs + TUNING.flight.perCharMs * e.word.len)) / e.v;
+    expect(e.flight.T).toBeCloseTo(easyBase * 1 + allowance, 9);
   });
 
   it('a slip in a serve word empties the meter but the serve still strikes', () => {
