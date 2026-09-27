@@ -388,8 +388,8 @@ export class OnlineLifecycle {
   }
 }
 
-/** What the scoreboard shows: the match's score, stats and status, the point's number and the rally's strikes so far. */
-type Scoreboard = Pick<MatchState, 'score' | 'stats' | 'status' | 'pointNo' | 'rallyStrikes'>;
+/** What the scoreboard shows: the match's score, stats and status, the point's number, rally strikes and meters. */
+type Scoreboard = Pick<MatchState, 'score' | 'stats' | 'status' | 'pointNo' | 'rallyStrikes' | 'power'>;
 
 /**
  * The scoreboard each display entry carries: the match's score, stats, status, point number and rally
@@ -402,10 +402,10 @@ type Scoreboard = Pick<MatchState, 'score' | 'stats' | 'status' | 'pointNo' | 'r
 export class Scoreboards {
   private readonly of = new WeakMap<DisplayEntry, Scoreboard>();
 
-  /** `entry`'s turn was created in `state`: its scoreboard is a copy of the state's as it is now. */
+  /** `entry`'s turn was created in `state`: its scoreboard (score, stats, status, point, rally, meters) as it is now. */
   note(entry: DisplayEntry, state: MatchState): void {
-    const { score, stats, status, pointNo, rallyStrikes } = state;
-    this.of.set(entry, structuredClone({ score, stats, status, pointNo, rallyStrikes }));
+    const { score, stats, status, pointNo, rallyStrikes, power } = state;
+    this.of.set(entry, structuredClone({ score, stats, status, pointNo, rallyStrikes, power }));
   }
 
   /** Puts the scoreboard of the displayed entry `front` into `pub` (a copy); without a front `pub` keeps its own. */

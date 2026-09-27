@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { cpuProfile } from '../../src/core/cpu';
 import { Engine } from '../../src/core/engine';
 import { redact, redactEvents, redactTurn } from '../../src/core/redact';
+import { createTurn, startTurn, turnInput } from '../../src/core/turn';
 import { TUNING } from '../../src/core/tuning';
 import { other, type GameEvent, type MatchState, type PlayerId, type TurnState, type WordOption } from '../../src/core/types';
 import { Driver, PLAYERS, config, cpuTypist, idle, scripted, serveWords, withRetosses, type Typist } from './engineHelpers';
+import { INSANE_WORD, SET_A, serveData, serveSet } from './turnFixtures';
 
 const VIEWERS = [0, 1, 'spectator'] as const;
 const ZEROS = [0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -179,6 +181,26 @@ describe('redact', () => {
   });
 });
 
+describe('redaction of a full-meter serve (power-meter spec §5)', () => {
+  it('hides all four serve words and their targets from the receiver, keeps them for the server', () => {
+    const t = createTurn(serveData({ power: 4, wordSets: [serveSet([...SET_A, INSANE_WORD])] }));
+    startTurn(t);
+    turnInput(t, 'toss', 2600);
+    const seen = redactTurn(t, 1);
+    expect(JSON.stringify(seen)).not.toContain(INSANE_WORD);
+    if (seen.data.kind !== 'serve') throw new Error('expected a serve turn');
+    expect(seen.data.wordSets[0]!.options.map((o) => ({ len: o.len, tier: o.tier, hidden: o.hidden }))).toEqual([
+      { len: 4, tier: 'easy', hidden: true },
+      { len: 6, tier: 'medium', hidden: true },
+      { len: 10, tier: 'hard', hidden: true },
+      { len: 14, tier: 'insane', hidden: true },
+    ]);
+    expect(seen.data.wordSets[0]!.targets).toEqual([]);
+    expect(seen.prompts[0]!.options).toHaveLength(4);
+    expect(JSON.stringify(redactTurn(t, 0))).toContain(INSANE_WORD);
+  });
+});
+
 describe('redact: serve secrecy', () => {
   /** Words anyone may know: those of return turns (chase and choice) in the state. */
   function publicWords(s: MatchState): Set<string> {
@@ -191,70 +213,85 @@ describe('redact: serve secrecy', () => {
     return words;
   }
 
-  it('across 1,000 serves by player 0, player 1 never sees a serve word before it is struck', { timeout: 600000 }, () => {
-    const problems: string[] = [];
-    let serves = 0;
-    let strikes = 0;
-    let samples = 0;
-    let catches = 0;
-    let faults = 0;
+  function checkServeSecrecy(fullMeter: boolean): void {
+    const spy = fullMeter
+      ? vi.spyOn(Engine.prototype as unknown as { meterFor(owner: PlayerId): number | null }, 'meterFor').mockReturnValue(4)
+      : null;
+    let fourWordSets = 0;
+    try {
+      const problems: string[] = [];
+      let serves = 0;
+      let strikes = 0;
+      let samples = 0;
+      let catches = 0;
+      let faults = 0;
 
-    /** Player 1's view of player 0's serve turns in the state; every 10th sample also the owner's and a spectator's. */
-    const check = (s: MatchState, when: string): void => {
-      const turns = [s.turn, s.lastTurn].filter((t): t is TurnState => t?.data.kind === 'serve' && t.data.owner === 0);
-      if (turns.length === 0) return;
-      const views: (PlayerId | 'spectator')[] = samples++ % 10 === 0 ? [1, 0, 'spectator'] : [1];
-      const [seenBy1, seenBy0, seenByAll] = views.map((v) => {
-        const pub = redact(s, v);
-        if (pub.rng !== null || pub.picker !== null) problems.push(`${when}: rng/picker not removed for ${v}`);
-        return JSON.stringify(pub);
-      }) as [string, string?, string?];
-      const known = publicWords(s);
-      for (const t of turns) {
-        const struck = t.outcome?.kind === 'strike' ? t.outcome.strike.word.word : null;
-        const all = serveWords(t);
-        const leaked = found(seenBy1, all.filter((w) => w !== struck && !known.has(w)));
-        if (leaked.length > 0) problems.push(`${when}: turn ${t.data.turnId} leaked ${leaked.join(',')}`);
-        if (struck !== null && found(seenBy1, [struck]).length === 0) problems.push(`${when}: struck ${struck} hidden`);
-        if (seenBy0 === undefined || seenByAll === undefined) continue;
-        const missing = all.filter((w) => !seenBy0.includes(`"word":"${w}"`) || !seenByAll.includes(`"word":"${w}"`));
-        if (missing.length > 0) problems.push(`${when}: owner/spectator missing ${missing.join(',')}`);
-      }
-    };
+      /** Player 1's view of player 0's serve turns in the state; every 10th sample also the owner's and a spectator's. */
+      const check = (s: MatchState, when: string): void => {
+        const turns = [s.turn, s.lastTurn].filter((t): t is TurnState => t?.data.kind === 'serve' && t.data.owner === 0);
+        if (turns.length === 0) return;
+        for (const t of turns) if (t.data.kind === 'serve') fourWordSets += t.data.wordSets.filter((set) => set.options.length === 4).length;
+        const views: (PlayerId | 'spectator')[] = samples++ % 10 === 0 ? [1, 0, 'spectator'] : [1];
+        const [seenBy1, seenBy0, seenByAll] = views.map((v) => {
+          const pub = redact(s, v);
+          if (pub.rng !== null || pub.picker !== null) problems.push(`${when}: rng/picker not removed for ${v}`);
+          return JSON.stringify(pub);
+        }) as [string, string?, string?];
+        const known = publicWords(s);
+        for (const t of turns) {
+          const struck = t.outcome?.kind === 'strike' ? t.outcome.strike.word.word : null;
+          const all = serveWords(t);
+          const leaked = found(seenBy1, all.filter((w) => w !== struck && !known.has(w)));
+          if (leaked.length > 0) problems.push(`${when}: turn ${t.data.turnId} leaked ${leaked.join(',')}`);
+          if (struck !== null && found(seenBy1, [struck]).length === 0) problems.push(`${when}: struck ${struck} hidden`);
+          if (seenBy0 === undefined || seenByAll === undefined) continue;
+          const missing = all.filter((w) => !seenBy0.includes(`"word":"${w}"`) || !seenByAll.includes(`"word":"${w}"`));
+          if (missing.length > 0) problems.push(`${when}: owner/spectator missing ${missing.join(',')}`);
+        }
+      };
 
-    for (let seed = 0; serves < 1000; seed++) {
-      const e = new Engine({ config: config(), players: PLAYERS, seed });
-      const typists: [Typist, Typist] = [
-        withRetosses(cpuTypist(0, cpuProfile(seed % 15), seed), 6),
-        cpuTypist(1, cpuProfile((seed * 5 + 2) % 15), seed),
-      ];
-      const d = new Driver(e, typists, {
-        stepMs: 50,
-        stepIf: (t) => t.data.kind === 'serve' && t.data.owner === 0,
-        onStep: (x, τ) => check(x.state, `seed ${seed} τ ${τ}`),
-        onCall: (x, call, events) => {
-          for (const ev of events) {
-            if (ev.type === 'strike' && ev.isServe && ev.player === 0) {
-              strikes++;
-              check(x.state, `seed ${seed} strike`);
+      for (let seed = 0; serves < 1000; seed++) {
+        const e = new Engine({ config: config(), players: PLAYERS, seed });
+        const typists: [Typist, Typist] = [
+          withRetosses(cpuTypist(0, cpuProfile(seed % 15), seed), 6),
+          cpuTypist(1, cpuProfile((seed * 5 + 2) % 15), seed),
+        ];
+        const d = new Driver(e, typists, {
+          stepMs: 50,
+          stepIf: (t) => t.data.kind === 'serve' && t.data.owner === 0,
+          onStep: (x, τ) => check(x.state, `seed ${seed} τ ${τ}`),
+          onCall: (x, call, events) => {
+            for (const ev of events) {
+              if (ev.type === 'strike' && ev.isServe && ev.player === 0) {
+                strikes++;
+                check(x.state, `seed ${seed} strike`);
+              }
+              if (ev.type === 'catch' && ev.player === 0) catches++;
+              if (ev.type === 'call' && ev.player === 0 && ['fault', 'ballDropped', 'timeViolation'].includes(ev.call)) faults++;
             }
-            if (ev.type === 'catch' && ev.player === 0) catches++;
-            if (ev.type === 'call' && ev.player === 0 && ['fault', 'ballDropped', 'timeViolation'].includes(ev.call)) faults++;
-          }
-        },
-      });
-      while (e.state.status === 'playing' && serves < 1000) {
-        const t = e.state.turn as TurnState;
-        if (t.data.kind === 'serve' && t.data.owner === 0) serves++;
-        d.playTurn();
+          },
+        });
+        while (e.state.status === 'playing' && serves < 1000) {
+          const t = e.state.turn as TurnState;
+          if (t.data.kind === 'serve' && t.data.owner === 0) serves++;
+          d.playTurn();
+        }
       }
-    }
 
-    expect(problems.slice(0, 10)).toEqual([]);
-    expect(serves).toBe(1000);
-    expect(strikes).toBeGreaterThan(800);
-    expect(catches).toBeGreaterThan(50);
-    expect(faults).toBeGreaterThan(10);
-    expect(samples).toBeGreaterThan(50000);
-  });
+      expect(problems.slice(0, 10)).toEqual([]);
+      expect(serves).toBe(1000);
+      expect(strikes).toBeGreaterThan(800);
+      expect(catches).toBeGreaterThan(50);
+      expect(faults).toBeGreaterThan(10);
+      expect(samples).toBeGreaterThan(50000);
+      if (fullMeter) expect(fourWordSets).toBeGreaterThan(0);
+    } finally {
+      spy?.mockRestore();
+    }
+  }
+
+  it('across 1,000 serves by player 0, player 1 never sees a serve word before it is struck', { timeout: 600000 }, () =>
+    checkServeSecrecy(false));
+  it('the same across 1,000 serves at a full meter: all four words, insane included, stay hidden', { timeout: 600000 }, () =>
+    checkServeSecrecy(true));
 });

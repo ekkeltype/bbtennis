@@ -855,6 +855,7 @@ describe('Scoreboards: the scoreboard each displayed turn carries', () => {
     state.status = 'over';
     state.pointNo = 4;
     state.rallyStrikes = 5;
+    state.power = [3, 4];
     const pub = redact(state, 0);
     boards.show(pub, entry);
     expect(pub.score.points).toEqual([0, 0]);
@@ -863,6 +864,8 @@ describe('Scoreboards: the scoreboard each displayed turn carries', () => {
     // The point number (clay marks clear with it) and the rally counter wait for the display too.
     expect(pub.pointNo).toBe(0);
     expect(pub.rallyStrikes).toBe(0);
+    // The power meters wait for the display too, so a lost point never empties a meter early.
+    expect(pub.power).toEqual([0, 0]);
     pub.score.points[0] = 9;
     const again = redact(state, 0);
     boards.show(again, entry);
@@ -871,6 +874,7 @@ describe('Scoreboards: the scoreboard each displayed turn carries', () => {
     boards.show(latest, null);
     expect(latest.score.points).toEqual([3, 1]);
     expect(latest.status).toBe('over');
+    expect(latest.power).toEqual([3, 4]);
   });
 });
 

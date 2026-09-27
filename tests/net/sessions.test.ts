@@ -169,6 +169,9 @@ describe('online sessions: three full short-set matches', () => {
       }
     }
     expect(firstServers.size).toBe(2);
+    // The meter reaches 4 and the scripted typists hit insane words, so the 4-option path runs online.
+    const insaneStrikes = runs.flatMap((run) => [...run.hostLog.turns.values()].filter((t) => t.strike?.option === 3));
+    expect(insaneStrikes.length).toBeGreaterThan(0);
   }, SHORT_SETS_TIMEOUT);
 });
 
