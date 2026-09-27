@@ -100,8 +100,10 @@ countdown.
 
 Pick a pack in Options, in vs CPU setup or in the host lobby: **Everyday** (the default, common
 English words), **Sports** (words from many sports), **Dojo** (martial arts) or **Mixed** (all
-three). Words are easy (2–4 letters), medium (5–7) or hard (8–11). The three
-options always start with different letters that are not neighbours on a QWERTY keyboard. None of
+three). Words are easy (2–4 letters), medium (5–7) or hard (8–11); the insane word a full power
+meter adds is 12–15 letters, and its serve gets a longer toss so it can fit. The meter is off in
+Training. The offered options always start with different letters that are not neighbours on a
+QWERTY keyboard. None of
 the last 20 words offered comes back. No word names a shot or a direction (forehand, lob, wide,
 deep, and so on), so a word never contradicts where the ball actually goes.
 
