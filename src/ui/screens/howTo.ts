@@ -14,9 +14,8 @@ const RULES: Record<string, { title: string; text: string }> = {
 
 /** The power meter rule (power-meter spec §6), under the illustrated rules. */
 export const POWER_TEXT =
-  'POWER METER: every serve or shot you type without a wrong key fills one of four segments. ' +
-  'While it is full you also get an INSANE word: a near-winner into the corner, but one typo sends it out. ' +
-  'Any wrong key, or losing a point, empties the meter.';
+  'POWER METER: flawless serves and shots fill its four segments. When full you also get an INSANE ' +
+  'word: a near-winner, but a typo sends it out. A wrong key or losing a point empties it.';
 
 /** How to Play (spec §4.6): the rules illustrated with the real plate art, the controls, and the OFL font credits. */
 export function howToScreen(ctx: UiContext): ScreenFactory {

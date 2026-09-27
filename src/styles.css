@@ -819,7 +819,7 @@ body {
 
 #ui .how-to {
   width: calc(468 * var(--u));
-  gap: calc(4 * var(--u));
+  gap: calc(3 * var(--u));
   padding: calc(6 * var(--u)) calc(8 * var(--u));
 }
 
@@ -858,6 +858,13 @@ body {
 }
 
 #ui .card p {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  line-height: calc(11 * var(--u));
+  color: var(--mist);
+}
+
+#ui .how-to .power {
   font-family: var(--body);
   font-size: calc(10 * var(--u));
   line-height: calc(11 * var(--u));
