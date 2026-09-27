@@ -21,7 +21,7 @@ import { PlayerAnimator, type PlayerPose } from '../../src/render/players';
 import { project } from '../../src/render/projection';
 import { drawPrompts, headHeight, promptScene, type PromptScene } from '../../src/render/prompts';
 import { worldFrame } from '../../src/render/world';
-import { CHOICE, RALLY_IN, flight, opt, returnData, serveData } from '../core/turnFixtures';
+import { CHOICE, CHOICE_4, INSANE_WORD, RALLY_IN, flight, opt, returnData, serveData } from '../core/turnFixtures';
 
 const LOOK: Look = { skin: 1, hairStyle: 2, hair: 3, shirt: 6, shorts: 7, headband: 5, racket: 2 };
 const STATS: PlayerStats = {
@@ -399,6 +399,39 @@ describe('promptScene', () => {
     turnClock(t, 2700);
     const s = scene(view(matchState(t), 2700, 0, { overlay: { ...OVERLAY, wait: true, hintSpace: true } }));
     expect(s.tags.map((g) => g.kind).sort()).toEqual(['space', 'wait']);
+  });
+});
+
+describe('promptScene with the insane option (power-meter spec §6)', () => {
+  /** Player 1's return at a full meter, `chase` typed from 100 ms, 100 ms apart. */
+  function fullMeterReturn(chase: string): TurnState {
+    const t = createTurn(returnData({ power: 4, choice: CHOICE_4 }));
+    startTurn(t);
+    typeWord(t, chase, 100);
+    return t;
+  }
+
+  it('shows 4 choice rings and leaders while the meter is full', () => {
+    const s = scene(view({ ...matchState(fullMeterReturn('ball')), power: [0, 4] }, 600, 1));
+    expect(s.rings.map((r) => r.tier)).toEqual(['easy', 'medium', 'hard', 'insane']);
+    expect(s.leaders).toHaveLength(4);
+  });
+
+  it('after a chase slip shows 3, though 4 targets were pre-picked', () => {
+    const s = scene(view({ ...matchState(fullMeterReturn('bzall')), power: [0, 4] }, 700, 1));
+    expect(s.rings.map((r) => r.tier)).toEqual(['easy', 'medium', 'hard']);
+    expect(s.leaders).toHaveLength(3);
+  });
+
+  it('Large words: a locked insane word at 2× (14 letters: 190 px) stays inside x 4–476', () => {
+    const t = fullMeterReturn('ball');
+    typeWord(t, 'ph', 600);
+    const s = scene(view({ ...matchState(t), power: [0, 4] }, 800, 1), { ...PREFS, largeWords: true });
+    const big = s.plates.filter((p: PlateDraw) => p.scale === 2);
+    expect(big).toHaveLength(1);
+    expect(big[0]!.box.w).toBe(190);
+    expect(big[0]!.box.x).toBeGreaterThanOrEqual(4);
+    expect(big[0]!.box.x + big[0]!.box.w).toBeLessThanOrEqual(476);
   });
 });
 

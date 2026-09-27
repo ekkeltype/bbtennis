@@ -101,6 +101,8 @@ const TAG_H = 11;
  * centres (90 / 240 / 390); the one farther from the opponent keeps the label off their sprite.
  */
 const HINT_X = [165, 315] as const;
+/** The same for a 4-plate choice row (slot centres 60 / 180 / 300 / 420): the gaps of the outer pairs. */
+const HINT_X4 = [120, 360] as const;
 const KEYCAP_H = 13;
 const KEYCAP_BOB_MS = 400;
 
@@ -243,7 +245,7 @@ function barUnder(boxes: PlateBox[], frac: number, grace: boolean): BarMark {
   return { x, y: bottom + BAR_GAP, w: right - x, frac: clamp(frac, 0, 1), grace };
 }
 
-/** Serve toss: the three serve words above/beside the server, markers in the box for its owner. */
+/** Serve toss: the serve words (3, or 4 at a full meter) above/beside the server, markers in the box for its owner. */
 function servePrompts(c: Ctx, d: ServeTurnData): void {
   const { f, v, s } = c;
   const prompt = v.phase === 'toss' && v.active !== null ? v.prompts[v.active] : undefined;
@@ -308,7 +310,8 @@ function chasePlate(c: Ctx, d: ReturnTurnData, chase: PromptView, style: PlateSt
 function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: PlateStyle): void {
   const { f, v, s } = c;
   const band = d.striker === f.near ? 'near' : 'far';
-  const targets = d.choice.targets.map((p) => groundAt(f, p));
+  // A full meter pre-picks 4 targets; a chase slip leaves the prompt showing only the first 3.
+  const targets = d.choice.targets.slice(0, choice.options.length).map((p) => groundAt(f, p));
   const layout = layoutChoice(
     choice.options.map((o) => o.len),
     targets.map((p) => p.x),
@@ -329,7 +332,7 @@ function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: Plat
   s.bar = barUnder(choice.locked === null ? boxes : [boxes[choice.locked]!], share.frac, share.grace);
   if (f.vm.overlay.hintFirstLetter && choice.locked === null) {
     const farX = groundAt(f, c.poses[d.striker].feet).x;
-    const [left, right] = HINT_X;
+    const [left, right] = choice.options.length === 4 ? HINT_X4 : HINT_X;
     s.tags.push({ kind: 'hint', x: Math.abs(farX - left) >= Math.abs(farX - right) ? left : right, y: s.bar.y + 5 });
   }
 }

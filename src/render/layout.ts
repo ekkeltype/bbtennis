@@ -12,6 +12,8 @@ const AREA = { left: 4, right: 476, top: BANDS.far[0], bottom: 266 };
 const CENTRE_X = (AREA.left + AREA.right) / 2;
 const PLATE_H = 16;
 const SLOT_X = { left: 90, centre: 240, right: 390 };
+/** Slot centres of a 4-plate choice row (power-meter spec §6), left to right. */
+const SLOTS_4 = [60, 180, 300, 420] as const;
 const HEAD_GAP = 4;
 const NEAR_BAND_GAP = 6;
 /** Gap between serve-stack plates: 3 px, so a pixel of court shows between two 1 px halos. */
@@ -45,26 +47,43 @@ export function plateWidth(len: number, scale: 1 | 2 = 1): number {
 }
 
 /**
- * Choice plates (spec §4.2) for `lens` = [easy, medium, hard]: one 1× row in the band of the targeted
- * half (far: the far prompt band; near: 6 px below the net line), slot centres x 90 / 240 / 390.
- * Easy takes the centre slot; medium takes the outer slot on its target's side of the hard target
- * (`targetsScreenX` in the same option order) and hard the other one. Throws unless both arrays hold
- * exactly 3 entries.
+ * Choice plates (spec §4.2, power-meter spec §6) for `lens` in option order, [easy, medium, hard] or
+ * [easy, medium, hard, insane]: one 1× row in the band of the targeted half (far: the far prompt band;
+ * near: 6 px below the net line). Three plates: slot centres x 90 / 240 / 390, easy in the centre,
+ * medium in the outer slot on its target's side of the hard target, hard in the other. Four plates:
+ * slot centres x 60 / 180 / 300 / 420, taken in the order of the targets' screen x, so insane is
+ * outermost on medium's side. Throws unless both arrays hold 3 or 4 entries, the same number.
  */
 export function layoutChoice(lens: number[], targetsScreenX: number[], band: 'far' | 'near'): PlateBox[] {
-  if (lens.length !== 3 || targetsScreenX.length !== 3) {
+  const n = lens.length;
+  if ((n !== 3 && n !== 4) || targetsScreenX.length !== n) {
     throw new Error(
-      `layoutChoice needs 3 word lengths and 3 target x values, got ${lens.length} and ${targetsScreenX.length}`,
+      `layoutChoice needs 3 or 4 word lengths and as many target x values, got ${lens.length} and ${targetsScreenX.length}`,
     );
   }
   const y = band === 'far' ? BANDS.far[0] : Math.round(netScreenY() + NEAR_BAND_GAP);
-  const [, mediumX, hardX] = targetsScreenX as [number, number, number];
-  const mediumLeft = mediumX <= hardX;
-  const slots = [SLOT_X.centre, mediumLeft ? SLOT_X.left : SLOT_X.right, mediumLeft ? SLOT_X.right : SLOT_X.left];
+  const slots = n === 3 ? threeSlots(targetsScreenX) : fourSlots(targetsScreenX);
   return lens.map((len, option) => {
     const w = plateWidth(len);
     return { x: centredX(slots[option]!, w), y, w, h: PLATE_H, option };
   });
+}
+
+/** Slot centres for [easy, medium, hard]: easy central, medium on its target's side of hard. */
+function threeSlots(targetsScreenX: number[]): number[] {
+  const [, mediumX, hardX] = targetsScreenX as [number, number, number];
+  const mediumLeft = mediumX <= hardX;
+  return [SLOT_X.centre, mediumLeft ? SLOT_X.left : SLOT_X.right, mediumLeft ? SLOT_X.right : SLOT_X.left];
+}
+
+/** Slot centres for four options: `SLOTS_4` handed out left to right in the order of their targets' screen x. */
+function fourSlots(targetsScreenX: number[]): number[] {
+  const order = targetsScreenX.map((x, option) => ({ x, option })).sort((a, b) => a.x - b.x || a.option - b.option);
+  const slots: number[] = [];
+  order.forEach(({ option }, k) => {
+    slots[option] = SLOTS_4[k]!;
+  });
+  return slots;
 }
 
 /**
