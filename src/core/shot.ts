@@ -46,9 +46,9 @@ export function flightTimeMs(a: {
   n: number;
 }): number {
   const f = TUNING.flight;
-  // Easy/medium/hard serves stay at place 1; an insane serve uses place.insane (power-meter spec §4.3).
-  // Reading allowance is unchanged for every serve. Rally shots always use place[tier].
-  const place = a.isServe && a.tier !== 'insane' ? 1 : f.place[a.tier];
+  // Easy/medium/hard serves stay at place 1. An insane serve uses placeServeInsane (may exceed
+  // place.hard). Insane rally shots use place.insane (< place.hard). Reading allowance unchanged.
+  const place = a.isServe ? (a.tier === 'insane' ? f.placeServeInsane : 1) : f.place[a.tier];
   const readingAllowance = a.isServe ? f.serveReturnBonusMs + f.serveReturnBonusPaceMs * a.pace : 0;
   return ((a.pace * (f.baseMs + f.perCharMs * a.chaseLen)) / a.v) * place * pressureFactor(a.n) + readingAllowance;
 }

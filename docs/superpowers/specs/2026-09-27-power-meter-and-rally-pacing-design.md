@@ -38,9 +38,11 @@ Success criteria:
   The balance simulation (§7) sets the final values.
 - `T = pace × (2.2 s + 0.10 s × len(chaseWord)) / v × place[d] × P(n)` (+ the serve reading
   allowance, unchanged). Rally shots and easy/medium/hard serves keep the main-spec place rules
-  (serves at place 1). An **insane serve** uses `place.insane` instead of place 1; the reading
-  allowance is still the same for every serve. There is no pace-specific pressure curve: pressure
-  only ever takes time away from a rally.
+  (serves at place 1). An **insane serve** uses a separate `placeServeInsane` (allowed above
+  `place.hard`), not `place.insane` and not place 1; the reading allowance is still the same for
+  every serve. Insane **rally** shots use `place.insane` (< `place.hard`). One shared place under
+  0.70 cannot put Fast/Lightning clean-insane serve returns in the 15–40 % band. There is no
+  pace-specific pressure curve: pressure only ever takes time away from a rally.
 - Displayed km/h divides by `P(n)` instead of `0.85^⌊n/2⌋`.
 - `tossApexMs` is re-tuned (§7). The new hard tier (8–11 letters) and the insane tier change which
   serve words "fit" the toss window, and so the double-fault rate. A **full-meter serve** only
@@ -106,21 +108,23 @@ Success criteria:
 - **Serve target**, box coordinates as in main spec §3.2.6: on medium's half of the box, 0.15 m inside
   the sideline or centre line and 0.15 m inside the service line: `(3.965, 6.25)` when hard is T,
   `(0.15, 6.25)` when hard is wide.
-- **Tuning** (starting values; `place.insane` is set by the balance simulation):
+- **Tuning** (starting values; `place.insane` and `placeServeInsane` are set by the balance simulation):
 
   | Constant | easy | medium | hard | **insane** |
   |---|---|---|---|---|
-  | `flight.place` | 1.00 | 0.85 | 0.70 | **0.55** |
+  | `flight.place` (rally) | 1.00 | 0.85 | 0.70 | **0.55** |
   | `accuracy.sigma0` (m) | 0.10 | 0.12 | 0.10 | **0.04** |
   | `accuracy.sigmaE` (m) | 0.25 | 0.35 | 0.50 | **0.80** |
   | `accuracy.netRate` | 0.01 | 0.03 | 0.06 | **0.10** |
   | `trajectory.arcH` (m) | 2.0 | 1.7 | 1.4 | **1.2** |
   | `kmh.tierBonus` | 1.00 | 1.05 | 1.10 | **1.20** |
 
-- **Insane serve flight**: uses `place.insane` (not place 1). Easy/medium/hard serves stay at
-  place 1. The serve reading allowance is unchanged for every serve, including insane. The same
-  `place.insane` also scales insane rally shots; split only if balance cannot hit the 15–40 %
-  clean-insane return target on both serves and rallies with one value.
+- **Insane flight place (split)**: rally insane uses `place.insane` (**0.55**, must stay below
+  `place.hard` = 0.70). Insane **serves** use `flight.placeServeInsane` (starts at **0.75**, may
+  exceed `place.hard`). Easy/medium/hard serves stay at place 1. The serve reading allowance is
+  unchanged for every serve. One shared `place.insane` under 0.70 cannot put Fast/Lightning
+  clean-insane serve returns in the 15–40 % target band, which is why the serve-only value exists.
+  The balance simulation (§7) may retune `placeServeInsane`.
 - **Power toss**: a serve turn whose owner's meter is full at creation
   (`insaneOffered(power)` / level 4) gets `tossApexMs = TUNING.tossApexMs × TUNING.power.tossMult`
   in its start data (`tossMult` starts at **1.2**). Training (`meterFor` returns null) and any

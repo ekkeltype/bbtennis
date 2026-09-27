@@ -896,7 +896,7 @@ describe('power meter in the turn runner (power-meter spec §4)', () => {
     expect(t.outcome.strike.target).toEqual(t.data.kind === 'serve' ? t.data.wordSets[0]!.targets[3] : null);
   });
 
-  it('an insane serve flight uses place.insane; easy/medium/hard serves stay at place 1', () => {
+  it('an insane serve flight uses placeServeInsane; easy/medium/hard serves stay at place 1', () => {
     const insane = createTurn(
       serveData({ power: 4, wordSets: [serveSet([...SET_A, 'quarterfinalist']), serveSet([...SET_B, INSANE_WORD], 'wide')] }),
     );
@@ -911,7 +911,8 @@ describe('power meter in the turn runner (power-meter spec §4)', () => {
     );
     const base = (insane.data.pace * (TUNING.flight.baseMs + TUNING.flight.perCharMs * s.word.len)) / s.v;
     const allowance = TUNING.flight.serveReturnBonusMs + TUNING.flight.serveReturnBonusPaceMs * insane.data.pace;
-    expect(s.flight.T).toBeCloseTo(base * TUNING.flight.place.insane + allowance, 9);
+    expect(s.flight.T).toBeCloseTo(base * TUNING.flight.placeServeInsane + allowance, 9);
+    expect(s.flight.T).not.toBeCloseTo(base * TUNING.flight.place.insane + allowance, 5);
 
     const easy = tossed(3000);
     type(easy, 'ball', 3400);

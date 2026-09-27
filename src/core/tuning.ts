@@ -25,6 +25,9 @@ export const TUNING = {
     baseMs: 2200,
     perCharMs: 100,
     place: { easy: 1.0, medium: 0.85, hard: 0.7, insane: 0.55 } as Record<Tier, number>,
+    // Insane serve flight place (power-meter spec §4.3): above place.hard so Fast/Lightning clean-insane
+    // serve returns can reach 15–40 %; rally insane stays on place.insane (< hard). Balance sets the value.
+    placeServeInsane: 0.75,
     // Rally pressure P(n) = max(pressureFloor, pressure^⌊n/2⌋) (power-meter spec §2; was 0.85 with no
     // floor): a gentler speed-up with a floor, so rallies run longer and hard words stay playable deep
     // into a rally. Final values: balance simulation (tests/sim/balance.test.ts).

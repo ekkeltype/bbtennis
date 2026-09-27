@@ -129,18 +129,32 @@ describe('flightTimeMs', () => {
     }
   });
 
-  it('insane serve: place.insane (not 1) plus the same reading allowance', () => {
-    const { place, serveReturnBonusMs, serveReturnBonusPaceMs } = TUNING.flight;
+  it('insane serve: placeServeInsane (not place.insane, not 1) plus the same reading allowance', () => {
+    const { place, placeServeInsane, serveReturnBonusMs, serveReturnBonusPaceMs, baseMs, perCharMs } = TUNING.flight;
     const pace = 1;
     const chaseLen = 14;
     const v = 1;
-    const base = (pace * (TUNING.flight.baseMs + TUNING.flight.perCharMs * chaseLen)) / v;
+    const base = (pace * (baseMs + perCharMs * chaseLen)) / v;
     const allowance = serveReturnBonusMs + serveReturnBonusPaceMs * pace;
-    expect(flightTimeMs({ pace, chaseLen, v, tier: 'insane', isServe: true, n: 0 })).toBeCloseTo(
-      base * place.insane + allowance,
+    const T = flightTimeMs({ pace, chaseLen, v, tier: 'insane', isServe: true, n: 0 });
+    expect(T).toBeCloseTo(base * placeServeInsane + allowance, 9);
+    expect(T).not.toBeCloseTo(base * place.insane + allowance, 5);
+    expect(T).not.toBeCloseTo(base * 1 + allowance, 5);
+    expect(placeServeInsane).toBeGreaterThan(place.hard);
+    expect(place.insane).toBeLessThan(place.hard);
+  });
+
+  it('insane rally: still uses place.insane', () => {
+    const { place, baseMs, perCharMs, pressure } = TUNING.flight;
+    const pace = 1;
+    const chaseLen = 14;
+    const v = 1;
+    const n = 2;
+    const base = (pace * (baseMs + perCharMs * chaseLen)) / v;
+    expect(flightTimeMs({ pace, chaseLen, v, tier: 'insane', isServe: false, n })).toBeCloseTo(
+      base * place.insane * pressure,
       9,
     );
-    expect(place.insane).toBeLessThan(1);
   });
 
   it('never leaves more time for harder placement: T(insane) < T(hard) < T(medium) < T(easy)', () => {
