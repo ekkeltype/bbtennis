@@ -1,3 +1,4 @@
+import { choiceOptions, levelAfterStrike, levelFromKeys } from './power';
 import type {
   EventBody,
   GameEvent,
@@ -220,8 +221,10 @@ function letter(t: TurnState, ch: string, τ: number, out: GameEvent[]): void {
   const result = applyLetter(p, ch, τ);
   if (result === 'ignored') return;
   if (result === 'wrong') {
+    const before = levelFromKeys(t, τ);
     t.log.push({ τ, k: 'bad', prompt: p.id, ch });
     emit(t, out, τ, { type: 'keyBad', player, prompt: p.id });
+    if (before !== null && before > 0) emit(t, out, τ, { type: 'power', player, from: before, to: 0 });
     return;
   }
   if (!wasLocked && p.locked !== null) {
@@ -247,7 +250,7 @@ function completed(t: TurnState, p: PromptState, τ: number, out: GameEvent[]): 
   }
   if (p.kind === 'chase') {
     t.phase = 'choice';
-    showPrompt(t, 'choice', d.choice.options, τ, out);
+    showPrompt(t, 'choice', choiceOptions(t, d, τ), τ, out);
     return;
   }
   const contactτ = d.incoming.T + t.frozenMs;
@@ -299,6 +302,9 @@ function fault(t: TurnState, reason: 'ballDropped' | 'timeViolation', τ: number
 function playStrike(t: TurnState, s: StrikeInfo, out: GameEvent[]): void {
   const { player, word, kmh, isServe, stretch, forehand } = s;
   emit(t, out, s.τ, { type: 'strike', player, word: word.word, tier: word.tier, kmh, isServe, stretch, forehand });
+  const from = levelFromKeys(t, s.τ);
+  const to = from === null ? null : levelAfterStrike(from, s.slips);
+  if (from !== null && to !== null && to !== from) emit(t, out, s.τ, { type: 'power', player, from, to });
   endTurn(t, { kind: 'strike', endτ: s.τ, strike: s }, out);
 }
 

@@ -1,3 +1,4 @@
+import { powerAt } from './power';
 import type { PromptKind, StrikeInfo, TurnOutcome, TurnPhase, TurnState, WordOption } from './types';
 import { jsonCopy } from './util';
 
@@ -25,6 +26,7 @@ export interface TurnView {
   chaseProgress: number;          // 0..1 for return turns
   strike: StrikeInfo | null;      // if τ ≥ strike τ
   outcome: TurnOutcome | null;    // only if τ ≥ endτ (or strike τ for queued strikes)
+  power: number | null;           // the owner's meter level at τ (power-meter spec §6); null = meter off
 }
 
 /** Everything the result log says happened up to τ. */
@@ -88,6 +90,7 @@ export function turnViewAt(t: TurnState, τ: number): TurnView {
     chaseProgress,
     strike: outcome?.kind === 'strike' ? outcome.strike : null,
     outcome,
+    power: powerAt(t, τ),
   };
 }
 

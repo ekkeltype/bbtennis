@@ -23,7 +23,9 @@ import type {
 } from '../../src/core/types';
 import {
   CHOICE,
+  CHOICE_4,
   flight,
+  INSANE_WORD,
   opt,
   RALLY_IN,
   RALLY_OUT,
@@ -107,7 +109,7 @@ describe('serve turn', () => {
 
     const events = type(t, 'ball', 3400);
     expect(tags(events)).toEqual([
-      'lock@3400', 'keyOk@3500', 'keyOk@3600', 'keyOk@3700', 'wordDone@3700', 'strike@3700', 'turnEnd@3700',
+      'lock@3400', 'keyOk@3500', 'keyOk@3600', 'keyOk@3700', 'wordDone@3700', 'strike@3700', 'power@3700', 'turnEnd@3700',
     ]);
     expect(t.ended).toBe(true);
     expect(t.phase).toBe('ended');
@@ -316,7 +318,7 @@ describe('return turn', () => {
     expect(tags(turnClock(t, 2999))).toEqual(['bounce@1800']);
     expect(t.ended).toBe(false);
     const end = turnClock(t, 3000);
-    expect(tags(end)).toEqual(['strike@3000', 'turnEnd@3000']);
+    expect(tags(end)).toEqual(['strike@3000', 'power@3000', 'turnEnd@3000']);
     expect(t.ended).toBe(true);
     expect(t.phase).toBe('ended');
 
@@ -358,7 +360,7 @@ describe('return turn', () => {
   it('stretch: completion in (T, T + grace] strikes at completion with v × 0.9 and σ + 0.5', () => {
     const t = chased();
     const events = type(t, 'drop', 2900);
-    expect(tags(events)).toEqual(['bounce@1800', 'lock@2900', 'keyOk@3000', 'keyOk@3100', 'keyOk@3200', 'wordDone@3200', 'strike@3200', 'turnEnd@3200']);
+    expect(tags(events)).toEqual(['bounce@1800', 'lock@2900', 'keyOk@3000', 'keyOk@3100', 'keyOk@3200', 'wordDone@3200', 'strike@3200', 'power@3200', 'turnEnd@3200']);
     const s = strikeOf(t);
     expect(t.outcome?.endτ).toBe(3200);
     expect(s.τ).toBe(3200);
@@ -493,7 +495,7 @@ describe('deadline ordering', () => {
     expect(t.outcome?.endτ).toBe(3000);
     expect(t.ended).toBe(false);
     expect(nextDeadline(t)).toBe(3000);
-    expect(tags(turnClock(t, 3000))).toEqual(['strike@3000', 'turnEnd@3000']);
+    expect(tags(turnClock(t, 3000))).toEqual(['strike@3000', 'power@3000', 'turnEnd@3000']);
     expect(strikeOf(t).stretch).toBe(false);
   });
 
@@ -608,7 +610,7 @@ describe('training freeze', () => {
     type(t, 'drop', 2300);
     expect(t.frozenMs).toBe(2000);
     expect(t.outcome?.endτ).toBe(5000);
-    expect(tags(turnClock(t, 5000))).toEqual(['bounce@3800', 'strike@5000', 'turnEnd@5000']);
+    expect(tags(turnClock(t, 5000))).toEqual(['bounce@3800', 'strike@5000', 'power@5000', 'turnEnd@5000']);
   });
 
   it('does not freeze for kinds already seen or without freezeFirst', () => {
@@ -831,5 +833,82 @@ describe('turn state', () => {
     type(t, 'tiebreaker', 3100, 50);
     const target: Vec2 = serveTargets(1, 'deuce', 'wide')[2]!;
     expect(strikeOf(t).target).toEqual(target);
+  });
+});
+
+describe('power meter in the turn runner (power-meter spec §4)', () => {
+  const typeAt = (t: TurnState, word: string, from: number, gap = 100): GameEvent[] =>
+    [...word].flatMap((ch, i) => turnInput(t, ch, from + i * gap));
+  const powerEvents = (events: GameEvent[]) => events.filter((e) => e.type === 'power');
+
+  it('a full meter and a clean chase: the choice shows 4 options, and the insane word strikes at its target', () => {
+    const t = createTurn(returnData({ power: 4, choice: CHOICE_4 }));
+    startTurn(t);
+    typeAt(t, 'ball', 100);
+    expect(t.prompts[1]!.options.map((o) => o.word)).toEqual(CHOICE_4.options.map((o) => o.word));
+    const events = typeAt(t, INSANE_WORD, 600);
+    events.push(...turnClock(t, 3000));
+    expect(t.outcome?.kind).toBe('strike');
+    if (t.outcome?.kind !== 'strike') return;
+    expect(t.outcome.strike.word.tier).toBe('insane');
+    expect(t.outcome.strike.target).toEqual(CHOICE_4.targets[3]);
+    expect(powerEvents(events)).toEqual([]); // 4 stays 4
+  });
+
+  it('a wrong key in the chase empties the meter at once and the choice shows 3 options', () => {
+    const t = createTurn(returnData({ power: 4, choice: CHOICE_4 }));
+    startTurn(t);
+    const events = typeAt(t, 'bzall', 100);
+    expect(powerEvents(events)).toEqual([{ turn: 8, τ: 200, type: 'power', player: 1, from: 4, to: 0 }]);
+    expect(t.prompts[1]!.options).toHaveLength(3);
+  });
+
+  it('a flawless queued choice fills the meter by one at contact, after the strike event', () => {
+    const t = createTurn(returnData({ power: 2 }));
+    startTurn(t);
+    const events = [...typeAt(t, 'ball', 100), ...typeAt(t, 'drop', 600), ...turnClock(t, 3000)];
+    const types = events.filter((e) => ['strike', 'power', 'turnEnd'].includes(e.type)).map((e) => e.type);
+    expect(types).toEqual(['strike', 'power', 'turnEnd']);
+    expect(powerEvents(events)).toEqual([{ turn: 8, τ: 3000, type: 'power', player: 1, from: 2, to: 3 }]);
+  });
+
+  it('an OUT call cancels the turn: no fill, but a wrong key before it still empties the meter', () => {
+    const clean = createTurn(returnData({ power: 2, incoming: RALLY_OUT }));
+    startTurn(clean);
+    const cleanEvents = [...typeAt(clean, 'ball', 100), ...typeAt(clean, 'drop', 600), ...turnClock(clean, 3500)];
+    expect(clean.outcome?.kind).toBe('call');
+    expect(powerEvents(cleanEvents)).toEqual([]);
+    const slipped = createTurn(returnData({ power: 2, incoming: RALLY_OUT }));
+    startTurn(slipped);
+    const slipEvents = [...typeAt(slipped, 'bzall', 100), ...turnClock(slipped, 3500)];
+    expect(powerEvents(slipEvents)).toEqual([{ turn: 8, τ: 200, type: 'power', player: 1, from: 2, to: 0 }]);
+  });
+
+  it('a full-meter serve offers 4 words; the insane word strikes at the insane box target', () => {
+    const t = createTurn(serveData({ power: 4, wordSets: [serveSet([...SET_A, 'quarterfinalist']), serveSet([...SET_B, INSANE_WORD], 'wide')] }));
+    startTurn(t);
+    turnInput(t, 'toss', 2600);
+    expect(t.prompts[0]!.options).toHaveLength(4);
+    typeAt(t, 'quarterfinalist', 2700);
+    expect(t.outcome?.kind).toBe('strike');
+    if (t.outcome?.kind !== 'strike') return;
+    expect(t.outcome.strike.target).toEqual(t.data.kind === 'serve' ? t.data.wordSets[0]!.targets[3] : null);
+  });
+
+  it('a slip in a serve word empties the meter but the serve still strikes', () => {
+    const t = createTurn(serveData({ power: 3 }));
+    startTurn(t);
+    turnInput(t, 'toss', 2600);
+    const events = typeAt(t, 'bzall', 2700);
+    expect(powerEvents(events)).toEqual([{ turn: 7, τ: 2800, type: 'power', player: 0, from: 3, to: 0 }]);
+    expect(t.outcome?.kind).toBe('strike');
+  });
+
+  it('with the meter off (training) there are no power events', () => {
+    const t = createTurn(returnData({ power: null }));
+    startTurn(t);
+    const events = [...typeAt(t, 'bzall', 100), ...typeAt(t, 'drop', 700), ...turnClock(t, 3000)];
+    expect(powerEvents(events)).toEqual([]);
+    expect(t.prompts[1]!.options).toHaveLength(3);
   });
 });

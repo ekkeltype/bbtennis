@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { rallyTargets } from '../../src/core/court';
+import { powerAt } from '../../src/core/power';
+import { redactTurn } from '../../src/core/redact';
 import { createTurn, simTime, startTurn, turnClock, turnInput } from '../../src/core/turn';
 import { type TurnView, turnViewAt } from '../../src/core/turnView';
 import type { ReturnTurnData, ServeTurnData, TurnData, TurnState, WordOption } from '../../src/core/types';
 import { progress } from '../../src/core/typing';
-import { CHOICE, opt, RALLY_OUT, returnData, SET_A, SET_B, serveData, serveSet } from './turnFixtures';
+import { CHOICE, CHOICE_4, opt, RALLY_OUT, returnData, SET_A, SET_B, serveData, serveSet } from './turnFixtures';
 
 /** Player 1's second serve to player 0 from the ad side, after a 1.5 s fault call. */
 const secondServe = (over: Partial<ServeTurnData> = {}): ServeTurnData =>
@@ -59,6 +61,7 @@ function liveView(t: TurnState, τ: number): TurnView {
     chaseProgress: chase === undefined ? 0 : progress(chase),
     strike: outcome?.kind === 'strike' ? outcome.strike : null,
     outcome,
+    power: powerAt(t, τ),
   };
   return JSON.parse(JSON.stringify(view)) as TurnView;
 }
@@ -234,6 +237,7 @@ describe('turnViewAt', () => {
       chaseProgress: 0,
       strike: null,
       outcome: null,
+      power: 0,
     });
     expect(turnViewAt(createTurn(secondServe()), 5000).phase).toBe('leadIn');
   });
@@ -255,5 +259,21 @@ describe('turnViewAt', () => {
     view.strike!.flight.T = 0;
     view.outcome!.endτ = 0;
     expect(t.outcome).toEqual(before);
+  });
+});
+
+describe('TurnView.power (power-meter spec §6)', () => {
+  it('matches powerAt at every τ, on the owner\'s turn and on the redacted copy the other player sees', () => {
+    const t = createTurn(returnData({ power: 3, choice: CHOICE_4 }));
+    startTurn(t);
+    [...'bzall'].forEach((ch, i) => turnInput(t, ch, 100 + 100 * i));
+    [...'drop'].forEach((ch, i) => turnInput(t, ch, 700 + 100 * i));
+    turnClock(t, 3000);
+    const other = redactTurn(t, 0);
+    for (const τ of [0, 199, 200, 1000, 2999, 3000]) {
+      expect(turnViewAt(t, τ).power, `τ ${τ}`).toBe(powerAt(t, τ));
+      expect(turnViewAt(other, τ).power, `redacted τ ${τ}`).toBe(powerAt(t, τ));
+    }
+    expect(turnViewAt(t, 3000).power).toBe(1);
   });
 });
