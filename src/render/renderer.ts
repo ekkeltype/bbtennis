@@ -73,7 +73,7 @@ export class Renderer {
     drawWorld(g, f, { poses, ball, rings: prompts.rings, leaders: prompts.leaders, sheets, effects: this.effects, clockMs: this.clockMs });
     g.restore();
     drawPrompts(g, prompts);
-    this.hud.draw(g, f, prefs);
+    this.hud.draw(g, f, prefs, this.clockMs);
     this.screen.present();
   }
 

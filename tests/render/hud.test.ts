@@ -17,7 +17,7 @@ import type {
 } from '../../src/core/types';
 import { contrastRatio, relativeLuminance } from '../../src/render/color';
 import { BANDS, layoutSingle } from '../../src/render/layout';
-import { BELT_COLOR, OUTLINE, PAL, RAMPS } from '../../src/render/palette';
+import { BELT_COLOR, OUTLINE, PAL, RAMPS, TIER_COLOR, TIER_TYPED } from '../../src/render/palette';
 import { project } from '../../src/render/projection';
 import { headHeight } from '../../src/render/prompts';
 import { HAIR_STYLES } from '../../src/render/sprites/parts';
@@ -27,12 +27,14 @@ import {
   bannerFor,
   beltColor,
   leadInBanners,
+  meterLevels,
+  meterRects,
   scoreRows,
   serveClockSeconds,
   speedReadout,
   type Banner,
 } from '../../src/render/hud';
-import { worldFrame } from '../../src/render/world';
+import { worldFrame, type WorldFrame } from '../../src/render/world';
 import { RALLY_IN, flight, opt, returnData, serveData } from '../core/turnFixtures';
 
 const LOOK: Look = { skin: 0, hairStyle: 0, hair: 0, shirt: 6, shorts: 0, headband: null, racket: 0 };
@@ -641,5 +643,44 @@ describe('Hud readouts', () => {
     hud.update(worldFrame(view(matchState(t), 200, 0, [done(1, 90)])));
     expect(hud.readouts(worldFrame(view(matchState(t), 200)), PREFS).wpm).toBe('62 WPM');
     expect(hud.readouts(worldFrame(view(matchState(t), 200)), { ...PREFS, showWpm: false }).wpm).toBeNull();
+  });
+});
+
+describe('power meter (power-meter spec §6)', () => {
+  const frame = (over: { training?: boolean; power?: [number, number]; owner?: 0 | 1; live?: number | null }): WorldFrame =>
+    ({
+      pub: { config: { training: over.training ? {} : null }, power: over.power ?? [0, 0] },
+      turn: over.owner === undefined ? null : { data: { owner: over.owner } },
+      view: over.owner === undefined ? null : { power: over.live ?? null },
+    }) as unknown as WorldFrame;
+
+  it('shows each player\'s committed level, the turn owner\'s live level, and nothing in training', () => {
+    expect(meterLevels(frame({ power: [2, 4] }))).toEqual([2, 4]);
+    expect(meterLevels(frame({ power: [4, 1], owner: 0, live: 0 }))).toEqual([0, 1]);
+    expect(meterLevels(frame({ power: [3, 1], owner: 1, live: 2 }))).toEqual([3, 2]);
+    expect(meterLevels(frame({ training: true, power: [0, 0] }))).toBeNull();
+  });
+
+  it('paints a backing strip and four 3×5 segments per row inside the HUD band, x ≤ 170', () => {
+    const rects = meterRects([2, 4], 0, false);
+    expect(rects).toHaveLength(10);
+    for (const r of rects) {
+      expect(r.x + r.w - 1).toBeLessThanOrEqual(170);
+      expect(r.y).toBeGreaterThanOrEqual(0);
+      expect(r.y + r.h - 1).toBeLessThanOrEqual(21);
+    }
+    const [strip0, ...rest] = rects;
+    expect(strip0!.color).toBe(OUTLINE);
+    const row0 = rest.slice(0, 4);
+    expect(row0.map((r) => [r.w, r.h])).toEqual([[3, 5], [3, 5], [3, 5], [3, 5]]);
+    expect(row0.map((r) => r.color)).toEqual([TIER_COLOR.insane, TIER_COLOR.insane, PAL.slate, PAL.slate]);
+  });
+
+  it('pulses a full meter every 400 ms unless Reduce effects keeps it steady', () => {
+    const lit = (clockMs: number, steady: boolean): string => meterRects([0, 4], clockMs, steady)[6]!.color;
+    expect(lit(0, false)).toBe(TIER_COLOR.insane);
+    expect(lit(400, false)).toBe(TIER_TYPED.insane);
+    expect(lit(800, false)).toBe(TIER_COLOR.insane);
+    expect(lit(400, true)).toBe(TIER_COLOR.insane);
   });
 });

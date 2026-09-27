@@ -1,4 +1,5 @@
 import { CPU_LEVELS } from '../core/cpu';
+import { POWER_MAX } from '../core/power';
 import { currentServer, pointsDisplay, setLine, situation, type SetCell } from '../core/scoring';
 import { TUNING } from '../core/tuning';
 import type { DisplayPrefs, LeadIn, PlayerInfo, PublicState, ScoreState } from '../core/types';
@@ -6,7 +7,7 @@ import { clamp, easeOutQuad } from '../core/util';
 import { contrastRatio } from './color';
 import { checker } from './court';
 import { drawText, FONT, textWidth } from './font';
-import { BELT_COLOR, OUTLINE, PAL, RAMPS, type Ramp } from './palette';
+import { BELT_COLOR, OUTLINE, PAL, RAMPS, TIER_COLOR, TIER_TYPED, type Ramp } from './palette';
 import { H, W } from './projection';
 import { createLayer, type Layer } from './screen';
 import type { WorldFrame } from './world';
@@ -195,11 +196,49 @@ function shadowText(ctx: CanvasRenderingContext2D, s: string, x: number, y: numb
 
 // Scoreboard geometry: x 2–150, two 9 px rows inside a 1 px frame (spec §4.3).
 const BOARD = { x: 2, y: 1, w: 149, h: 20, row: 9 };
+/** Power meters (power-meter spec §6): four 3×5 segments, 1 px apart, right of each scoreboard row; full ones pulse every 400 ms. */
+const METER = { x: BOARD.x + BOARD.w + 3, dy: 2, segW: 3, segH: 5, gap: 1, pulseMs: 400 };
 const POINTS_W = 16;
 const GAMES_W = 9;
 const NAME_X = BOARD.x + 13;
 /** A set column: 1 px before its numbers and 2 px after them (8 px for one digit). */
 const SET_PAD = { left: 1, right: 2 };
+
+/** One rectangle of the HUD power meters, in buffer pixels. */
+export interface MeterRect { x: number; y: number; w: number; h: number; color: string }
+
+/**
+ * Both players' meter levels as shown this frame: the committed `pub.power`, with the turn owner's
+ * live level at the displayed τ (a slip empties it at once), or null in training (meter off).
+ */
+export function meterLevels(f: WorldFrame): [number, number] | null {
+  if (f.pub.config.training !== null) return null;
+  const levels: [number, number] = [f.pub.power[0], f.pub.power[1]];
+  const owner = f.turn?.data.owner;
+  const live = f.view?.power ?? null;
+  if (owner !== undefined && live !== null) levels[owner] = live;
+  return levels;
+}
+
+/**
+ * The meters' rectangles, row by row: a dark backing strip, then lit segments in the insane colour
+ * (alternating with its typed shade every 400 ms at a full meter, unless `steady`) and unlit ones in slate.
+ */
+export function meterRects(levels: [number, number], clockMs: number, steady: boolean): MeterRect[] {
+  const out: MeterRect[] = [];
+  const stripW = POWER_MAX * METER.segW + (POWER_MAX - 1) * METER.gap + 2;
+  levels.forEach((level, row) => {
+    const top = BOARD.y + 1 + row * BOARD.row + METER.dy;
+    out.push({ x: METER.x - 1, y: top - 1, w: stripW, h: METER.segH + 2, color: OUTLINE });
+    const pulse = level >= POWER_MAX && !steady && Math.floor(clockMs / METER.pulseMs) % 2 === 1;
+    const lit = pulse ? TIER_TYPED.insane : TIER_COLOR.insane;
+    for (let k = 0; k < POWER_MAX; k++) {
+      const x = METER.x + k * (METER.segW + METER.gap);
+      out.push({ x, y: top, w: METER.segW, h: METER.segH, color: k < level ? lit : PAL.slate });
+    }
+  });
+  return out;
+}
 
 /** Superscript digits (3×5), drawn 1 px right of the number they belong to, level with its top. */
 const SUP_DIGITS: readonly (readonly string[])[] = [
@@ -389,10 +428,10 @@ function message(ctx: CanvasRenderingContext2D, title: string, line: string | nu
 }
 
 /**
- * The heads-up display (spec §4.3, Task 18 ruling 5): TV scoreboard, serve clock, strike speed and
- * last-word WPM, pause button, coach text, call and situation banners, and the session overlays
- * (pause dim, resume countdown, focus lost, "Connection unstable...", RTT). A spectator (the attract
- * demo behind Title and Main menu) gets none of it, whatever the display prefs.
+ * The heads-up display (spec §4.3, Task 18 ruling 5): TV scoreboard, power meters, serve clock,
+ * strike speed and last-word WPM, pause button, coach text, call and situation banners, and the
+ * session overlays (pause dim, resume countdown, focus lost, "Connection unstable...", RTT). A
+ * spectator (the attract demo behind Title and Main menu) gets none of it, whatever the display prefs.
  */
 export class Hud {
   private lastWpm: number | null = null;
@@ -414,12 +453,16 @@ export class Hud {
   }
 
   /** Draws the HUD, the banners and the overlays over the world and prompt layers. */
-  draw(ctx: CanvasRenderingContext2D, f: WorldFrame, prefs: DisplayPrefs): void {
+  draw(ctx: CanvasRenderingContext2D, f: WorldFrame, prefs: DisplayPrefs, clockMs = 0): void {
     if (f.vm.viewer === 'spectator') return;
     const { overlay } = f.vm;
     if (overlay.paused || overlay.focusLost) dim(ctx);
     if (overlay.coach) drawCoach(ctx, overlay.coach);
-    else drawScoreboard(ctx, f.pub);
+    else {
+      drawScoreboard(ctx, f.pub);
+      const levels = meterLevels(f);
+      if (levels) for (const r of meterRects(levels, clockMs, prefs.reduceEffects)) rect(ctx, r.x, r.y, r.w, r.h, r.color);
+    }
     const clock = serveClockSeconds(f);
     if (clock !== null) drawServeClock(ctx, clock);
     const r = this.readouts(f, prefs);
