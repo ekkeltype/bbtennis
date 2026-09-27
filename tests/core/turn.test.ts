@@ -10,6 +10,7 @@ import {
   turnClock,
   turnInput,
 } from '../../src/core/turn';
+import { TUNING } from '../../src/core/tuning';
 import { serveClockτ } from '../../src/core/turnServe';
 import type {
   GameEvent,
@@ -334,9 +335,9 @@ describe('return turn', () => {
     expect(s.flight.p0).toEqual({ x: RALLY_IN.contact.x, y: RALLY_IN.contact.y, z: 1 });
     expect(s.flight.destEnd).toBe(0);
     expect(s.flight.isServe).toBe(false);
-    // Rally T at n = data.n + 1 = 2: pace·(2.2 s + 0.1 s·len)/v · place(easy) 1.0 · 0.85^⌊2/2⌋.
-    expect(s.flight.T).toBeCloseTo(((2200 + 100 * 4) / v) * 1.0 * 0.85, 6);
-    expect(s.kmh).toBe(Math.round((95 * v * 1.0) / 0.85));
+    // Rally T at n = data.n + 1 = 2: pace·(2.2 s + 0.1 s·len)/v · place(easy) 1.0 · P(2).
+    expect(s.flight.T).toBeCloseTo(((2200 + 100 * 4) / v) * 1.0 * TUNING.flight.pressure, 6);
+    expect(s.kmh).toBe(Math.round((95 * v * 1.0) / TUNING.flight.pressure));
     expect(s.forehand).toBe(stanceFor(RALLY_IN.contact, 1, restSpot(1)).forehand);
     expect(end[0]).toEqual({
       turn: 8, τ: 3000, type: 'strike', player: 1, word: 'drop', tier: 'easy', kmh: s.kmh, isServe: false, stretch: false, forehand: s.forehand,
@@ -351,7 +352,7 @@ describe('return turn', () => {
     expect(s.option).toBe(2);
     expect(s.word.tier).toBe('hard');
     expect(s.target).toEqual(rallyTargets(0, 1)[2]);
-    expect(s.flight.T).toBeCloseTo(((2200 + 100 * 10) / s.v) * 0.7 * 0.85, 6);
+    expect(s.flight.T).toBeCloseTo(((2200 + 100 * 10) / s.v) * 0.7 * TUNING.flight.pressure, 6);
   });
 
   it('stretch: completion in (T, T + grace] strikes at completion with v × 0.9 and σ + 0.5', () => {

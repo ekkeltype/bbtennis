@@ -97,18 +97,29 @@ describe('strikeV', () => {
 });
 
 describe('flightTimeMs', () => {
-  it('rally: pace·(2200 + 100·len)/v · place · 0.85^⌊n/2⌋', () => {
-    expect(flightTimeMs({ pace: 1, chaseLen: 8, v: 1, tier: 'medium', isServe: false, n: 3 })).toBeCloseTo(2167.5, 9);
+  it('rally: pace·(2200 + 100·len)/v · place · P(n)', () => {
+    const p = TUNING.flight.pressure;
+    expect(flightTimeMs({ pace: 1, chaseLen: 8, v: 1, tier: 'medium', isServe: false, n: 3 })).toBeCloseTo(3000 * 0.85 * p, 9);
     expect(flightTimeMs({ pace: 0.6, chaseLen: 5, v: 1.25, tier: 'hard', isServe: false, n: 0 })).toBeCloseTo(907.2, 9);
   });
 
-  it('applies pressure once per two rally strikes (⌊n/2⌋)', () => {
+  it('applies pressure once per two rally strikes (⌊n/2⌋) and never below the floor', () => {
+    const { pressure: p, pressureFloor: floor } = TUNING.flight;
     const at = (n: number): number => flightTimeMs({ pace: 1, chaseLen: 3, v: 1, tier: 'easy', isServe: false, n });
     expect(at(0)).toBeCloseTo(2500, 9);
     expect(at(1)).toBeCloseTo(2500, 9);
-    expect(at(2)).toBeCloseTo(2125, 9);
-    expect(at(4)).toBeCloseTo(1806.25, 9);
-    expect(at(5)).toBeCloseTo(1806.25, 9);
+    expect(at(2)).toBeCloseTo(2500 * p, 9);
+    expect(at(4)).toBeCloseTo(2500 * p * p, 9);
+    expect(at(5)).toBeCloseTo(2500 * p * p, 9);
+    expect(at(200)).toBeCloseTo(2500 * floor, 9);
+    for (let n = 0; n <= 60; n++) expect(at(n + 1)).toBeLessThanOrEqual(at(n));
+  });
+
+  it('keeps the pressure constants sane: 0 < floor < 1, floor < pressure < 1', () => {
+    const { pressure, pressureFloor } = TUNING.flight;
+    expect(pressureFloor).toBeGreaterThan(0);
+    expect(pressureFloor).toBeLessThan(pressure);
+    expect(pressure).toBeLessThan(1);
   });
 
   it('serve: place 1 for every tier plus the 250 + 750·pace reading allowance', () => {
@@ -154,11 +165,12 @@ describe('displayKmh', () => {
     expect(displayKmh(0.8, 'easy', 0, false)).toBe(76);
   });
 
-  it('divides by 0.85^⌊n/2⌋ so deeper rallies read faster', () => {
+  it('divides by P(n) so deeper rallies read faster, up to the floor', () => {
+    const { pressure: p, pressureFloor: floor } = TUNING.flight;
     expect(displayKmh(1, 'easy', 1, false)).toBe(95);
-    expect(displayKmh(1, 'easy', 2, false)).toBe(112); // 111.76
-    expect(displayKmh(1, 'easy', 3, false)).toBe(112);
-    expect(displayKmh(1, 'easy', 4, false)).toBe(131); // 131.49
+    expect(displayKmh(1, 'easy', 2, false)).toBe(Math.round(95 / p));
+    expect(displayKmh(1, 'easy', 4, false)).toBe(Math.round(95 / (p * p)));
+    expect(displayKmh(1, 'easy', 200, false)).toBe(Math.round(95 / floor));
   });
 
   it('multiplies serves by 1.25 and still shows a whole number', () => {

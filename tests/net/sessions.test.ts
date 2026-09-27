@@ -244,9 +244,10 @@ describe('online sessions: redaction', () => {
       expect(scan.confirmations, where).toBeGreaterThan(scan.frames / 2);
       // The scan had something to find: frames carrying host turns, and every frame checked against each
       // host serve word still secret (spare and appended sets too) and each host random. The floors are
-      // about half the smallest match's counts (the 0 ms tiebreak: 1135 frames, ~196k and ~1.9M checks).
+      // about half the smallest match's counts (the 0 ms tiebreak: ~97k word checks after gentler rally
+      // pressure, randoms still ~1.9M).
       expect(scan.framesWithHostTurns, where).toBeGreaterThan(500);
-      expect(scan.wordsChecked, where).toBeGreaterThan(100_000);
+      expect(scan.wordsChecked, where).toBeGreaterThan(50_000);
       expect(scan.randomsChecked, where).toBeGreaterThan(1_000_000);
       expect(run.secrets.maxSets, where).toBeGreaterThanOrEqual(3);
     }

@@ -3,12 +3,16 @@ import { TUNING } from './tuning';
 import type { ShotOutcome, ShotRandoms, ShotResult, Tier, Vec2 } from './types';
 import { clamp, lerp } from './util';
 
-/** pressure^⌊n/2⌋ by repeated multiplication (not Math.pow), so every JS engine gets identical bits. */
+/**
+ * Rally pressure P(n) = max(pressureFloor, pressure^⌊n/2⌋) (power-meter spec §2), the power by repeated
+ * multiplication (not Math.pow), so every JS engine gets identical bits.
+ */
 function pressureFactor(n: number): number {
+  const { pressure, pressureFloor } = TUNING.flight;
   const steps = Math.floor(n / 2);
   let f = 1;
-  for (let i = 0; i < steps; i++) f *= TUNING.flight.pressure;
-  return f;
+  for (let i = 0; i < steps && f > pressureFloor; i++) f *= pressure;
+  return Math.max(pressureFloor, f);
 }
 
 /** Speed factor for a word typed at `cps`: clamp(0.875 + 0.025·(cps − 3), 0.80, 1.30) (spec §3.4; constants in TUNING.speed). */
@@ -31,6 +35,7 @@ export function strikeV(cps: number, opts: { contactFactor?: number; stretch?: b
 /**
  * Flight time T (ms) from a strike to the receiver's contact point (spec §3.4). `chaseLen` is the
  * struck word's length; `n` is the number of rally strikes after the serve before this one.
+ * Rally flight is scaled by P(n).
  */
 export function flightTimeMs(a: {
   pace: number;
@@ -51,7 +56,7 @@ export function graceMs(pace: number): number {
   return TUNING.graceMs * pace;
 }
 
-/** Displayed ball speed in whole km/h (flavour only, spec §3.4); the serve ×1.25 is applied before rounding. */
+/** Displayed ball speed in whole km/h (flavour only, spec §3.4); divides by P(n); the serve ×1.25 is applied before rounding. */
 export function displayKmh(v: number, tier: Tier, n: number, isServe: boolean): number {
   const k = TUNING.kmh;
   const serveMult = isServe ? k.serveMult : 1;
