@@ -4,10 +4,12 @@ import type { PaceId, Tier } from './types';
 export const PACE_MULT: Record<PaceId, number> = { relaxed: 1.5, normal: 1.0, fast: 0.75, lightning: 0.6 };
 
 /**
- * All gameplay constants (spec §3). Balance targets (spec §6 as amended in ac7c81b, rulings R35/R36),
- * for equal players at each pace's reference WPM (Relaxed 30, Normal 50, Fast 70, Lightning 90):
- * median rally 3–6 shots, p90 ≤ 12, max 40; aces ≤ 15 % (no lower bound); double faults 1–6 %;
- * server wins 55–65 %; ≤ 35 s per point. These constants meet all of them (measured values:
+ * All gameplay constants (spec §3). Balance targets (spec §6 as amended in ac7c81b, rulings R35/R36,
+ * and by the power-meter spec of 2026-09-27), for equal players at each pace's reference WPM
+ * (Relaxed 30, Normal 50, Fast 70, Lightning 90): median rally Relaxed 10–14, Normal 7–11, Fast 4–7,
+ * Lightning 3–5 shots (the measured result, accepted by the user), p90 ≤ 22, max 60; aces ≤ 15 %
+ * (no lower bound); double faults 1–8 %; server wins 55–65 %; ≤ 65 s per point; clean insane shots
+ * returned 15–40 %; never-insane wins 40–51 %. These constants meet all of them (measured values:
  * tests/sim/balance.test.ts).
  */
 export const TUNING = {
@@ -42,8 +44,8 @@ export const TUNING = {
   graceMs: 400,
   // Speed factor v = 0.875 + 0.025·(cps − 3) (spec §3.4; the original draft's 0.85 + 0.05·(cps − 3)
   // → 0.875 + 0.025·(cps − 3), amended ac7c81b; both give v ≈ 0.91 at 50 WPM). The gentler slope
-  // keeps Relaxed/30 WPM points ≤ 35 s and Lightning/90 WPM rallies at 3+ shots with the spec's
-  // pace multipliers (balance simulation, spec §6).
+  // kept Relaxed/30 WPM points ≤ 35 s (at the original pressure 0.85) and keeps Lightning/90 WPM
+  // rallies at 3+ shots with the spec's pace multipliers (balance simulation, spec §6).
   speed: { base: 0.875, perCps: 0.025, cpsRef: 3, min: 0.8, max: 1.3, stretchMult: 0.9, minSpanS: 0.05 },
   kmh: { base: 95, tierBonus: { easy: 1.0, medium: 1.05, hard: 1.1, insane: 1.2 } as Record<Tier, number>, serveMult: 1.25 },
   // Insane (power-meter spec §4.3): σ0 0.04 m keeps a flawless insane shot 0.139 m < its 0.15 m margin inside the lines.
