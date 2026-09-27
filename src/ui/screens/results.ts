@@ -1,3 +1,4 @@
+import { CPU_LEVELS } from '../../core/cpu';
 import { setLine } from '../../core/scoring';
 import type { Departure } from '../../game/onlineLink';
 import { BELT_COLOR, RAMPS } from '../../render/palette';
@@ -5,7 +6,9 @@ import { button, panel, swatch } from '../controls';
 import type { ResultsParams, UiContext } from '../context';
 import { h } from '../dom';
 import type { ScreenFactory } from '../router';
+import type { Belt } from '../settings';
 import { headline, setScores, statRows } from '../summary';
+import { rankText } from './cpuSetup';
 
 type MatchResults = Extract<ResultsParams, { kind: 'cpu' | 'online' }>;
 
@@ -67,9 +70,20 @@ function rematchButton(ctx: UiContext, p: MatchResults, opponentGone: boolean): 
   return b;
 }
 
+/**
+ * What a vs-CPU win earned (spec §3.11): a new belt colour, or else the first win at a level with
+ * stripes or a dan grade ("NEW STRIPE EARNED: BROWN BELT, 2 STRIPES!"); null when neither.
+ */
+function earnedLine(p: MatchResults): HTMLElement | null {
+  const line = (belt: Belt, text: string): HTMLElement => h('p', { class: 'belt-earned' }, swatch(RAMPS.cloth[BELT_COLOR[belt]]), text);
+  if (p.newBelt !== null) return line(p.newBelt, `NEW BELT EARNED: ${p.newBelt.toUpperCase()}!`);
+  const level = p.newLevel === undefined ? undefined : CPU_LEVELS[p.newLevel];
+  if (level === undefined) return null;
+  return line(level.belt, `NEW ${level.dan !== 0 ? 'DAN' : 'STRIPE'} EARNED: ${rankText(level)}!`);
+}
+
 function matchResults(ctx: UiContext, p: MatchResults): HTMLElement {
   const won = p.result.winner === p.viewer;
-  const belt = p.newBelt;
   const gone = p.kind === 'online' ? (p.opponentGone ?? null) : null;
   const endedBy = p.kind === 'online' ? (p.endedBy ?? null) : null;
   return panel(
@@ -77,9 +91,7 @@ function matchResults(ctx: UiContext, p: MatchResults): HTMLElement {
     `results ${won ? 'win' : 'loss'}`,
     scoreTable(p),
     statTable(p),
-    belt === null
-      ? null
-      : h('p', { class: 'belt-earned' }, swatch(RAMPS.cloth[BELT_COLOR[belt]]), `NEW BELT EARNED: ${belt.toUpperCase()}!`),
+    earnedLine(p),
     gone !== null && gone !== endedBy ? h('p', { class: 'note opponent-gone' }, GONE[gone]) : null,
     h(
       'div',

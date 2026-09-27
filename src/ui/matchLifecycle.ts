@@ -1,3 +1,4 @@
+import { CPU_LEVELS } from '../core/cpu';
 import { averageWpm } from '../core/engine';
 import type { MatchState } from '../core/types';
 import type { Departure, EndReason } from '../game/onlineLink';
@@ -29,8 +30,8 @@ export interface Match {
   results: ResultsParams | null;
   /** The session is no longer advanced or drawn (a Training session left running when complete). */
   frozen: boolean;
-  /** vs CPU: the match is in the career (recorded once, as it was decided), with the belt it earned; null before. */
-  recorded: { newBelt: Belt | null } | null;
+  /** vs CPU: the match is in the career (recorded once, as it was decided), with what it earned; null before. */
+  recorded: CpuCredit | null;
 }
 
 /** True while a player with `matchesPlayed` vs-CPU matches behind them still gets the hints. */
@@ -98,30 +99,41 @@ export interface CareerState {
  * vs CPU: puts the match into the career through `record` (see PlayerStore.recordCpuMatch) the first
  * time its state `pub` says it is over, the frame its final point is decided, not 3 s later when the
  * celebration has played and Results show: whatever the player does meanwhile (a menu opened in the
- * same frame, a closed tab) keeps the result. Once per match; the earned belt waits in `m.recorded`.
+ * same frame, a closed tab) keeps the result. Once per match; what it earned waits in `m.recorded`.
  */
-export function recordWhenDecided(m: Match, pub: MatchState, record: (level: number, result: MatchState) => Belt | null): void {
+export function recordWhenDecided(m: Match, pub: MatchState, record: (level: number, result: MatchState) => CpuCredit): void {
   if (m.kind !== 'cpu' || m.recorded !== null || pub.status !== 'over') return;
-  m.recorded = { newBelt: record(m.level ?? 0, pub) };
+  m.recorded = record(m.level ?? 0, pub);
 }
 
-/** A finished vs-CPU match's effect on the player's progress, plus the belt it earned (or null). */
-export interface CpuMatchRecord { career: Career; matchesPlayed: number; headband: number | null; newBelt: Belt | null }
+/**
+ * What a finished vs-CPU match earned, for Results: a belt colour new to the career (or null), and
+ * `newLevel`, a level with stripes or a dan grade won for the first time (absent otherwise).
+ */
+export interface CpuCredit { newBelt: Belt | null; newLevel?: number }
+
+/** A finished vs-CPU match's effect on the player's progress, plus what it earned. */
+export interface CpuMatchRecord extends CpuCredit { career: Career; matchesPlayed: number; headband: number | null }
 
 /**
  * A finished vs-CPU match at `level`, the player being player 0 (spec §3.11): into the career (played,
- * won, best average WPM, a beaten milestone's belt), one more match played (the hints count), and the
- * highest earned belt as the headband unless the player chose one. Never changes `s`.
+ * won, best average WPM, the beaten level's belt colour), one more match played (the hints count), and
+ * the highest earned belt as the headband unless the player chose one; a first win at a level with
+ * stripes or a dan grade is reported as `newLevel`. Never changes `s`.
  */
 export function recordCpuMatch(s: CareerState, level: number, result: MatchState): CpuMatchRecord {
   const career = recordCareer(s.career, level, result.winner === 0, averageWpm(result.stats[0]));
   const best = highestBelt(career);
   const newBelt = (career.earned.find((b) => !s.career.earned.includes(b)) as Belt | undefined) ?? null;
+  const info = CPU_LEVELS[level];
+  const graded = info !== undefined && (info.stripes > 0 || info.dan > 0);
+  const firstWin = result.winner === 0 && s.career.perLevel[level]?.won === 0;
   return {
     career,
     matchesPlayed: s.matchesPlayed + 1,
     headband: !s.headbandChosen && best !== null ? BELT_COLOR[best] : s.headband,
     newBelt,
+    ...(graded && firstWin ? { newLevel: level } : {}),
   };
 }
 

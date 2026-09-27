@@ -659,13 +659,6 @@ body {
   background: var(--gold);
 }
 
-#ui .belt .mark {
-  position: absolute;
-  top: calc(-7 * var(--u));
-  left: calc(9 * var(--u));
-  color: var(--gold);
-}
-
 #ui .belt .earned {
   position: absolute;
   top: calc(2 * var(--u));

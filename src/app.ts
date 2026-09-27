@@ -308,9 +308,11 @@ export class App implements UiContext {
     if (result === null) return;
     const viewer = m.session.view?.viewer === 1 ? 1 : 0;
     const newBelt = m.recorded?.newBelt ?? null;
+    const newLevel = m.recorded?.newLevel;
     const canRematch = m.make !== null || m.controls?.rematch !== undefined;
     const online = m.kind === 'online' && m.controls !== null ? onlineEnd(m.controls) : {};
-    this.finish(m, { kind: m.kind, result, viewer, newBelt, canRematch, ...online }, false);
+    const graded = newLevel !== undefined ? { newLevel } : {};
+    this.finish(m, { kind: m.kind, result, viewer, newBelt, ...graded, canRematch, ...online }, false);
   }
 
   /** Training's end: `trainingDone` is stored as the last lesson is done; Results follow (see `trainingEnd`). */

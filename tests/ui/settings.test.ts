@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { CPU_LEVELS } from '../../src/core/cpu';
 import {
+  beaten,
+  creditBeatenLevels,
   DEFAULT_CAREER,
   DEFAULT_PROFILE,
   DEFAULT_SETTINGS,
@@ -174,10 +176,12 @@ describe('recordCareer', () => {
     expect(highestBelt(c)).toBe('green');
   });
 
-  it('earns nothing when beating level 7 (Green belt, 1 stripe: not a milestone)', () => {
-    const c = recordCareer(clone(DEFAULT_CAREER), 7, true, 40);
-    expect(c.earned).toEqual([]);
-    expect(highestBelt(c)).toBeNull();
+  it("earns 'green' when beating level 7 or 8 (Green belt with stripes): any level of a colour earns it", () => {
+    for (const level of [7, 8]) {
+      const c = recordCareer(clone(DEFAULT_CAREER), level, true, 40);
+      expect(c.earned, `level ${level}`).toEqual(['green']);
+      expect(highestBelt(c)).toBe('green');
+    }
   });
 
   it('earns nothing for a lost milestone match', () => {
@@ -216,10 +220,46 @@ describe('recordCareer', () => {
     expect(recordCareer(c, 1, true, -5).bestWpm).toBe(30);
   });
 
+  it('beaten: a level counts as beaten once its record holds a win', () => {
+    let c = recordCareer(clone(DEFAULT_CAREER), 10, false, 50);
+    expect(beaten(c, 10)).toBe(false);
+    c = recordCareer(c, 10, true, 50);
+    expect(beaten(c, 10)).toBe(true);
+    expect(beaten(c, 11)).toBe(false);
+    expect(beaten(c, 15)).toBe(false);
+  });
+
   it('returns the career unchanged for a level outside 0..14', () => {
     const c = clone(DEFAULT_CAREER);
     expect(recordCareer(c, 15, true, 50)).toEqual(c);
     expect(recordCareer(c, 2.5, true, 50)).toEqual(c);
+  });
+});
+
+describe('creditBeatenLevels (wins stored before any level earned its colour)', () => {
+  /** A career with `won` wins stored at each of `levels` and the belts `earned`. */
+  const withWins = (levels: number[], earned: string[] = []): Career => {
+    const c = clone(DEFAULT_CAREER);
+    for (const l of levels) c.perLevel[l] = { played: 1, won: 1 };
+    return { ...c, earned };
+  };
+
+  it('earns the colour of every beaten level: brown with 1 and 2 stripes earn brown', () => {
+    expect(creditBeatenLevels(withWins([10, 11])).earned).toEqual(['brown']);
+  });
+
+  it('keeps the belts already earned first and adds the missing ones in level order, each once', () => {
+    const c = creditBeatenLevels(withWins([1, 7, 8, 13], ['white']));
+    expect(c.earned).toEqual(['white', 'green', 'black']);
+    expect(highestBelt(c)).toBe('black');
+  });
+
+  it('adds nothing for levels only lost, and never changes its input', () => {
+    const lost = clone(DEFAULT_CAREER);
+    lost.perLevel[10] = { played: 3, won: 0 };
+    const snapshot = JSON.stringify(lost);
+    expect(creditBeatenLevels(lost).earned).toEqual([]);
+    expect(JSON.stringify(lost)).toBe(snapshot);
   });
 });
 
