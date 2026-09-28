@@ -6,6 +6,7 @@ import { createTurn, startTurn, turnClock, turnInput } from '../../src/core/turn
 import type {
   BallFlight,
   DisplayPrefs,
+  EarlyView,
   GameEvent,
   Look,
   MatchState,
@@ -23,7 +24,7 @@ import { TIER_COLOR } from '../../src/render/palette';
 import { PlayerAnimator, type PlayerPose } from '../../src/render/players';
 import { project } from '../../src/render/projection';
 import type { LeaderMark, RingMark } from '../../src/render/prompts';
-import { PAUSE_ICON_RECT, Renderer } from '../../src/render/renderer';
+import { PAUSE_ICON_RECT, popKey, Renderer } from '../../src/render/renderer';
 import type { Screen } from '../../src/render/screen';
 import type { SpriteSheet } from '../../src/render/sprites/sheet';
 import { drawWorld, worldFrame, type WorldFrame } from '../../src/render/world';
@@ -482,5 +483,22 @@ describe('Renderer', () => {
     startTurn(t);
     r.draw(view(matchState(t), 100), PREFS, 16);
     expect(present).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('popKey (early-typing spec §6.4)', () => {
+  const frameOf = (over: { early?: EarlyView | null; turn?: unknown; view?: unknown }): WorldFrame =>
+    ({ local: 0, turn: over.turn ?? null, view: over.view ?? null, vm: { early: over.early ?? null } }) as unknown as WorldFrame;
+
+  it("pops the local player's early chase once per striker turn", () => {
+    const early = { player: 0, prompt: {} } as EarlyView;
+    expect(popKey(frameOf({ early, turn: { data: { turnId: 9, owner: 1 } } }))).toBe('early:9');
+    expect(popKey(frameOf({ early: { ...early, player: 1 }, turn: { data: { turnId: 9, owner: 1 } } }))).toBeNull();
+  });
+
+  it('does not pop a chase that was shown early, but does pop one shown at τ 0 or later', () => {
+    const chase = (shownAt: number) => ({ turn: { data: { turnId: 10, owner: 0 } }, view: { active: 0, prompts: [{ id: 50, kind: 'chase', shownAt }] } });
+    expect(popKey(frameOf(chase(-800)))).toBeNull();
+    expect(popKey(frameOf(chase(0)))).toBe('prompt:50');
   });
 });

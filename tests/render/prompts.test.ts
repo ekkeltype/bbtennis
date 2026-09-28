@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { rallyTargets, receiverSpot, serverSpot } from '../../src/core/court';
+import { EarlyChase } from '../../src/core/early';
 import { createScore } from '../../src/core/scoring';
 import { stanceFor } from '../../src/core/trajectory';
 import { createTurn, startTurn, turnClock, turnInput } from '../../src/core/turn';
@@ -22,7 +23,7 @@ import type { PlateDraw } from '../../src/render/plates';
 import { PlayerAnimator, type PlayerPose } from '../../src/render/players';
 import { project } from '../../src/render/projection';
 import { drawPrompts, headHeight, promptScene, type PromptScene } from '../../src/render/prompts';
-import { worldFrame } from '../../src/render/world';
+import { groundAt, worldFrame } from '../../src/render/world';
 import { CHOICE, CHOICE_4, INSANE_WORD, RALLY_IN, flight, opt, returnData, serveData } from '../core/turnFixtures';
 
 const LOOK: Look = { skin: 1, hairStyle: 2, hair: 3, shirt: 6, shorts: 7, headband: 5, racket: 2 };
@@ -587,5 +588,51 @@ describe('drawPrompts', () => {
     expect(first(10)).toBeGreaterThanOrEqual(0);
     expect(first(10)).toBeLessThan(first(100));
     expect(first(100)).toBeLessThan(first(200));
+  });
+});
+
+describe('early chase plate (early-typing spec §6.4)', () => {
+  /** Player 1's return turn with 'drop' locked at 600, and player 0's early chase with 'dr' typed. */
+  function earlyView(viewer: PlayerId | 'spectator' = 0): ViewModel {
+    const t = createTurn(returnData());
+    startTurn(t);
+    typeWord(t, 'ball', 100);
+    turnInput(t, 'd', 600);
+    const early = EarlyChase.open(t, 600, 0)!.chase;
+    early.press('d', 700);
+    early.press('r', 800);
+    return view(matchState(t), 900, viewer, { early: { player: 0, prompt: early.prompt } });
+  }
+
+  it("draws the receiver's chase plate above their head, typed so far, with no timing bar", () => {
+    const vm = earlyView(0);
+    const f = worldFrame(vm);
+    const animator = new PlayerAnimator();
+    const poses = animator.step(f, 16);
+    const s = promptScene(f, poses, {
+      prefs: PREFS,
+      looks: [vm.pub.players[0].look, vm.pub.players[1].look],
+      turnStart: [animator.turnStartFeet(0), animator.turnStartFeet(1)],
+      pop: false,
+    });
+    const plate = s.plates.find((p) => p.opt.word === 'drop' && p.style === 'localActive');
+    expect(plate).toMatchObject({ typed: 2, locked: true, isNextCursor: true });
+    const feetX = groundAt(f, poses[0].feet).x;
+    expect(Math.abs(plate!.box.x + plate!.box.w / 2 - feetX)).toBeLessThanOrEqual(1);
+    expect(plate!.box.y + plate!.box.h).toBeLessThan(groundAt(f, poses[0].feet).y);
+    expect(s.bar).toBeNull();
+  });
+
+  it("shows another viewer's early chase as a remote plate with the typist's name chip", () => {
+    const s = scene(earlyView(1));
+    expect(s.plates.find((p) => p.opt.word === 'drop' && p.typed === 2)).toMatchObject({ style: 'remote', nameChip: 'Alex' });
+  });
+
+  it('draws no early plate without an early chase', () => {
+    const t = createTurn(returnData());
+    startTurn(t);
+    typeWord(t, 'ball', 100);
+    turnInput(t, 'd', 600);
+    expect(scene(view(matchState(t), 900, 0)).plates.filter((p) => p.opt.word === 'drop' && p.style === 'localActive')).toEqual([]);
   });
 });

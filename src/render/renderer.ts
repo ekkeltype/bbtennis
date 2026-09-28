@@ -34,7 +34,7 @@ export class Renderer {
   private sheets: { looks: [Look, Look]; sheets: [SpriteSheet, SpriteSheet] } | null = null;
   private clockMs = 0;
   private overMs = 0;
-  private pop = { prompt: -1, frames: 0 };
+  private pop: { key: string | null; frames: number } = { key: null, frames: 0 };
 
   constructor(screen: Screen) {
     this.screen = screen;
@@ -85,15 +85,26 @@ export class Renderer {
     return sheets;
   }
 
-  /** True on the first two frames of each serve or chase prompt the local player types. */
+  /** True on the first two frames of each serve or chase word the local player can type, early chases included. */
   private popNow(f: WorldFrame): boolean {
-    const v = f.view;
-    const prompt = v && v.active !== null ? v.prompts[v.active] : undefined;
-    if (prompt && f.local !== null && f.turn?.data.owner === f.local && prompt.kind !== 'choice' && prompt.id !== this.pop.prompt) {
-      this.pop = { prompt: prompt.id, frames: POP_FRAMES };
-    }
+    const key = popKey(f);
+    if (key !== null && key !== this.pop.key) this.pop = { key, frames: POP_FRAMES };
     if (this.pop.frames <= 0) return false;
     this.pop.frames--;
     return true;
   }
+}
+
+/**
+ * What the local player can newly type, for the 2-frame border pop (early-typing spec §6.4):
+ * `early:<striker turn>` while their early chase is open, else `prompt:<id>` for their active serve or
+ * chase prompt. A chase first shown before the strike already popped as an early chase, so it gives null.
+ */
+export function popKey(f: WorldFrame): string | null {
+  const early = f.vm.early;
+  if (early !== null && early.player === f.local) return `early:${f.turn?.data.turnId ?? -1}`;
+  const v = f.view;
+  const prompt = v && v.active !== null ? v.prompts[v.active] : undefined;
+  if (!prompt || f.local === null || f.turn?.data.owner !== f.local || prompt.kind === 'choice' || prompt.shownAt < 0) return null;
+  return `prompt:${prompt.id}`;
 }
