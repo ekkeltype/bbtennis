@@ -34,8 +34,9 @@ lock a word and don't finish it, the ball drops: fault. A 30-second serve clock 
 strike, and running out is a fault. Two faults lose the point.
 
 **Return.** When your opponent strikes, the word they hit with appears above you. Type it to run to
-the ball (the chase). Three shot words then appear on your opponent's side: type the first letter of
-one to pick it, and finish it before the ball reaches you. Finish just late and you play a stretch
+the ball (the chase). Three shot words then appear in a stack where the chase word was, each joined
+by a line to the spot it aims for on your opponent's side: type the first letter of one to pick it,
+and finish it before the ball reaches you. Finish just late and you play a stretch
 shot, which is slower and riskier. Finish too late and the ball goes past you: an ace or a winner.
 
 **Placement.** Easy shots land deep in the middle and are safe. Medium goes near a sideline. Hard

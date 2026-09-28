@@ -135,7 +135,8 @@ Keys from a player who is not the active typist are always dropped: never errors
 3. When the chase word completes, the **CHOICE** prompt appears (its words and targets were
    pre-picked with the return turn's start data): three words (a fourth, insane, one while the
    receiver's power meter is still full: pre-picked at a full meter, dropped if a wrong key in the
-   chase emptied it) on the **opponent's half**, visible to both players with live
+   chase emptied it) aimed at the **opponent's half** (the near typist's words stack above its
+   head; amended: choice-stack spec 2026-09-28), visible to both players with live
    typing progress (§4.2 layout). Targets are on the destination half, with `a` = lateral offset
    positive toward the destination player's right and `b` = distance from the net; world
    `x = s_dest·a`, `y = −s_dest·b`; `m = ±1` random:
@@ -376,19 +377,28 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
   unlocked options the first letter is an inverse block in the tier colour. After lock, the other
   options fade out.
 - **Layout**:
-  - Choice plates use three fixed slots in the band of the targeted half, slot centres
+  - **Near typist's choice** (the player drawn at the bottom; amended: choice-stack spec 2026-09-28
+    §2–3): a stack where the chase plate was: easy on top, then medium, hard[, insane], 3 px gaps,
+    each plate centred on the chase plate's column, the bottom plate's bottom edge 4 px above the
+    head at turn start. The stack stays ≥ 8 px below the lowest ring centre and inside the plate
+    area, shifted as one unit with its leaders. Each leader leaves the middle of a plate side
+    (medium and insane from medium's side, hard from the other, easy from the side facing its ring)
+    and runs straight out and up to its ring, or up a lane beside the stack (lanes 4 px apart, lower
+    plates outermost) and across. No two leaders touch; none crosses another plate or ring.
+  - **Far typist's choice**: three fixed slots in the band of the targeted half, slot centres
     x = 90 / 240 / 390; easy always in the centre slot, medium and hard in the left/right slot on
     their target's side. With the insane option (4 plates) the slot centres are x = 60 / 180 / 300 /
     420, handed out in the order of the targets' screen x, so insane is outermost on medium's side
     (amended: power-meter spec 2026-09-27). Each plate joins its ground ring with a 1 px
-    tier-coloured leader (1 px dark outline).
+    tier-coloured leader (1 px dark outline) from its bottom centre.
   - Serve plates never cover the toss column (the ball rises above the server's head): near server →
     vertical stack (easy, medium, hard[, insane] top to bottom, 3 px gaps) beside the head on the side toward
     the screen centre; far server → horizontal row in the far band centred on the server's x with a
     ≥ 12 px gap over the server, clamped to x 4–476.
   - Chase plates appear 4 px above the owner's head where it stood when the turn began (they don't follow).
   - **Large words** option: 2× applies only to single prompts and to a locked word (redrawn at 2× in
-    place, clamped to x 4–476). Unlocked options stay 1×.
+    place, clamped to x 4–476; a locked stack plate grows upward, keeping its bottom edge: choice-stack
+    spec 2026-09-28 §2). Unlocked options stay 1×.
   - Unit test: for every word length of each tier's band (2–15), 3 and 4 options and both target
     sides, no two plates intersect and every plate lies within x 4–476, y 22–266.
 - **Timing bar**: 2 px, white, under the slot row until lock then under the locked plate; shows the
@@ -420,7 +430,9 @@ Racket hit, bounce (surface-dependent), net cord, key click, error buzz, lock ti
 chime, "your turn" tick, crowd murmur loop + applause / "ooh" swells, procedural chiptune title
 theme. Power meter (amended: power-meter spec 2026-09-27): a rising 3-note cue when a meter fills,
 a soft falling sweep when a full one empties (the opponent's quieter); an insane strike plays the
-hard hit and the crowd "ooh". Volumes: master / music / sfx. The AudioContext is created/resumed on the start-gate click.
+hard hit and the crowd "ooh". Returning an insane shot draws applause at the return's strike (polite
+for the opponent's return), and the crowd raises its arms (amended: choice-stack spec 2026-09-28 §4).
+Volumes: master / music / sfx. The AudioContext is created/resumed on the start-gate click.
 **Umpire voice** via `speechSynthesis` (toggle): choose a voice after `voiceschanged`, preferring
 `lang` en* with `localService === true` (none → option disabled); `cancel()` before every
 `speak()`; drop calls whose event is > 800 ms old; speak words, not digits ("Fifteen love",
