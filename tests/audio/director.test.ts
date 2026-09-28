@@ -333,7 +333,17 @@ describe('AudioDirector cheer for an insane return (choice-stack spec §4)', () 
       lastTurn: moved ? ret : null,
     } as unknown as PublicState;
   }
-  const mine = (tier: Tier): EventBody => ({ ...strike(tier), player: 0 });
+  /** The viewer's (player 0's) strike with a `tier` word; a serve when `isServe`. */
+  const mine = (tier: Tier, isServe = false): EventBody => ({
+    type: 'strike',
+    player: 0,
+    word: 'ball',
+    tier,
+    kmh: 120,
+    isServe,
+    stretch: false,
+    forehand: true,
+  });
 
   it('applauds when the viewer hits back an insane shot', () => {
     director.onEvents([ev(mine('easy'))], context({ state: returning('insane') }));
@@ -357,7 +367,7 @@ describe('AudioDirector cheer for an insane return (choice-stack spec §4)', () 
 
   it('stays quiet for the return of any other tier, and for a serve', () => {
     for (const tier of ['easy', 'medium', 'hard'] as const) director.onEvents([ev(mine('easy'))], context({ state: returning(tier) }));
-    director.onEvents([ev({ ...mine('easy'), isServe: true })], context());
+    director.onEvents([ev(mine('easy', true))], context());
     expect(engine.names()).toEqual(['hit', 'hit', 'hit', 'hit']);
   });
 
