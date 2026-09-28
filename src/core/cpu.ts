@@ -171,6 +171,8 @@ export class CpuBrain {
   private readonly promptPlans = new Map<string, PromptPlan>();
   /** Planned toss τ per PRE_SERVE, keyed `turnId:setIndex`, before clamping to the turn clock. */
   private readonly tossPlans = new Map<string, number>();
+  /** The early chase plan: the striker's turn and lock it was made for, the word, and its keys as offsets from the lock. */
+  private early: { turnId: number; lockτ: number; word: string; offsets: PlannedKey[] } | null = null;
 
   constructor(player: PlayerId, profile: CpuProfile, seed: number, opts: CpuBrainOptions = {}) {
     if (!isValidProfile(profile)) throw new RangeError(`CpuBrain: invalid profile ${JSON.stringify(profile)}`);
@@ -186,6 +188,27 @@ export class CpuBrain {
     if (!t.started || t.ended || t.outcome !== null || t.data.owner !== this.player) return [];
     const keys = t.data.kind === 'serve' ? this.planServe(t, t.data) : this.planReturn(t, t.data);
     return keys.map((k) => ({ ...k }));
+  }
+
+  /**
+   * The early chase (early-typing spec §2, §5) for the opponent's return turn `t` once its choice word
+   * is locked: the locked word, typed from the lock + the early pause, on t's clock. Drawn once per lock
+   * and then stable; the return turn that follows the strike carries on this same key stream. Empty for
+   * this brain's own turn, a serve turn, or before a lock.
+   */
+  planEarly(t: TurnState): PlannedKey[] {
+    if (t.data.kind !== 'return' || t.data.owner === this.player) return [];
+    const lock = t.log.find((e) => e.k === 'lock');
+    if (lock?.k !== 'lock') return [];
+    const word = t.prompts.find((p) => p.id === lock.prompt)?.options[lock.option];
+    if (word === undefined) return [];
+    let e = this.early;
+    if (e?.turnId !== t.data.turnId || e.lockτ !== lock.τ) {
+      e = { turnId: t.data.turnId, lockτ: lock.τ, word: word.word, offsets: this.typeWord(word, 0, this.profile.earlyPauseMs) };
+      this.early = e;
+    }
+    const from = e.lockτ;
+    return e.offsets.map((k) => ({ key: k.key, τ: from + k.τ }));
   }
 
   /** Drops the plans of earlier turns when a new turn id is seen (ids restart when the brain plays another match). */
@@ -221,9 +244,13 @@ export class CpuBrain {
     const choice = t.prompts.find((p) => p.kind === 'choice');
     const chaseShownAt = chase?.shownAt ?? 0;
     const chasePause = d.isServeReturn ? this.profile.serveChasePauseMs : this.profile.earlyPauseMs;
-    const chasePlan = this.promptPlan(t, chase?.id ?? d.promptBase, chaseShownAt, 1, () =>
-      this.newPlan([d.chase], 0, chaseShownAt, chasePause, t.τ),
-    );
+    const chasePlan = this.promptPlan(t, chase?.id ?? d.promptBase, chaseShownAt, 1, () => {
+      const early = d.earlyFrom === null ? null : this.takeEarly(d.chase);
+      // A rally chase is shown at the striker's lock (earlyFrom): the early stream's offsets count from there.
+      return early === null
+        ? this.newPlan([d.chase], 0, chaseShownAt, chasePause, t.τ)
+        : { shownAt: chaseShownAt, option: 0, from: 0, keys: early.map((k) => ({ key: k.key, τ: chaseShownAt + k.τ })) };
+    });
     const chaseKeys = this.rest(chasePlan, chase, t.τ);
     const choiceShownAt = choice?.shownAt ?? chaseKeys[chaseKeys.length - 1]?.τ;
     if (choiceShownAt === undefined) return chaseKeys;
@@ -236,6 +263,13 @@ export class CpuBrain {
       return this.newPlan(options, option, choiceShownAt, this.profile.wordPauseMs, t.τ);
     });
     return [...chaseKeys, ...this.rest(choicePlan, choice, t.τ)];
+  }
+
+  /** The early plan's offsets for `word` (consumed), or a fresh early stream when none was planned for it. */
+  private takeEarly(word: WordOption): PlannedKey[] {
+    const e = this.early;
+    this.early = null;
+    return e?.word === word.word ? e.offsets : this.typeWord(word, 0, this.profile.earlyPauseMs);
   }
 
   /** Planned toss τ for the current PRE_SERVE: its start + U(600, 1200), drawn once. */

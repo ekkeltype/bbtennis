@@ -881,3 +881,47 @@ describe('CPU and the insane option (power-meter spec §5)', () => {
     }
   });
 });
+
+describe('CpuBrain — early typing (early-typing spec §2, §5)', () => {
+  /** Player 1's return turn 5 (the striker): chase 'rally' fed at 100..500, then 'drop' locked at 900. */
+  function striker(): TurnState {
+    const t = returnTurn({ owner: 1, turnId: 5 });
+    [...'rally'].forEach((key, i) => feed(t, { key, τ: 100 * (i + 1) }));
+    feed(t, { key: 'd', τ: 900 });
+    t.log.push({ τ: 900, k: 'lock', prompt: t.prompts[1]!.id, option: 0, ch: 'd' });
+    return t;
+  }
+
+  it('plans the locked word from the lock + earlyPauseMs, the same on every call', () => {
+    const brain = new CpuBrain(0, CLEAN, 3);
+    const t = striker();
+    const keys = brain.planEarly(t);
+    expect(keys.map((k) => k.key).join('')).toBe('drop');
+    expect(keys[0]?.τ).toBe(900 + CLEAN.earlyPauseMs);
+    expect(brain.planEarly(t)).toEqual(keys);
+  });
+
+  it('plans nothing for its own turn, a serve turn, or before a lock', () => {
+    expect(new CpuBrain(1, CLEAN, 3).planEarly(striker())).toEqual([]);
+    expect(new CpuBrain(0, CLEAN, 3).planEarly(serveTurn())).toEqual([]);
+    expect(new CpuBrain(0, CLEAN, 3).planEarly(returnTurn({ owner: 1 }))).toEqual([]);
+  });
+
+  it('carries on the same key stream in the return turn that starts with the early keys', () => {
+    const brain = new CpuBrain(0, CLEAN, 4);
+    const early = brain.planEarly(striker());
+    const strikeτ = early[1]!.τ + 1; // two keys come before the strike
+    const t = returnTurn({ owner: 0, turnId: 6, chase: 'drop', earlyFrom: 900 - strikeτ });
+    const chase = t.prompts[0]!;
+    for (const k of early.slice(0, 2)) applyLetter(chase, k.key, k.τ - strikeτ);
+    const rest = brain.plan(t);
+    expect(rest.slice(0, 2)).toEqual(early.slice(2).map((k) => ({ key: k.key, τ: k.τ - strikeτ })));
+  });
+
+  it('a pause that ends after the strike starts the chase in the turn, with no second pause', () => {
+    const brain = new CpuBrain(0, PROFILE, 4);
+    const lockToStrike = 100;
+    const t = returnTurn({ owner: 0, turnId: 6, chase: 'drop', earlyFrom: -lockToStrike });
+    expect(brain.plan(t)[0]?.τ).toBe(PROFILE.earlyPauseMs - lockToStrike);
+  });
+});
