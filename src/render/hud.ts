@@ -55,9 +55,10 @@ const BANNER_LINE_H = 18;
 const CLOCK_WARN_S = 5;
 /**
  * Centre row of "Connection unstable...": its 24 px box fills y 245–268 at the bottom centre, beside
- * the RTT readout. The typist's words keep running under it, and no plate reaches that low: choice
- * rows sit in the bands, and serve and chase plates above a head, which stands ≥ 40 px over feet that
- * are never below y 257 (the deepest contact point).
+ * the RTT readout. The typist's words keep running under it, and no plate reaches that low: serve and
+ * chase plates sit above a head, which stands ≥ 40 px over feet that are never below y 257 (the
+ * deepest contact point), and a choice stack beside the player ends level with the head top, so even
+ * a locked word doubled downward (Large words) and its timing bar end by y 238.
  */
 const UNSTABLE_CY = H - 13;
 

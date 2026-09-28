@@ -1,5 +1,4 @@
 import { clamp } from '../core/util';
-import { netScreenY } from './projection';
 
 /** Screen rectangle of one word plate, in 480×270 buffer pixels; `option` indexes the prompt's options. */
 export interface PlateBox { x: number; y: number; w: number; h: number; option: number }
@@ -12,11 +11,7 @@ export const PLATE_AREA = { left: 4, right: 476, top: BANDS.far[0], bottom: 266 
 const AREA = PLATE_AREA;
 const CENTRE_X = (AREA.left + AREA.right) / 2;
 const PLATE_H = 16;
-const SLOT_X = { left: 90, centre: 240, right: 390 };
-/** Slot centres of a 4-plate choice row (power-meter spec §6), left to right. */
-const SLOTS_4 = [60, 180, 300, 420] as const;
 const HEAD_GAP = 4;
-const NEAR_BAND_GAP = 6;
 /** Gap between serve-stack plates: 3 px, so a pixel of court shows between two 1 px halos. */
 const STACK_GAP = 3;
 const ROW_GAP = 4;
@@ -48,55 +43,15 @@ export function plateWidth(len: number, scale: 1 | 2 = 1): number {
 }
 
 /**
- * Choice plates (spec §4.2, power-meter spec §6) for `lens` in option order, [easy, medium, hard] or
- * [easy, medium, hard, insane]: one 1× row in the band of the targeted half (far: the far prompt band;
- * near: 6 px below the net line). Three plates: slot centres x 90 / 240 / 390, easy in the centre,
- * medium in the outer slot on its target's side of the hard target, hard in the other. Four plates:
- * slot centres x 60 / 180 / 300 / 420, taken in the order of the targets' screen x, so insane is
- * outermost on medium's side. Throws unless both arrays hold 3 or 4 entries, the same number.
+ * Gap from a player's feet column to the nearest edge of their choice stack: clears the widest frame
+ * shown while choosing (a stretch reaches 22 px from the feet seen from behind, 23 px seen from the
+ * front; the swing comes after the plates are gone), a plate's 1 px halo and 1 px of court.
  */
-export function layoutChoice(lens: number[], targetsScreenX: number[], band: 'far' | 'near'): PlateBox[] {
-  const n = lens.length;
-  if ((n !== 3 && n !== 4) || targetsScreenX.length !== n) {
-    throw new Error(
-      `layoutChoice needs 3 or 4 word lengths and as many target x values, got ${lens.length} and ${targetsScreenX.length}`,
-    );
-  }
-  const y = band === 'far' ? BANDS.far[0] : Math.round(netScreenY() + NEAR_BAND_GAP);
-  const slots = n === 3 ? threeSlots(targetsScreenX) : fourSlots(targetsScreenX);
-  return lens.map((len, option) => {
-    const w = plateWidth(len);
-    return { x: centredX(slots[option]!, w), y, w, h: PLATE_H, option };
-  });
-}
-
-/** Slot centres for [easy, medium, hard]: easy central, medium on its target's side of hard. */
-function threeSlots(targetsScreenX: number[]): number[] {
-  const [, mediumX, hardX] = targetsScreenX as [number, number, number];
-  const mediumLeft = mediumX <= hardX;
-  return [SLOT_X.centre, mediumLeft ? SLOT_X.left : SLOT_X.right, mediumLeft ? SLOT_X.right : SLOT_X.left];
-}
-
-/** Slot centres for four options: `SLOTS_4` handed out left to right in the order of their targets' screen x. */
-function fourSlots(targetsScreenX: number[]): number[] {
-  const order = targetsScreenX.map((x, option) => ({ x, option })).sort((a, b) => a.x - b.x || a.option - b.option);
-  const slots: number[] = [];
-  order.forEach(({ option }, k) => {
-    slots[option] = SLOTS_4[k]!;
-  });
-  return slots;
-}
+const PLAYER_CLEAR = 25;
 
 /**
- * Gap from a near player's feet column to the nearest edge of their choice stack: clears the widest
- * frame they show while choosing (a stretch reaches 22 px from the feet; the swing comes after the
- * plates are gone) plus a plate's 1 px halo.
- */
-const PLAYER_CLEAR = 24;
-
-/**
- * The column of a choice stack beside a near player whose feet are at screen x `feetX` (choice-stack
- * spec §2): on the side toward the screen centre, which always has the more room (right at exactly the
+ * The column of a choice stack beside a player whose feet are at screen x `feetX` (choice-stack spec
+ * §2): on the side toward the screen centre, which always has the more room (right at exactly the
  * centre), with the widest plate, `widest` px wide, `PLAYER_CLEAR` px from the feet as drawn (rounded).
  */
 export function besideColumn(feetX: number, widest: number): number {
@@ -111,8 +66,8 @@ export function stackHeight(n: number): number {
 }
 
 /**
- * The near typist's choice plates (choice-stack spec §2) for `lens` in option order, [easy, medium,
- * hard] or [easy, medium, hard, insane]: a stack in that order from the top, 3 px apart, the last plate
+ * A choice stack (choice-stack spec §2) for `lens` in option order, [easy, medium, hard] or [easy,
+ * medium, hard, insane]: a stack in that order from the top, 3 px apart, the last plate
  * ending at `bottomY` (exclusive), every plate centred on `columnX`. Each tier's words are longer than
  * the tier above, so the stack is a pyramid. Not clamped: `placeChoiceStack` (leaders.ts) fits the stack
  * and its leaders into the plate area as one unit. Throws unless given 3 or 4 lengths.
@@ -129,20 +84,18 @@ export function layoutChoiceStack(lens: number[], columnX: number, bottomY: numb
 }
 
 /**
- * A choice-stack plate redrawn at 2× (a locked word with Large words; choice-stack spec §2): around its
- * centre column with its bottom edge kept, so it grows away from the head below the stack; kept inside
- * x 4–476 and y 22–266.
+ * A choice-stack plate redrawn at 2× (a locked word with Large words; choice-stack spec §2), grown away
+ * from the player beside the stack and from the rings: it keeps the edge facing the player (`awayX` +1
+ * grows it right, keeping its left edge; −1 grows it left, keeping its right edge) and the edge facing
+ * the rings (`awayY` +1 grows it down, keeping its top edge; −1 grows it up, keeping its bottom edge).
+ * Kept inside x 4–476 and y 22–266.
  */
-export function growUp(box: PlateBox): PlateBox {
+export function growAway(box: PlateBox, awayX: 1 | -1, awayY: 1 | -1): PlateBox {
   const w = box.w * 2;
   const h = box.h * 2;
-  return {
-    x: centredX(box.x + (box.w - 1) / 2, w),
-    y: clamp(box.y + box.h - h, AREA.top, AREA.bottom - h),
-    w,
-    h,
-    option: box.option,
-  };
+  const x = awayX > 0 ? box.x : box.x + box.w - w;
+  const y = awayY > 0 ? box.y : box.y + box.h - h;
+  return { x: clamp(x, AREA.left, AREA.right - w), y: clamp(y, AREA.top, AREA.bottom - h), w, h, option: box.option };
 }
 
 /**

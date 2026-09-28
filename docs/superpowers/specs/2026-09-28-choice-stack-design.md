@@ -30,43 +30,49 @@ Success criteria:
 | Scope | The stack and the cheer now. **Early typing** (the receiver may start the chase word as soon as the striker locks) is deferred to its own spec, after a playtest of this change. |
 | Stack position | First agreed: where the chase plate was, growing upward from it (not a fixed spot mid-court). **Changed after review:** that spot hid the player when they ran forward to the ball (about 6 % of choices at Normal, 35 % at Lightning), so the stack now sits beside the hitting spot on the court-centre side, like the serve words. |
 | Indicators | Leader lines that start at the plates' sides, routed so they don't overlap. |
-| Opponent's choice | Unchanged: today's row just below the net, on the viewer's half. |
+| Opponent's choice | First agreed: unchanged, today's row just below the net on the viewer's half. **Changed after a playtest:** the opponent's words stack beside the opponent too, mirrored (easy at the bottom, nearest the rings on the viewer's half). |
 
 ## 2. The choice stack (amends main spec §4.2 Layout, power-meter spec §6 Choice layout)
 
-- **Who gets it:** the choice prompt of the **near** player (the one drawn at the bottom of the
-  screen): the local player vs CPU, online and in Training, and player 0 in attract mode. The far
-  player's choice prompt keeps today's row in the near band (`layoutChoice(…, 'near')`).
-- **Order:** tier order from top to bottom (easy, medium, hard, then insane when offered), 1× plates,
-  3 px gaps (as the near serve stack).
+- **Who gets it:** both players' choice prompts (amended after a playtest; first only the near
+  player's). The near player is the one drawn at the bottom of the screen: the local player vs CPU,
+  online and in Training, and player 0 in attract mode. The far player is the CPU or the online
+  opponent, and player 1 in attract mode.
+- **Order:** 1× plates, 3 px gaps (as the near serve stack). The near stack's rings are above it, so
+  it runs in tier order from the top (easy, medium, hard, then insane when offered). The far stack's
+  rings are below it, so it is the same stack mirrored top to bottom: easy at the bottom, the widest
+  plate on top. Either way easy is nearest the rings.
 - **Anchor** (amended after review): the hitting spot is where the chase runs the player to, the
-  animator's stance for the incoming ball (`stanceFor(contact, owner, turn-start feet)`). The bottom
-  plate's bottom edge is level with the top of the player's head there. Every plate is centred on one
-  column, placed on the side toward the screen centre (right at exactly the centre) so that the widest
-  plate's near edge is 24 px from the player's feet column as drawn. That clears every frame shown
-  while choosing (a stretch reaches 22 px from the feet), so the stack never covers the player. Each
+  animator's stance for the incoming ball (`stanceFor(contact, owner, turn-start feet)`). The near
+  stack's bottom edge, or the far stack's top edge, is level with the top of the player's head there.
+  Every plate is centred on one column, placed on the side toward the screen centre (right at exactly
+  the centre) so that the widest plate's near edge is 25 px from the player's feet column as drawn.
+  That clears every frame shown while choosing (a stretch reaches 22 px from the feet seen from behind,
+  23 px seen from the front) with a pixel of court to spare, so the stack never covers the player. Each
   tier's words are longer than the tier above (easy 2–4, medium 5–7, hard 8–11, insane 12–15 letters),
-  so the stack is a pyramid, widest at the bottom.
+  so the stack is a pyramid, widest at the end away from the rings.
 - **Bounds:** the stack, its leaders and its lanes shift together as one unit so that every plate
   lies within x 4–476, y 22–266.
-- **Below the rings:** the stack's top edge stays at least 8 px below the lowest ring centre it
-  shows. A player hitting from well inside the baseline (a serve return that ran in) has a head high
-  enough to break this. The stack then moves down by the difference, still beside the player.
+- **Clear of the rings:** the near stack's top edge stays at least 8 px below the lowest ring centre
+  it shows. A player hitting from well inside the baseline (a serve return that ran in) has a head high
+  enough to break this. The stack then moves down by the difference, still beside the player. The far
+  stack, mirrored, stays at least 8 px above the highest ring.
 - **After a lock:** the other plates and their leaders fade out over 200 ms, as now. The locked plate
-  stays where it is. With Large words it is redrawn at 2× around its centre column with its **bottom
-  edge kept** (it grows upward, so it never covers the head), clamped to the plate area, and its leader
-  is routed again from the doubled box.
+  stays where it is. With Large words it is redrawn at 2× **grown away from the player and the
+  rings**: it keeps the edge facing the player and the edge facing the rings (the top for the near
+  stack, the bottom for the far one), so it never covers the player. It is clamped to the plate area,
+  and its leader is routed again from the doubled box.
 - **Timing bar:** under the whole stack until the lock, then under the locked plate, as the serve
   stack does (2 px gap).
 - **Training hint:** the "TYPE A FIRST LETTER" tag is centred on the stack's column, 2 px above its
   top plate, clamped to the plate area.
-- **Name chip** (a spectator's or remote view of the near typist): as on any plate, on the top plate
-  before the lock and on the locked plate after it.
+- **Name chip** (a remote or spectator's view): on the plate drawn on top before the lock (easy on
+  the near stack, the widest on the far one) and on the locked plate after it.
 
 ## 3. Side leaders (amends main spec §4.2 Layout)
 
-These rules apply to the stack only. The far typist's row keeps today's straight leaders from each
-plate's bottom centre.
+These rules apply to both stacks. The far stack is routed mirrored top to bottom: its leaders run
+down to the rings below it, and its lanes turn below its bottom plate.
 
 - **Sides.** In screen terms, *medium's side* is the side of medium's ring relative to hard's ring
   (they are on opposite sides of the court). The medium and insane leaders leave from their plates'
@@ -121,30 +127,33 @@ plate's bottom centre.
 ## 5. Architecture changes
 
 - **`render/layout.ts`:**
-  - A new `layoutChoiceStack(lens, columnX, bottomY, large)` returns the stack's `PlateBox`es.
-  - `layoutChoice` stays for the far typist's row.
-- **`render/leaders.ts`** (new, pure): `routeStackLeaders(boxes, rings, tiers)` returns one
-  polyline per plate, following §3.
+  - `layoutChoiceStack(lens, columnX, bottomY)` returns the stack's `PlateBox`es.
+  - `besideColumn(feetX, widest)` places the stack beside the player; `growAway(box, awayX, awayY)`
+    doubles a locked plate.
+  - `layoutChoice` (the row) is removed.
+- **`render/leaders.ts`** (new, pure): `placeChoiceStack(lens, columnX, edgeY, rings, facing)` and
+  `routeStackLeaders(boxes, rings, columnX, facing)`, one polyline per plate following §3; `facing`
+  'down' mirrors the stack for the far typist.
 - **`render/prompts.ts`:**
-  - `choicePlates` uses the stack and its routes when `d.owner === f.near`, and the row otherwise.
+  - `choicePlates` stacks both typists' choices.
   - Timing bar and hint tag as in §2.
   - `LeaderMark` becomes `{ points: {x, y}[]; tier; alpha }`. A row leader is a 2-point polyline.
 - **`render/plates.ts`:** `drawLeader` draws a polyline (outline pass for the whole path, then the
   ink), still stopping at the ring's keep-out. `render/world.ts`, `ui/illustrations.ts` and
   `tools/art.ts` follow the new signature.
 - **`audio/director.ts`, `render/effects.ts`:** the insane-return cheer of §4.
-- **Unchanged:** `core/`, `game/`, `net/` (no `PROTO` change), the serve layouts and the far typist's
-  row.
+- **Unchanged:** `core/`, `game/`, `net/` (no `PROTO` change) and the serve layouts.
 
 ## 6. Testing
 
 - **Layout** (`tests/render/layout.test.ts`): the stack's order, anchor, gaps, pyramid centring,
-  bounds and below-the-rings shift; with Large words the locked plate keeps its bottom edge and stays in bounds. The main
+  bounds and ring-clearance shift; with Large words the locked plate grows away from the player and the rings and stays in bounds. The main
   spec's plate test (no two plates intersect, all inside x 4–476, y 22–266) also covers the stack.
-- **Leaders** (new `tests/render/leaders.test.ts`): the exhaustive guarantee of §3, plus unit cases
-  for the direct route, the lane route and lane nesting.
+- **Leaders** (new `tests/render/leaders.test.ts`): the guarantee of §3 for both stacks, the
+  beside-the-player test for both, plus unit cases for the direct route, the lane route, lane nesting
+  and the mirrored far stack.
 - **Prompts** (`tests/render/prompts.test.ts`):
-  - The near typist gets the stack and the far typist the row.
+  - Both typists get stacks: easy on top for the near one, at the bottom for the far one.
   - The timing bar sits under the stack, then under the locked plate.
   - The hint tag sits above the stack.
   - Leaders fade with their plates.
@@ -171,5 +180,4 @@ plate's bottom centre.
 ## 8. Out of scope
 
 - **Early typing** (next spec, after playtesting this change).
-- The far typist's row, the serve layouts, and any change to rules, balance, CPU, simulation or
-  protocol.
+- The serve layouts, and any change to rules, balance, CPU, simulation or protocol.

@@ -1,14 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
-
-// Projection (Task 13) is exercised by its own tests; here the net line is the spec §4.1 value.
-vi.mock('../../src/render/projection', () => ({ netScreenY: () => -80 + 320 / 1.5 }));
-
+import { describe, expect, it } from 'vitest';
 import { COURT } from '../../src/core/court';
 import { TUNING } from '../../src/core/tuning';
 import {
   BANDS,
-  growUp,
-  layoutChoice,
+  growAway,
   layoutChoiceStack,
   layoutServeFar,
   layoutServeNear,
@@ -24,7 +19,6 @@ const EASY = [3, 4, 5];
 const MEDIUM = [6, 7, 8, 9];
 const HARD = [10, 11, 12, 13, 14];
 const TRIPLES: number[][] = EASY.flatMap((e) => MEDIUM.flatMap((m) => HARD.map((h) => [e, m, h])));
-const NEAR_BAND_TOP = Math.round(-80 + 320 / 1.5 + 6);
 
 /** Every way the boxes break the spec §4.2 rules: off the 4–476 × 22–266 area, fractional, or overlapping. */
 function problems(boxes: PlateBox[]): string[] {
@@ -44,8 +38,6 @@ function problems(boxes: PlateBox[]): string[] {
   );
   return out;
 }
-
-const centreX = (b: PlateBox): number => b.x + (b.w - 1) / 2;
 
 /** Screen x of the tossing hand's centre relative to the feet, from serve frame 0 (as `ball.ts` places the toss). */
 const tossHandDx = (view: View): number => posesFor('serve', view)[0]!.handL.x + 0.5 - CELL.anchorX;
@@ -102,61 +94,7 @@ describe('BANDS', () => {
   });
 });
 
-describe('layoutChoice', () => {
-  const sides: [string, number[]][] = [
-    ['medium left, hard right', [240, 200, 280]],
-    ['medium right, hard left', [240, 280, 200]],
-  ];
-
-  for (const band of ['far', 'near'] as const) {
-    for (const [side, targets] of sides) {
-      it(`${band} band, ${side}: every length triple fits the screen without overlaps`, () => {
-        const bad = TRIPLES.flatMap((lens) =>
-          problems(layoutChoice(lens, targets, band)).map((p) => `${lens.join('/')}: ${p}`),
-        );
-        expect(bad).toEqual([]);
-      });
-
-      it(`${band} band, ${side}: easy takes the centre slot, medium and hard their target's side`, () => {
-        const mediumSlot = targets[1]! < targets[2]! ? 90 : 390;
-        const hardSlot = 480 - mediumSlot;
-        for (const lens of TRIPLES) {
-          const boxes = layoutChoice(lens, targets, band);
-          expect(boxes.map((b) => b.option)).toEqual([0, 1, 2]);
-          expect(boxes.map((b) => b.w)).toEqual(lens.map((n) => plateWidth(n)));
-          expect(boxes.map((b) => b.h)).toEqual([16, 16, 16]);
-          expect(boxes.map(centreX)).toEqual([240, mediumSlot, hardSlot]);
-        }
-      });
-    }
-  }
-
-  it('puts far-band plates at the top of the far prompt band', () => {
-    for (const b of layoutChoice([5, 9, 14], [240, 200, 280], 'far')) expect(b.y).toBe(BANDS.far[0]);
-  });
-
-  it('tops near-band plates 6 px below the net line', () => {
-    for (const b of layoutChoice([5, 9, 14], [240, 200, 280], 'near')) expect(b.y).toBe(NEAR_BAND_TOP);
-  });
-
-  it('decides the side by comparing the medium and hard targets, even when both lie on one half', () => {
-    const boxes = layoutChoice([4, 7, 12], [240, 250, 230], 'far');
-    expect(boxes.map(centreX)).toEqual([240, 390, 90]);
-  });
-
-  it('rejects anything but exactly 3 word lengths and 3 targets', () => {
-    const targets = [240, 200, 280];
-    for (const lens of [[], [5, 9], [5, 9, 14, 4]]) {
-      expect(() => layoutChoice(lens, targets, 'far'), `${lens.length} lens`).toThrow(/3 or 4/);
-    }
-    for (const ts of [[], [240, 200], [240, 200, 280, 100]]) {
-      expect(() => layoutChoice([5, 9, 14], ts, 'near'), `${ts.length} targets`).toThrow(/3 or 4/);
-    }
-  });
-});
-
 describe('4-option plates (power-meter spec §6)', () => {
-  const BANDS_ = ['far', 'near'] as const;
   const RANGE = { easy: [2, 4], medium: [5, 7], hard: [8, 11], insane: [12, 15] } as const;
   const lensGrid = (): number[][] => {
     const out: number[][] = [];
@@ -168,33 +106,6 @@ describe('4-option plates (power-meter spec §6)', () => {
   };
   const overlap = (a: PlateBox, b: PlateBox): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
   const inside = (b: PlateBox): boolean => b.x >= 4 && b.x + b.w <= 476 && b.y >= 22 && b.y + b.h <= 266;
-  /** Target screen x for [easy, medium, hard, insane]: medium and insane on one side, insane outermost. */
-  const XS = { left: [240, 150, 340, 110], right: [240, 330, 140, 370] };
-
-  it('puts the four plates in slots 60 / 180 / 300 / 420 by target x: insane outermost on medium\'s side', () => {
-    const lens = [3, 6, 10, 14];
-    const centre = (b: PlateBox): number => b.x + (b.w - 1) / 2;
-    const left = layoutChoice(lens, XS.left, 'far');
-    expect(left.map((b) => Math.round(centre(b)))).toEqual([300, 180, 420, 60]);
-    const right = layoutChoice(lens, XS.right, 'far');
-    expect(right.map((b) => Math.round(centre(b)))).toEqual([180, 300, 60, 420]);
-  });
-
-  it('never overlaps and stays inside x 4–476, y 22–266 for every length in each tier\'s band', () => {
-    const bad: string[] = [];
-    for (const lens of lensGrid()) {
-      for (const band of BANDS_) {
-        for (const xs of [XS.left, XS.right]) {
-          const boxes = layoutChoice(lens, xs, band);
-          boxes.forEach((a, i) => {
-            if (!inside(a)) bad.push(`${lens} ${band} option ${i} outside`);
-            boxes.slice(i + 1).forEach((b) => overlap(a, b) && bad.push(`${lens} ${band} ${a.option}/${b.option}`));
-          });
-        }
-      }
-    }
-    expect(bad).toEqual([]);
-  });
 
   it('serve stacks and rows of 4 stay inside, never overlap, keep clear of the toss column, and the widest plate is 101 px', () => {
     expect(plateWidth(15)).toBe(101);
@@ -216,11 +127,6 @@ describe('4-option plates (power-meter spec §6)', () => {
     expect(bad).toEqual([]);
   });
 
-  it('rejects 2 or 5 options, or mismatched target counts', () => {
-    expect(() => layoutChoice([3, 6], [240, 150], 'far')).toThrow(/3 or 4/);
-    expect(() => layoutChoice([3, 6, 10, 14, 5], [1, 2, 3, 4, 5], 'far')).toThrow(/3 or 4/);
-    expect(() => layoutChoice([3, 6, 10, 14], [240, 150, 340], 'far')).toThrow(/3 or 4/);
-  });
 });
 
 describe('layoutServeNear', () => {
@@ -486,13 +392,16 @@ describe('layoutChoiceStack (choice-stack spec §2)', () => {
   });
 });
 
-describe('growUp (choice-stack spec §2, Large words)', () => {
-  it('doubles a stack plate around its centre column, keeping its bottom edge', () => {
-    expect(growUp({ x: 150, y: 174, w: 101, h: 16, option: 3 })).toEqual({ x: 100, y: 158, w: 202, h: 32, option: 3 });
+describe('growAway (choice-stack spec §2, Large words)', () => {
+  it('doubles a stack plate away from the player and the rings, keeping the edges that face them', () => {
+    // Stack right of the player (keeps its left edge), rings above (keeps its top edge): grows right and down.
+    expect(growAway({ x: 150, y: 174, w: 101, h: 16, option: 3 }, 1, 1)).toEqual({ x: 150, y: 174, w: 202, h: 32, option: 3 });
+    // Stack left of the player (keeps its right edge), rings below (keeps its bottom edge): grows left and up.
+    expect(growAway({ x: 250, y: 60, w: 77, h: 16, option: 2 }, -1, -1)).toEqual({ x: 173, y: 44, w: 154, h: 32, option: 2 });
   });
 
   it('stays inside x 4–476 and y 22–266', () => {
-    expect(growUp({ x: 4, y: 30, w: 101, h: 16, option: 3 })).toEqual({ x: 4, y: 22, w: 202, h: 32, option: 3 });
-    expect(growUp({ x: 375, y: 250, w: 101, h: 16, option: 3 }).x).toBe(274);
+    expect(growAway({ x: 300, y: 250, w: 101, h: 16, option: 3 }, 1, 1)).toEqual({ x: 274, y: 234, w: 202, h: 32, option: 3 });
+    expect(growAway({ x: 30, y: 30, w: 101, h: 16, option: 3 }, -1, -1)).toEqual({ x: 4, y: 22, w: 202, h: 32, option: 3 });
   });
 });

@@ -252,15 +252,15 @@ describe('promptScene', () => {
     const stack = s.plates.map((p) => p.box);
     stack.slice(1).forEach((b, i) => expect(b.y).toBe(stack[i]!.y + 16 + 3));
     // The hitting spot is where the chase runs the player to (stanceFor); the stack's bottom is level
-    // with the head top there, its widest plate 24 px to the court-centre side of the feet.
+    // with the head top there, its widest plate 25 px to the court-centre side of the feet.
     const spot = stanceFor(returnData().incoming.contact, 1, a.turnStartFeet(1)).feet;
     const feet = project({ ...spot, z: 0 }, 1);
     const headTop = Math.round(feet.y) - headHeight(matchState(t).players[1].look, 'near');
     const bottom = stack.at(-1)!;
     expect(bottom.y + bottom.h).toBe(headTop);
     const feetX = Math.round(feet.x);
-    if (feetX <= 240) expect(bottom.x).toBe(feetX + 24);
-    else expect(bottom.x + bottom.w - 1).toBe(feetX - 24);
+    if (feetX <= 240) expect(bottom.x).toBe(feetX + 25);
+    else expect(bottom.x + bottom.w - 1).toBe(feetX - 25);
     const column = bottom.x + (bottom.w - 1) / 2;
     for (const b of stack) expect(b.x + (b.w - 1) / 2).toBe(column);
 
@@ -342,28 +342,60 @@ describe('promptScene', () => {
     expect(chaseAt(done + 100).chase).toBeUndefined();
   });
 
-  it('puts the choice in the near band when the targets are on the viewer\'s half', () => {
+  it('stacks the far typist\'s choice beside the spot they will hit from, easy at the bottom, the name chip on the top plate', () => {
     const t = createTurn(returnData());
     startTurn(t);
     typeWord(t, 'ball', 100);
     turnClock(t, 500);
-    const s = scene(view(matchState(t), 500, 0));
-    expect(s.plates.every((p) => p.box.y > 130)).toBe(true);
+    const a = new PlayerAnimator();
+    scene(view(matchState(t), 350, 0), PREFS, a);
+    const s = scene(view(matchState(t), 500, 0), PREFS, a);
     expect(s.plates.every((p) => p.style === 'remote')).toBe(true);
-    // One chip per prompt: on the easy (centre) plate until a lock, then on the locked plate.
-    expect(s.plates.map((p) => p.nameChip)).toEqual(['Kai', null, null]);
-    expect(s.plates[0]!.oppColor).toBe(beltColor(matchState(null).players[1]));
-    // The far typist keeps today's straight leaders from each plate's bottom centre.
+    const boxes = s.plates.map((p) => p.box);
+    // Easy (option 0) at the bottom, the widest on top, 3 px apart.
+    boxes.slice(1).forEach((b, i) => expect(b.y).toBe(boxes[i]!.y - 19));
+    // The top plate starts level with the far player's head top at the hitting spot, 25 px to the
+    // court-centre side of their feet.
+    const spot = stanceFor(returnData().incoming.contact, 1, a.turnStartFeet(1)).feet;
+    const feet = project({ ...spot, z: 0 }, 0);
+    const top = boxes.at(-1)!;
+    expect(top.y).toBe(Math.round(feet.y) - headHeight(matchState(t).players[1].look, 'far'));
+    const feetX = Math.round(feet.x);
+    if (feetX <= 240) expect(top.x).toBe(feetX + 25);
+    else expect(top.x + top.w - 1).toBe(feetX - 25);
+    // Side leaders down to the rings on the viewer's half.
+    const targets = returnData().choice.targets.map((p) => project({ ...p, z: 0 }, 0));
     s.leaders.forEach((l, i) => {
-      const box = s.plates[i]!.box;
-      expect(l.points).toHaveLength(2);
-      expect(l.points[0]).toEqual({ x: box.x + Math.floor(box.w / 2), y: box.y + box.h });
+      const b = boxes[i]!;
+      expect([b.x - 2, b.x + b.w + 1]).toContain(l.points[0]!.x);
+      expect(l.points.at(-1)).toEqual({ x: Math.round(targets[i]!.x), y: Math.round(targets[i]!.y) });
     });
-    turnInput(t, 'c', 600);
-    turnClock(t, 650);
-    const locked = scene(view(matchState(t), 650, 0));
-    expect(locked.plates.map((p) => p.nameChip)).toEqual([null, null, 'Kai']);
+    // One chip per prompt: on the top plate until a lock, then on the locked plate.
+    expect(s.plates.map((p) => p.nameChip)).toEqual([null, null, 'Kai']);
+    expect(s.plates[2]!.oppColor).toBe(beltColor(matchState(null).players[1]));
     expect(s.bar).toBeNull();
+    turnInput(t, 'd', 600);
+    turnClock(t, 650);
+    const locked = scene(view(matchState(t), 650, 0), PREFS, a);
+    expect(locked.plates.map((p) => p.nameChip)).toEqual(['Kai', null, null]);
+  });
+
+  it('Large words: the far typist\'s locked plate doubles up and away from the player, keeping its bottom edge', () => {
+    const t = createTurn(returnData());
+    startTurn(t);
+    typeWord(t, 'ball', 100);
+    turnClock(t, 500);
+    const a = new PlayerAnimator();
+    // The bottom plate: growing up from there stays clear of the plate area's top edge.
+    const before = scene(view(matchState(t), 500, 0), PREFS, a).plates.find((p) => p.opt.word === 'drop')!.box;
+    turnInput(t, 'd', 600);
+    turnClock(t, 650);
+    const big = scene(view(matchState(t), 650, 0), { ...PREFS, largeWords: true }, a).plates.find((p) => p.scale === 2)!;
+    expect(big.opt.word).toBe('drop');
+    expect(big.box.y + big.box.h).toBe(before.y + before.h);
+    const feetX = Math.round(project({ ...stanceFor(returnData().incoming.contact, 1, a.turnStartFeet(1)).feet, z: 0 }, 0).x);
+    if (feetX <= 240) expect(big.box.x).toBe(before.x);
+    else expect(big.box.x + big.box.w).toBe(before.x + before.w);
   });
 
   it('turns the timing bar into the grace checker after the contact time', () => {
@@ -390,7 +422,7 @@ describe('promptScene', () => {
     expect(scene(view(matchState(ret, serve), 0, 'spectator')).flip).toBeNull();
   });
 
-  it('ends the revealed serve plate within 100 ms of the chase word, so it never meets the choice row', () => {
+  it('ends the revealed serve plate within 100 ms of the chase word, so it never meets the choice stack', () => {
     const { serve, ret } = servedBall();
     const done = typeWord(ret, 'ball', 100);
     turnClock(ret, done + 100);
@@ -482,7 +514,7 @@ describe('promptScene with the insane option (power-meter spec §6)', () => {
     expect(big[0]!.box.x + big[0]!.box.w).toBeLessThanOrEqual(476);
   });
 
-  it('Large words: the locked plate doubles upward, keeping its bottom edge, and its leader leaves the doubled box', () => {
+  it('Large words: the locked plate doubles away from the player and the rings, and its leader leaves the doubled box', () => {
     const t = fullMeterReturn('ball');
     const a = new PlayerAnimator();
     const before = scene(view({ ...matchState(t), power: [0, 4] }, 550, 1), PREFS, a).plates.find((p) => p.opt.word === INSANE_WORD)!.box;
@@ -490,7 +522,12 @@ describe('promptScene with the insane option (power-meter spec §6)', () => {
     const s = scene(view({ ...matchState(t), power: [0, 4] }, 800, 1), { ...PREFS, largeWords: true }, a);
     const big = s.plates.find((p) => p.scale === 2)!;
     expect(big.opt.word).toBe(INSANE_WORD);
-    expect(big.box.y + big.box.h).toBe(before.y + before.h);
+    // The rings are above: it keeps its top edge and grows down, beside the player.
+    expect(big.box.y).toBe(before.y);
+    // It keeps the edge facing the player and grows away from them.
+    const feetX = Math.round(project({ ...stanceFor(returnData().incoming.contact, 1, a.turnStartFeet(1)).feet, z: 0 }, 1).x);
+    if (feetX <= 240) expect(big.box.x).toBe(before.x);
+    else expect(big.box.x + big.box.w).toBe(before.x + before.w);
     const from = s.leaders[3]!.points[0]!;
     expect([big.box.x - 2, big.box.x + big.box.w + 1]).toContain(from.x);
     expect(from.y).toBe(big.box.y + 16);

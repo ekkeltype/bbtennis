@@ -377,29 +377,25 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
   unlocked options the first letter is an inverse block in the tier colour. After lock, the other
   options fade out.
 - **Layout**:
-  - **Near typist's choice** (the player drawn at the bottom; amended: choice-stack spec 2026-09-28
-    §2–3): a stack beside the spot the chase runs the player to (the animator's stance): easy on
-    top, then medium, hard[, insane], 3 px gaps, all centred on one column on the side toward the
-    screen centre, the widest plate's near edge 24 px from the player's feet, the bottom plate's
-    bottom edge level with the top of the head there. The stack stays ≥ 8 px below the lowest ring
-    centre and inside the plate area, shifted as one unit with its leaders. Each leader leaves the middle of a plate side
-    (medium and insane from medium's side, hard from the other, easy from the side facing its ring)
-    and runs straight out and up to its ring, or up a lane beside the stack (lanes 4 px apart, lower
-    plates outermost) and across. No two leaders touch; none crosses another plate or ring.
-  - **Far typist's choice**: three fixed slots in the band of the targeted half, slot centres
-    x = 90 / 240 / 390; easy always in the centre slot, medium and hard in the left/right slot on
-    their target's side. With the insane option (4 plates) the slot centres are x = 60 / 180 / 300 /
-    420, handed out in the order of the targets' screen x, so insane is outermost on medium's side
-    (amended: power-meter spec 2026-09-27). Each plate joins its ground ring with a 1 px
-    tier-coloured leader (1 px dark outline) from its bottom centre.
+  - **Choice plates** (amended: choice-stack spec 2026-09-28 §2–3): each typist's options form a
+    stack beside the spot the chase runs them to (the animator's stance), on the side toward the
+    screen centre, 3 px gaps, all centred on one column with the widest plate's near edge 25 px from
+    the player's feet. The near typist's stack runs easy, medium, hard[, insane] from the top, its
+    bottom edge level with the top of the head there, and stays ≥ 8 px below the lowest ring centre.
+    The far typist's is the same stack mirrored: easy at the bottom, its top edge level with the head
+    top, ≥ 8 px above the highest ring. Each stack stays inside the plate area, shifted as one unit
+    with its leaders. Each leader leaves the middle of a plate side (medium and insane from medium's
+    side, hard from the other, easy from the side facing its ring) and runs straight out and on to
+    its ring, or along a lane beside the stack (lanes 4 px apart, farther plates outermost) and across.
+    No two leaders touch; none crosses another plate or ring.
   - Serve plates never cover the toss column (the ball rises above the server's head): near server →
     vertical stack (easy, medium, hard[, insane] top to bottom, 3 px gaps) beside the head on the side toward
     the screen centre; far server → horizontal row in the far band centred on the server's x with a
     ≥ 12 px gap over the server, clamped to x 4–476.
   - Chase plates appear 4 px above the owner's head where it stood when the turn began (they don't follow).
   - **Large words** option: 2× applies only to single prompts and to a locked word (redrawn at 2× in
-    place, clamped to x 4–476; a locked stack plate grows upward, keeping its bottom edge: choice-stack
-    spec 2026-09-28 §2). Unlocked options stay 1×.
+    place, clamped to x 4–476; a locked stack plate grows away from the player and the rings,
+    keeping the edges that face them: choice-stack spec 2026-09-28 §2). Unlocked options stay 1×.
   - Unit test: for every word length of each tier's band (2–15), 3 and 4 options and both target
     sides, no two plates intersect and every plate lies within x 4–476, y 22–266.
 - **Timing bar**: 2 px, white, under the slot row until lock then under the locked plate; shows the

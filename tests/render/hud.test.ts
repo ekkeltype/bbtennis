@@ -16,7 +16,7 @@ import type {
   ViewModel,
 } from '../../src/core/types';
 import { contrastRatio, relativeLuminance } from '../../src/render/color';
-import { BANDS, layoutSingle } from '../../src/render/layout';
+import { growAway, layoutSingle } from '../../src/render/layout';
 import { BELT_COLOR, OUTLINE, PAL, RAMPS, TIER_COLOR, TIER_TYPED } from '../../src/render/palette';
 import { project } from '../../src/render/projection';
 import { headHeight } from '../../src/render/prompts';
@@ -536,15 +536,18 @@ describe('Hud.draw', () => {
     const { x, y, w, h } = box!;
     expect(x).toBe(Math.round((480 - w) / 2));
     expect(y + h).toBeLessThanOrEqual(270);
-    // The typist's own choice row sits in the far band; a locked word there at 2× and its timing bar end by y 58.
-    expect(y).toBeGreaterThan(BANDS.far[0] + 32 + 4);
-    // The lowest a plate gets: a 2× chase plate over a near player at the deepest contact point, then its timing bar.
+    // A 2× chase plate over a near player at the deepest contact point, then its timing bar.
     const feetY = project({ x: 0, y: -(COURT.halfLength + TUNING.trajectory.maxBehindBaseline), z: 0 }, 0).y;
     const head = Math.min(
       ...HAIR_STYLES.flatMap((_, hairStyle) => [null, 5].map((headband) => headHeight({ ...LOOK, hairStyle, headband }, 'near'))),
     );
     const lowest = layoutSingle(14, 240, Math.round(feetY) - head, 2);
     expect(y).toBeGreaterThan(lowest.y + lowest.h + 4);
+    // The lowest a choice plate gets: the bottom plate of the stack beside that spot (its bottom level
+    // with the head top), locked and doubled downward with Large words, then its timing bar.
+    const stackBottom = Math.round(feetY) - head;
+    const locked = growAway({ x: 300, y: stackBottom - 16, w: 101, h: 16, option: 3 }, 1, 1);
+    expect(y).toBeGreaterThan(locked.y + locked.h + 4);
     // Clear of the RTT readout in the bottom-right corner.
     const rtt = rects.find((r) => r.style === OUTLINE && r.h === 10 && r.y === 258);
     expect(rtt).toBeDefined();

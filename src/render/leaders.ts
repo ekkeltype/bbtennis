@@ -2,7 +2,25 @@ import { clamp } from '../core/util';
 import { layoutChoiceStack, PLATE_AREA, stackHeight, type PlateBox } from './layout';
 import type { Pt } from './plates';
 
-// Side leaders of the near typist's choice stack (choice-stack spec §2–3).
+// Choice stacks and their side leaders (choice-stack spec §2–3).
+
+/**
+ * Which way a stack's rings lie: 'up' for the near typist (rings on the far half, above the stack),
+ * 'down' for the far typist (rings on the near half, below it). A 'down' stack is the 'up' stack
+ * mirrored top to bottom (`flipBox`, `flipPt`), so easy sits at its bottom, nearest the rings.
+ */
+export type Facing = 'up' | 'down';
+
+/** Mirrors the plate area top to bottom: rows 22–265 map onto themselves, row r to row 287 − r. */
+const FLIP = PLATE_AREA.top + PLATE_AREA.bottom;
+
+function flipBox(b: PlateBox): PlateBox {
+  return { ...b, y: FLIP - (b.y + b.h) };
+}
+
+function flipPt(p: Pt): Pt {
+  return { x: p.x, y: FLIP - 1 - p.y };
+}
 
 /** Lanes on one side are this far apart: 1 px ink with a 1 px outline each side, then 1 px of court. */
 const LANE_GAP = 4;
@@ -30,9 +48,18 @@ function compact(points: Pt[]): Pt[] {
  * up. Otherwise the leader runs out to a lane (the start, or 4 px beyond the previous lane or column),
  * up to 4 px above the stack's top plus 4 px per lane already turned on that side, then straight to the
  * ring. With a pyramid stack and the tier rings' fixed left-to-right order, no two routes meet and none
- * crosses another plate (tests/render/leaders.test.ts).
+ * crosses another plate (tests/render/leaders.test.ts). A 'down' stack is routed mirrored: "above"
+ * becomes "below" throughout.
  */
-export function routeStackLeaders(boxes: readonly PlateBox[], rings: readonly Pt[], columnX: number): Pt[][] {
+export function routeStackLeaders(
+  boxes: readonly PlateBox[],
+  rings: readonly Pt[],
+  columnX: number,
+  facing: Facing = 'up',
+): Pt[][] {
+  if (facing === 'down') {
+    return routeStackLeaders(boxes.map(flipBox), rings.map(flipPt), columnX).map((r) => r.map(flipPt));
+  }
   if ((boxes.length !== 3 && boxes.length !== 4) || rings.length !== boxes.length) {
     throw new Error(`routeStackLeaders needs 3 or 4 plates and a ring each, got ${boxes.length} and ${rings.length}`);
   }
@@ -90,13 +117,26 @@ function fitShift(boxes: readonly PlateBox[], routes: readonly Pt[][]): number {
 }
 
 /**
- * The near typist's choice stack for `lens` (choice-stack spec §2), placed beside the hitting spot
- * (`besideColumn`): centred on `columnX`, the last plate ending at `bottomY`. It moves down if needed
- * so its top stays 8 px below the lowest of `rings` (whole-pixel ring centres, one per option), is
- * kept inside y 22–266, and is shifted sideways as one unit with its leaders until they fit x 4–476
- * (the plates alone as a last resort, which the leader tests show never happens).
+ * A choice stack for `lens` (choice-stack spec §2), placed beside the hitting spot (`besideColumn`):
+ * centred on `columnX`. Facing 'up' (the near typist), the last plate (easy on top) ends at `edgeY` and
+ * the stack moves down if needed so its top stays 8 px below the lowest of `rings` (whole-pixel ring
+ * centres, one per option). Facing 'down' (the far typist) it is mirrored: easy at the bottom, the top
+ * plate starting at `edgeY`, moving up to stay 8 px above the highest ring. Kept inside y 22–266, and
+ * shifted sideways as one unit with its leaders until they fit x 4–476 (the plates alone as a last
+ * resort, which the leader tests show never happens).
  */
-export function placeChoiceStack(lens: number[], columnX: number, bottomY: number, rings: readonly Pt[]): PlacedStack {
+export function placeChoiceStack(
+  lens: number[],
+  columnX: number,
+  edgeY: number,
+  rings: readonly Pt[],
+  facing: Facing = 'up',
+): PlacedStack {
+  if (facing === 'down') {
+    const s = placeChoiceStack(lens, columnX, FLIP - Math.round(edgeY), rings.map(flipPt));
+    return { boxes: s.boxes.map(flipBox), routes: s.routes.map((r) => r.map(flipPt)), columnX: s.columnX };
+  }
+  const bottomY = edgeY;
   const h = stackHeight(lens.length);
   const lowest = Math.max(...rings.map((r) => r.y));
   const bottom = clamp(Math.max(Math.round(bottomY), lowest + RING_CLEAR + h), PLATE_AREA.top + h, PLATE_AREA.bottom);

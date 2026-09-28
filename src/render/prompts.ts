@@ -14,17 +14,8 @@ import type {
 import { clamp } from '../core/util';
 import { drawText, textWidth } from './font';
 import { beltColor } from './hud';
-import {
-  besideColumn,
-  growUp,
-  layoutChoice,
-  layoutServeFar,
-  layoutServeNear,
-  layoutSingle,
-  plateWidth,
-  type PlateBox,
-} from './layout';
-import { placeChoiceStack, routeStackLeaders } from './leaders';
+import { besideColumn, growAway, layoutServeFar, layoutServeNear, layoutSingle, plateWidth, type PlateBox } from './layout';
+import { placeChoiceStack, routeStackLeaders, type Facing } from './leaders';
 import { OUTLINE, PAL } from './palette';
 import { drawPlate, drawTimingBar, type PlateDraw, type PlateStyle, type Pt } from './plates';
 import type { PlayerPose } from './players';
@@ -93,7 +84,7 @@ export interface PromptOptions {
 const OPTION_FADE_MS = 200;
 /**
  * How long a completed chase plate takes to fade out, and with it the opponent's revealed serve plate
- * (the same word), so neither meets the choice row that appears at once (R42: within 150 ms).
+ * (the same word), so neither meets the choice stack that appears at once (R42: within 150 ms).
  */
 const CHASE_FADE_MS = 100;
 /** Gap between a plate's bottom and its timing bar. */
@@ -161,23 +152,6 @@ function plate(c: Ctx, box: PlateBox, opt: WordOption, style: PlateStyle, over: 
   };
 }
 
-/**
- * A choice plate redrawn at 2× around the same centre column, top unchanged, kept inside the plate
- * area. Serve plates grow away from the toss column instead (`layoutServeNear`/`layoutServeFar`).
- */
-function doubled(box: PlateBox): PlateBox {
-  const w = box.w * 2;
-  const h = box.h * 2;
-  const cx = box.x + (box.w - 1) / 2;
-  return {
-    x: clamp(Math.round(cx - (w - 1) / 2), AREA.left, AREA.right - w),
-    y: clamp(box.y, AREA.top, AREA.bottom - h),
-    w,
-    h,
-    option: box.option,
-  };
-}
-
 /** The remote chip: owner's name and belt colour, or nothing for the local typist. */
 function chipOf(c: Ctx, owner: PlayerId, style: PlateStyle): { name: string; color: string } | null {
   if (style === 'localActive') return null;
@@ -191,8 +165,9 @@ function largeOption(c: Ctx, prompt: PromptView): number | null {
 }
 
 /**
- * The plates of a three-option prompt in `boxes`, option `large` at 2× (its box already doubled):
- * after a lock the other options fade out. Returns `boxes`.
+ * The plates of a prompt's options in `boxes`, option `large` at 2× (its box already doubled): after a
+ * lock the other options fade out. A remote prompt's name chip sits on option `chipOption` (the plate
+ * drawn on top) until a lock, then on the locked plate. Returns `boxes`.
  */
 function optionPlates(
   c: Ctx,
@@ -201,6 +176,7 @@ function optionPlates(
   large: number | null,
   style: PlateStyle,
   owner: PlayerId,
+  chipOption = 0,
 ): PlateBox[] {
   const lockAt = lockTime(c.t, prompt.id, c.f.τ);
   const chip = chipOf(c, owner, style);
@@ -218,7 +194,7 @@ function optionPlates(
         lastWrongAgeMs: wrongAge,
         isNextCursor: local && locked,
         showInitialBlock: local && prompt.locked === null,
-        nameChip: chip && i === (prompt.locked ?? 0) ? chip.name : null,
+        nameChip: chip && i === (prompt.locked ?? chipOption) ? chip.name : null,
         oppColor: chip?.color ?? null,
         scale: i === large ? 2 : 1,
       }),
@@ -315,38 +291,32 @@ function chasePlate(c: Ctx, d: ReturnTurnData, chase: PromptView, style: PlateSt
 }
 
 /**
- * The choice prompt (spec §4.2): for the near typist, a stack beside the spot the chase runs them to,
- * with side leaders (choice-stack spec §2–3); for the far typist, today's row in the near band with
- * straight leaders from each plate's bottom centre. Rings on the targets; the local typist's timing
- * bar under the options (then under the locked one); the first-letter hint above the stack.
+ * The choice prompt (spec §4.2, choice-stack spec §2–3): a stack beside the spot the chase runs its
+ * typist to (the animator's stance), on the court-centre side so it never covers them, with side
+ * leaders to the rings. The near typist's stack faces the rings above it (easy on top, its bottom level
+ * with the head top); the far typist's faces the rings below it (easy at the bottom, its top level with
+ * the head top). A locked word at 2× grows away from the player and the rings. The local typist's
+ * timing bar goes under the options (then under the locked one), the first-letter hint above the stack.
  */
 function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: PlateStyle): void {
   const { f, v, s } = c;
   // A full meter pre-picks 4 targets; a chase slip leaves the prompt showing only the first 3.
   const targets = d.choice.targets.slice(0, choice.options.length).map((p) => groundAt(f, p));
+  const rings = targets.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
   const lens = choice.options.map((o) => o.len);
   const large = largeOption(c, choice);
   const n = choice.options.length;
-  let boxes: PlateBox[];
-  let paths: Pt[][];
-  let column: number | null = null;
-  if (d.owner === f.near) {
-    // Beside the spot the chase runs the player to (the animator's stance), so it never covers them.
-    const spot = stanceFor(d.incoming.contact, d.owner, c.o.turnStart[d.owner]).feet;
-    const head = headAt(c, d.owner, spot);
-    const rings = targets.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
-    const widest = Math.max(...lens.map((len) => plateWidth(len)));
-    const placed = placeChoiceStack(lens, besideColumn(head.x, widest), head.y, rings);
-    column = placed.columnX;
-    boxes = placed.boxes.map((b, i) => (i === large ? growUp(b) : b));
-    paths = placed.routes;
-    if (large !== null) paths[large] = routeStackLeaders(boxes, rings, placed.columnX)[large]!;
-  } else {
-    const row = layoutChoice(lens, targets.map((p) => p.x), 'near');
-    boxes = row.map((b, i) => (i === large ? doubled(b) : b));
-    paths = row.map((b, i) => [{ x: b.x + Math.floor(b.w / 2), y: b.y + b.h }, { x: targets[i]!.x, y: targets[i]!.y }]);
-  }
-  optionPlates(c, choice, boxes, large, style, d.owner);
+  const facing: Facing = d.owner === f.near ? 'up' : 'down';
+  const spot = stanceFor(d.incoming.contact, d.owner, c.o.turnStart[d.owner]).feet;
+  const head = headAt(c, d.owner, spot);
+  const widest = Math.max(...lens.map((len) => plateWidth(len)));
+  const placed = placeChoiceStack(lens, besideColumn(head.x, widest), head.y, rings, facing);
+  const awayX = placed.columnX > Math.round(head.x) ? 1 : -1;
+  const boxes = placed.boxes.map((b, i) => (i === large ? growAway(b, awayX, facing === 'up' ? 1 : -1) : b));
+  const paths = placed.routes;
+  if (large !== null) paths[large] = routeStackLeaders(boxes, rings, placed.columnX, facing)[large]!;
+  // The name chip goes on the plate drawn on top: easy near, the widest far.
+  optionPlates(c, choice, boxes, large, style, d.owner, facing === 'up' ? 0 : n - 1);
   targets.forEach((to, i) => {
     const tier = choice.options[i]!.tier;
     const alpha = 1 - fadeOf(c, n, i);
@@ -356,9 +326,9 @@ function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: Plat
   if (style !== 'localActive' || v.phase !== 'choice') return;
   const share = contactShare(v, d, turnViewAt(c.t, choice.shownAt).simτ);
   s.bar = barUnder(choice.locked === null ? boxes : [boxes[choice.locked]!], share.frac, share.grace);
-  if (f.vm.overlay.hintFirstLetter && choice.locked === null && column !== null) {
+  if (f.vm.overlay.hintFirstLetter && choice.locked === null) {
     const top = Math.min(...boxes.map((b) => b.y));
-    const x = clamp(column, AREA.left + HINT_W / 2, AREA.right - HINT_W / 2);
+    const x = clamp(placed.columnX, AREA.left + HINT_W / 2, AREA.right - HINT_W / 2);
     s.tags.push({ kind: 'hint', x, y: Math.max(AREA.top, top - 2 - TAG_H) });
   }
 }
@@ -434,8 +404,8 @@ function playerTags(c: Ctx): void {
  * What the prompt layer shows this frame (spec §4.2), or nothing while paused or counting down:
  * serve words (local-active stack, the opponent's hidden plates, spectators' remote plates) with
  * their box markers; the chase plate above the owner's turn-start head (fading out once complete);
- * the choice (the near typist's stack or the far typist's row) with rings and leaders; the local
- * timing bar; the serve reveal flip; the border pop; the WAIT tag, SPACE keycap and first-letter hint.
+ * the choice stack beside its typist with rings and leaders; the local timing bar; the serve reveal
+ * flip; the border pop; the WAIT tag, SPACE keycap and first-letter hint.
  */
 export function promptScene(f: WorldFrame, poses: readonly [PlayerPose, PlayerPose], o: PromptOptions): PromptScene {
   const s: PromptScene = { plates: [], rings: [], leaders: [], bar: null, flip: null, pops: [], tags: [] };
