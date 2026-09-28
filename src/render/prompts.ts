@@ -13,7 +13,8 @@ import type {
 import { clamp } from '../core/util';
 import { drawText, textWidth } from './font';
 import { beltColor } from './hud';
-import { layoutChoice, layoutServeFar, layoutServeNear, layoutSingle, type PlateBox } from './layout';
+import { growUp, layoutChoice, layoutServeFar, layoutServeNear, layoutSingle, type PlateBox } from './layout';
+import { placeChoiceStack, routeStackLeaders } from './leaders';
 import { OUTLINE, PAL } from './palette';
 import { drawPlate, drawTimingBar, type PlateDraw, type PlateStyle, type Pt } from './plates';
 import type { PlayerPose } from './players';
@@ -52,7 +53,7 @@ export interface LeaderMark { points: Pt[]; tier: Tier; alpha: number }
 export interface BarMark { x: number; y: number; w: number; frac: number; grace: boolean }
 /** The opponent's serve plate turning over at the strike: `step` 0–3 (hidden face on 0–1, revealed on 2–3). */
 export interface FlipMark { hidden: PlateDraw; revealed: PlateDraw; step: number }
-/** A tag above the viewer's player (`wait`, `space` keycap) or the first-letter label under the choice row; (x, y) is its top centre. */
+/** A tag above the viewer's player (`wait`, `space` keycap) or the first-letter label above the choice stack; (x, y) is its top centre. */
 export interface TagMark { kind: 'wait' | 'space' | 'hint'; x: number; y: number }
 
 /** Everything the prompt layer draws this frame. */
@@ -96,13 +97,9 @@ const REVEAL_FADE_MS = 200;
 const AREA = { left: 4, right: 476, top: 22, bottom: 266 };
 const HEAD_GAP = 4;
 const TAG_H = 11;
-/**
- * Centres for the "type a first letter" label under the far choice row: the gaps between the slot
- * centres (90 / 240 / 390); the one farther from the opponent keeps the label off their sprite.
- */
-const HINT_X = [165, 315] as const;
-/** The same for a 4-plate choice row (slot centres 60 / 180 / 300 / 420): the gaps of the outer pairs. */
-const HINT_X4 = [120, 360] as const;
+/** The first-letter hint's text and width (`drawTag` pads the text by 4 px each side). */
+const HINT_TEXT = 'TYPE A FIRST LETTER';
+const HINT_W = textWidth(HINT_TEXT) + 8;
 const KEYCAP_H = 13;
 const KEYCAP_BOB_MS = 400;
 
@@ -307,33 +304,49 @@ function chasePlate(c: Ctx, d: ReturnTurnData, chase: PromptView, style: PlateSt
   if (c.o.pop) c.s.pops.push(box);
 }
 
+/**
+ * The choice prompt (spec §4.2): for the near typist, a stack where the chase plate was with side
+ * leaders (choice-stack spec §2–3); for the far typist, today's row in the near band with straight
+ * leaders from each plate's bottom centre. Rings on the targets; the local typist's timing bar under the
+ * options (then under the locked one); the first-letter hint above the stack.
+ */
 function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: PlateStyle): void {
   const { f, v, s } = c;
-  const band = d.striker === f.near ? 'near' : 'far';
   // A full meter pre-picks 4 targets; a chase slip leaves the prompt showing only the first 3.
   const targets = d.choice.targets.slice(0, choice.options.length).map((p) => groundAt(f, p));
-  const layout = layoutChoice(
-    choice.options.map((o) => o.len),
-    targets.map((p) => p.x),
-    band,
-  );
+  const lens = choice.options.map((o) => o.len);
   const large = largeOption(c, choice);
-  const boxes = optionPlates(c, choice, layout.map((b, i) => (i === large ? doubled(b) : b)), large, style, d.owner);
   const n = choice.options.length;
+  let boxes: PlateBox[];
+  let paths: Pt[][];
+  let column: number | null = null;
+  if (d.owner === f.near) {
+    const head = headAt(c, d.owner, c.o.turnStart[d.owner]);
+    const rings = targets.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+    const placed = placeChoiceStack(lens, head.x, head.y - HEAD_GAP, rings);
+    column = placed.columnX;
+    boxes = placed.boxes.map((b, i) => (i === large ? growUp(b) : b));
+    paths = placed.routes;
+    if (large !== null) paths[large] = routeStackLeaders(boxes, rings, placed.columnX)[large]!;
+  } else {
+    const row = layoutChoice(lens, targets.map((p) => p.x), 'near');
+    boxes = row.map((b, i) => (i === large ? doubled(b) : b));
+    paths = row.map((b, i) => [{ x: b.x + Math.floor(b.w / 2), y: b.y + b.h }, { x: targets[i]!.x, y: targets[i]!.y }]);
+  }
+  optionPlates(c, choice, boxes, large, style, d.owner);
   targets.forEach((to, i) => {
     const tier = choice.options[i]!.tier;
     const alpha = 1 - fadeOf(c, n, i);
-    const box = layout[i]!;
     s.rings.push({ tier, x: to.x, y: to.y, alpha });
-    s.leaders.push({ points: [{ x: box.x + Math.floor(box.w / 2), y: box.y + box.h }, { x: to.x, y: to.y }], tier, alpha });
+    s.leaders.push({ points: paths[i]!, tier, alpha });
   });
   if (style !== 'localActive' || v.phase !== 'choice') return;
   const share = contactShare(v, d, turnViewAt(c.t, choice.shownAt).simτ);
   s.bar = barUnder(choice.locked === null ? boxes : [boxes[choice.locked]!], share.frac, share.grace);
-  if (f.vm.overlay.hintFirstLetter && choice.locked === null) {
-    const farX = groundAt(f, c.poses[d.striker].feet).x;
-    const [left, right] = choice.options.length === 4 ? HINT_X4 : HINT_X;
-    s.tags.push({ kind: 'hint', x: Math.abs(farX - left) >= Math.abs(farX - right) ? left : right, y: s.bar.y + 5 });
+  if (f.vm.overlay.hintFirstLetter && choice.locked === null && column !== null) {
+    const top = Math.min(...boxes.map((b) => b.y));
+    const x = clamp(column, AREA.left + HINT_W / 2, AREA.right - HINT_W / 2);
+    s.tags.push({ kind: 'hint', x, y: Math.max(AREA.top, top - 2 - TAG_H) });
   }
 }
 
@@ -408,8 +421,8 @@ function playerTags(c: Ctx): void {
  * What the prompt layer shows this frame (spec §4.2), or nothing while paused or counting down:
  * serve words (local-active stack, the opponent's hidden plates, spectators' remote plates) with
  * their box markers; the chase plate above the owner's turn-start head (fading out once complete);
- * the choice row in the band of the targeted half with rings and leaders; the local timing bar; the
- * serve reveal flip; the border pop; the WAIT tag, SPACE keycap and first-letter hint.
+ * the choice (the near typist's stack or the far typist's row) with rings and leaders; the local
+ * timing bar; the serve reveal flip; the border pop; the WAIT tag, SPACE keycap and first-letter hint.
  */
 export function promptScene(f: WorldFrame, poses: readonly [PlayerPose, PlayerPose], o: PromptOptions): PromptScene {
   const s: PromptScene = { plates: [], rings: [], leaders: [], bar: null, flip: null, pops: [], tags: [] };
@@ -462,7 +475,7 @@ function drawTags(ctx: CanvasRenderingContext2D, tags: TagMark[]): void {
   for (const t of tags) {
     if (t.kind === 'wait') drawTag(ctx, 'WAIT', t.x, t.y, TAG_H, { fill: PLATE_FILL, ink: PAL.silver });
     else if (t.kind === 'space') drawTag(ctx, 'SPACE', t.x, t.y, KEYCAP_H, { fill: PAL.mist, ink: OUTLINE, lip: PAL.grey });
-    else drawTag(ctx, 'TYPE A FIRST LETTER', t.x, t.y, TAG_H, { fill: PLATE_FILL, ink: PAL.cream });
+    else drawTag(ctx, HINT_TEXT, t.x, t.y, TAG_H, { fill: PLATE_FILL, ink: PAL.cream });
   }
 }
 

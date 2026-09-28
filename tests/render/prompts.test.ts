@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { receiverSpot, serverSpot } from '../../src/core/court';
+import { rallyTargets, receiverSpot, serverSpot } from '../../src/core/court';
 import { createScore } from '../../src/core/scoring';
 import { createTurn, startTurn, turnClock, turnInput } from '../../src/core/turn';
 import type {
@@ -13,6 +13,7 @@ import type {
   ViewModel,
   WordOption,
 } from '../../src/core/types';
+import { clamp } from '../../src/core/util';
 import { textWidth } from '../../src/render/font';
 import { beltColor } from '../../src/render/hud';
 import { BANDS, layoutServeFar, layoutServeNear } from '../../src/render/layout';
@@ -238,38 +239,64 @@ describe('promptScene', () => {
     expect(large.plates[0]).toMatchObject({ scale: 2 });
   });
 
-  it('lays the choice out in the band of the targeted half with rings and leaders, then fades the others after the lock', () => {
+  it('stacks the near typist\'s choice where the chase plate was, easy on top, side leaders to the rings (choice-stack spec §2–3)', () => {
     const t = createTurn(returnData());
     startTurn(t);
     typeWord(t, 'ball', 100);
     turnClock(t, 500);
-    const s = scene(view(matchState(t), 500, 1));
-    expect(s.plates.map((p) => [p.opt.word, p.style, p.box.y])).toEqual(
-      CHOICE.map((w) => [w, 'localActive', BANDS.far[0]]),
-    );
+    const a = new PlayerAnimator();
+    const chase = scene(view(matchState(t), 350, 1), PREFS, a).plates.find((p) => p.opt.word === 'ball')!.box;
+    const s = scene(view(matchState(t), 500, 1), PREFS, a);
+    expect(s.plates.map((p) => [p.opt.word, p.style])).toEqual(CHOICE.map((w) => [w, 'localActive']));
+    const stack = s.plates.map((p) => p.box);
+    stack.slice(1).forEach((b, i) => expect(b.y).toBe(stack[i]!.y + 16 + 3));
+    const bottom = stack.at(-1)!;
+    expect(bottom.y + bottom.h).toBe(chase.y + chase.h);
+    const column = chase.x + (chase.w - 1) / 2;
+    for (const b of stack) expect(Math.abs(b.x + (b.w - 1) / 2 - column)).toBeLessThanOrEqual(0.5);
+
     const targets = returnData().choice.targets.map((p) => project({ ...p, z: 0 }, 1));
     expect(s.rings.map((r) => [r.x, r.y])).toEqual(targets.map((p) => [p.x, p.y]));
-    expect(s.leaders).toHaveLength(3);
-    s.leaders.forEach((l, i) => {
-      const box = s.plates[i]!.box;
+    const sides = s.leaders.map((l, i) => {
+      const b = stack[i]!;
       const from = l.points[0]!;
-      expect(l.points.at(-1)).toEqual({ x: targets[i]!.x, y: targets[i]!.y });
-      expect(from.y).toBe(box.y + box.h);
-      expect(from.x).toBeGreaterThanOrEqual(box.x);
-      expect(from.x).toBeLessThan(box.x + box.w);
+      expect(from.y).toBe(b.y + 8);
+      expect([b.x - 2, b.x + b.w + 1]).toContain(from.x);
+      expect(l.points.at(-1)).toEqual({ x: Math.round(targets[i]!.x), y: Math.round(targets[i]!.y) });
+      return from.x < b.x ? 'left' : 'right';
     });
-    const row = s.plates.map((p) => p.box);
-    expect(s.bar).toMatchObject({ x: Math.min(...row.map((b) => b.x)) });
+    const mediumLeft = targets[1]!.x < targets[2]!.x;
+    expect(sides[1]).toBe(mediumLeft ? 'left' : 'right');
+    expect(sides[2]).toBe(mediumLeft ? 'right' : 'left');
+    expect(s.bar).toMatchObject({ x: Math.min(...stack.map((b) => b.x)), y: bottom.y + bottom.h + 2 });
 
     turnInput(t, 'v', 600);
     turnClock(t, 700);
-    const locked = scene(view(matchState(t), 700, 1));
-    expect(locked.plates.find((p) => p.opt.word === 'volley')).toMatchObject({ locked: true, faded: 0, typed: 1 });
+    const locked = scene(view(matchState(t), 700, 1), PREFS, a);
+    const volley = locked.plates.find((p) => p.opt.word === 'volley')!;
+    expect(volley).toMatchObject({ locked: true, faded: 0, typed: 1 });
+    expect(volley.box).toEqual(stack[1]);
     const other = locked.plates.find((p) => p.opt.word === 'drop')!;
     expect(other.faded).toBeGreaterThan(0);
     expect(other.faded).toBeLessThan(1);
-    const box = locked.plates.find((p) => p.opt.word === 'volley')!.box;
-    expect(locked.bar).toMatchObject({ x: box.x, w: box.w });
+    expect(locked.bar).toMatchObject({ x: volley.box.x, w: volley.box.w, y: volley.box.y + volley.box.h + 2 });
+  });
+
+  it('stacks player 0\'s choice for a spectator too: remote plates, the name chip on the top plate', () => {
+    const t = createTurn(returnData({ owner: 0, striker: 1, choice: { options: CHOICE.map(opt), targets: rallyTargets(1, 1), m: 1 } }));
+    startTurn(t);
+    typeWord(t, 'ball', 100);
+    turnClock(t, 500);
+    const s = scene(view(matchState(t), 500, 'spectator'));
+    expect(s.plates.map((p) => p.style)).toEqual(['remote', 'remote', 'remote']);
+    expect(s.plates.map((p) => p.nameChip)).toEqual(['Alex', null, null]);
+    const ys = s.plates.map((p) => p.box.y);
+    expect(ys).toEqual([ys[0]!, ys[0]! + 19, ys[0]! + 38]);
+    s.leaders.forEach((l, i) => {
+      const b = s.plates[i]!.box;
+      expect([b.x - 2, b.x + b.w + 1]).toContain(l.points[0]!.x);
+    });
+    expect(s.bar).toBeNull();
   });
 
   it('fades the unchosen options with their rings and leaders out fully within 200 ms of the lock', () => {
@@ -288,7 +315,7 @@ describe('promptScene', () => {
     }
   });
 
-  it('fades the completed chase plate out within 100 ms, its timing bar moving to the choice row', () => {
+  it('fades the completed chase plate out within 100 ms, its timing bar moving to the choice stack', () => {
     const t = createTurn(returnData());
     startTurn(t);
     const done = typeWord(t, 'ball', 100);
@@ -317,6 +344,12 @@ describe('promptScene', () => {
     // One chip per prompt: on the easy (centre) plate until a lock, then on the locked plate.
     expect(s.plates.map((p) => p.nameChip)).toEqual(['Kai', null, null]);
     expect(s.plates[0]!.oppColor).toBe(beltColor(matchState(null).players[1]));
+    // The far typist keeps today's straight leaders from each plate's bottom centre.
+    s.leaders.forEach((l, i) => {
+      const box = s.plates[i]!.box;
+      expect(l.points).toHaveLength(2);
+      expect(l.points[0]).toEqual({ x: box.x + Math.floor(box.w / 2), y: box.y + box.h });
+    });
     turnInput(t, 'c', 600);
     turnClock(t, 650);
     const locked = scene(view(matchState(t), 650, 0));
@@ -359,7 +392,7 @@ describe('promptScene', () => {
     expect(revealed(done + 100)).toBeUndefined();
   });
 
-  it('labels the first choice row "type a first letter" under the row, clear of the far player', () => {
+  it('puts "type a first letter" centred on the stack, 2 px above its top plate, inside x 4–476', () => {
     const t = createTurn(returnData());
     startTurn(t);
     typeWord(t, 'ball', 100);
@@ -367,21 +400,22 @@ describe('promptScene', () => {
     const vm = view(matchState(t), 500, 1, { overlay: { ...OVERLAY, hintFirstLetter: true } });
     const f = worldFrame(vm);
     const labelW = textWidth('TYPE A FIRST LETTER') + 8;
-    for (const x of [-5.5, -3, -1.5, 0, 1.5, 3, 5.5]) {
-      const far: PlayerPose = { feet: { x, y: -12.2 }, anim: 'idle', frame: 0, view: 'far', flip: false };
-      const near: PlayerPose = { feet: receiverSpot(1, 'deuce'), anim: 'idle', frame: 0, view: 'near', flip: false };
+    for (const x of [-5.8, -3, 0, 3, 5.8]) {
+      const far: PlayerPose = { feet: { x: 0, y: -12.2 }, anim: 'idle', frame: 0, view: 'far', flip: false };
+      const near: PlayerPose = { feet: { x, y: 12.2 }, anim: 'idle', frame: 0, view: 'near', flip: false };
       const s = promptScene(f, [far, near], {
         prefs: PREFS,
         looks: [vm.pub.players[0].look, vm.pub.players[1].look],
         turnStart: [far.feet, near.feet],
         pop: false,
       });
+      const top = s.plates[0]!.box;
       const hint = s.tags.find((g) => g.kind === 'hint');
-      expect(hint).toBeDefined();
-      expect(hint!.y).toBeGreaterThanOrEqual(s.bar!.y + 2);
+      expect(hint, `x ${x}`).toBeDefined();
+      expect(hint!.y).toBe(top.y - 2 - 11);
+      const centre = clamp(top.x + (top.w - 1) / 2, 4 + labelW / 2, 476 - labelW / 2);
+      expect(Math.abs(hint!.x - centre)).toBeLessThanOrEqual(0.5);
       const left = Math.round(hint!.x - labelW / 2);
-      const farX = project({ ...far.feet, z: 0 }, 1).x;
-      expect(left + labelW <= farX - 12 || left >= farX + 12).toBe(true);
       expect(left).toBeGreaterThanOrEqual(4);
       expect(left + labelW).toBeLessThanOrEqual(476);
     }
@@ -416,12 +450,16 @@ describe('promptScene with the insane option (power-meter spec §6)', () => {
     const s = scene(view({ ...matchState(fullMeterReturn('ball')), power: [0, 4] }, 600, 1));
     expect(s.rings.map((r) => r.tier)).toEqual(['easy', 'medium', 'hard', 'insane']);
     expect(s.leaders).toHaveLength(4);
+    expect(s.plates.map((p) => p.box.w)).toEqual([35, 47, 71, 95]);
+    s.plates.slice(1).forEach((p, i) => expect(p.box.y).toBe(s.plates[i]!.box.y + 19));
   });
 
   it('after a chase slip shows 3, though 4 targets were pre-picked', () => {
     const s = scene(view({ ...matchState(fullMeterReturn('bzall')), power: [0, 4] }, 700, 1));
     expect(s.rings.map((r) => r.tier)).toEqual(['easy', 'medium', 'hard']);
     expect(s.leaders).toHaveLength(3);
+    expect(s.plates).toHaveLength(3);
+    s.leaders.forEach((l, i) => expect(l.tier).toBe(s.plates[i]!.opt.tier));
   });
 
   it('Large words: a locked insane word at 2× (14 letters: 190 px) stays inside x 4–476', () => {
@@ -433,6 +471,20 @@ describe('promptScene with the insane option (power-meter spec §6)', () => {
     expect(big[0]!.box.w).toBe(190);
     expect(big[0]!.box.x).toBeGreaterThanOrEqual(4);
     expect(big[0]!.box.x + big[0]!.box.w).toBeLessThanOrEqual(476);
+  });
+
+  it('Large words: the locked plate doubles upward, keeping its bottom edge, and its leader leaves the doubled box', () => {
+    const t = fullMeterReturn('ball');
+    const a = new PlayerAnimator();
+    const before = scene(view({ ...matchState(t), power: [0, 4] }, 550, 1), PREFS, a).plates.find((p) => p.opt.word === INSANE_WORD)!.box;
+    typeWord(t, 'ph', 600);
+    const s = scene(view({ ...matchState(t), power: [0, 4] }, 800, 1), { ...PREFS, largeWords: true }, a);
+    const big = s.plates.find((p) => p.scale === 2)!;
+    expect(big.opt.word).toBe(INSANE_WORD);
+    expect(big.box.y + big.box.h).toBe(before.y + before.h);
+    const from = s.leaders[3]!.points[0]!;
+    expect([big.box.x - 2, big.box.x + big.box.w + 1]).toContain(from.x);
+    expect(from.y).toBe(big.box.y + 16);
   });
 });
 
