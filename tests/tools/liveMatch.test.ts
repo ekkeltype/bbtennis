@@ -70,8 +70,8 @@ describe('live match moments', () => {
     return vm;
   };
 
-  it('plans the six moments of the brief, in its order, all seen by player 0', () => {
-    expect(plans.map((p) => p.moment.name)).toEqual(['toss', 'chase', 'choice', 'point', 'hidden', 'matchpoint']);
+  it('plans the seven moments of the brief, in its order, all seen by player 0', () => {
+    expect(plans.map((p) => p.moment.name)).toEqual(['toss', 'chase', 'stack', 'choice', 'point', 'hidden', 'matchpoint']);
     expect(LIVE_VIEWER).toBe(0);
     for (const vm of seen.values()) expect(vm.viewer).toBe(0);
   });
@@ -132,6 +132,17 @@ describe('live match moments', () => {
     expect(p.typed * 2).toBeGreaterThanOrEqual(lockedLen(p));
     expect(p.typed).toBeLessThan(lockedLen(p));
     expect(vm.turnτ).toBeLessThan(turn.data.incoming.T);
+  });
+
+  it('stack: player 0\'s choice prompt, shown for at least 150 ms and not locked yet', () => {
+    const vm = shot('stack');
+    const { turn, view } = turnOf(vm);
+    expect(turn.data.owner).toBe(0);
+    expect(view.phase).toBe('choice');
+    const p = activePrompt(view);
+    expect(p.kind).toBe('choice');
+    expect(p.locked).toBeNull();
+    expect(vm.turnτ - p.shownAt).toBeGreaterThanOrEqual(150);
   });
 
   it('choice: player 0 has locked a choice word and typed at least half of it', () => {

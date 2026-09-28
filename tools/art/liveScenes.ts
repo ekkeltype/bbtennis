@@ -74,8 +74,8 @@ function caption(p: ShotPlan): string {
 /**
  * Sections `scene-live-<surface>`: full frames drawn by the real Renderer from a real match (Engine and
  * CpuBrains run headlessly, see liveMatch.ts) as player 0 sees it: the toss with typed letters, the
- * chase mid-way, a locked choice, a point call, the opponent's hidden serve plates and MATCH POINT, at
- * 1× and 3×.
+ * chase mid-way, the choice stack, a locked choice, a point call, the opponent's hidden serve plates
+ * and MATCH POINT, at 1× and 3×.
  */
 export function drawLiveSceneSections(parent: HTMLElement): void {
   for (const surface of SURFACES) {

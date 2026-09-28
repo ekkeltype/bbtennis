@@ -3,6 +3,7 @@
  * `npm run art:export`: every `<section data-shot>` becomes artifacts/art/<name>.png. A part that
  * fails to draw logs a console error (failing the export) and the rest of the page still draws.
  */
+import { drawChoiceStackSection } from './art/choiceStack';
 import { addError } from './art/dom';
 import { drawFontSection } from './art/font';
 import { drawHudSection } from './art/hud';
@@ -17,6 +18,7 @@ const PARTS: readonly [name: string, draw: (parent: HTMLElement) => void][] = [
   ['font', drawFontSection],
   ['plates', drawPlatesSection],
   ['rings', drawRingsSection],
+  ['choice stack', drawChoiceStackSection],
   ['scenes', drawSceneSections],
   ['live scenes', drawLiveSceneSections],
   ['hud', drawHudSection],

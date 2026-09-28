@@ -122,10 +122,25 @@ function viewerTyped({ vm, view }: LiveFrame, kind: 'chase' | 'choice'): boolean
   return vm.pub.turn?.data.owner === LIVE_VIEWER && view?.phase === kind && halfTyped(view, kind);
 }
 
+/** How long after the choice prompt appears the completed chase plate has surely faded out (100 ms fade). */
+const STACK_SETTLED_MS = 150;
+
+/** The viewer's choice prompt, shown for at least `STACK_SETTLED_MS` and not locked yet: the whole stack with its leaders. */
+function viewerChoosing({ vm, view }: LiveFrame): boolean {
+  const p = activePrompt(view);
+  return (
+    vm.pub.turn?.data.owner === LIVE_VIEWER &&
+    view?.phase === 'choice' &&
+    p?.kind === 'choice' &&
+    p.locked === null &&
+    vm.turnτ - p.shownAt >= STACK_SETTLED_MS
+  );
+}
+
 /**
  * The moments of each live scene section (brief 23b): the viewer's toss with typed letters, the viewer
- * chasing mid-way and with a choice locked, a point call's banner, the opponent's toss seen through
- * hidden plates, and the MATCH POINT banner.
+ * chasing mid-way, choosing from the stack and with a choice locked, a point call's banner, the
+ * opponent's toss seen through hidden plates, and the MATCH POINT banner.
  */
 export const LIVE_MOMENTS: readonly Moment[] = [
   {
@@ -137,6 +152,11 @@ export const LIVE_MOMENTS: readonly Moment[] = [
     name: 'chase',
     label: 'chase mid-way, the ball in flight',
     shows: (f) => viewerTyped(f, 'chase'),
+  },
+  {
+    name: 'stack',
+    label: 'choice stack shown, nothing locked yet',
+    shows: viewerChoosing,
   },
   {
     name: 'choice',
