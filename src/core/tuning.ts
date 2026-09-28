@@ -86,20 +86,42 @@ export const TUNING = {
   // Power meter (power-meter spec §4.1): flawless serve/choice strikes fill it to `max`; a full meter offers the insane word.
   // tossMult: a full-meter serve only stretches the toss apex (power-meter spec §4.3); training / non-full keep tossApexMs.
   power: { max: 4, tossMult: 1.2 },
+  // Typist model (early-typing spec §5): every CPU and both balance-simulation players. Each
+  // [at 25 WPM, at 140 WPM] pair is linear in the label WPM between those two and held outside.
+  // These are the agreed human estimates, not tuning knobs.
+  typist: {
+    wpmRange: [25, 140],
+    err: [0.07, 0.04],
+    /** Before a serve word (after the toss) and before choice words. */
+    wordPauseMs: [950, 600],
+    /** Before the chase word of a serve return (never seen before). */
+    serveChasePauseMs: [600, 400],
+    /** Before an early chase word, from the striker's lock (its word was already in their stack). */
+    earlyPauseMs: [500, 300],
+    /** After a wrong key, before the right letter: uniform in this range. */
+    wrongPauseRangeMs: { min: 200, max: 400 },
+  },
   movement: { chaseMaxSpeed: 7, jogSpeed: 4, stanceOffset: 0.7 },
   positions: { serverX: 0.8, serverY: 12.3, receiverX: 3.0, receiverY: 12.5, restY: 12.2 },
 } as const;
 
-/** CPU milestone rows (spec §3.8); stripes interpolate linearly in WPM between rows. */
+/** CPU milestone rows (early-typing spec §5): each belt's WPM and aggression; stripes interpolate aggression linearly in WPM between rows. */
 export const CPU_MILESTONES = [
-  { belt: 'white', wpm: 25, err: 0.07, reactionMs: 900, aggression: 0.2 },
-  { belt: 'yellow', wpm: 35, err: 0.055, reactionMs: 800, aggression: 0.35 },
-  { belt: 'green', wpm: 45, err: 0.045, reactionMs: 700, aggression: 0.5 },
-  { belt: 'brown', wpm: 65, err: 0.03, reactionMs: 550, aggression: 0.65 },
-  { belt: 'black', wpm: 90, err: 0.02, reactionMs: 450, aggression: 0.8 },
-  { belt: 'black2', wpm: 105, err: 0.016, reactionMs: 400, aggression: 0.85 },
-  { belt: 'black3', wpm: 120, err: 0.013, reactionMs: 350, aggression: 0.9 },
+  { belt: 'white', wpm: 25, aggression: 0.2 },
+  { belt: 'yellow', wpm: 36, aggression: 0.35 },
+  { belt: 'green', wpm: 52, aggression: 0.5 },
+  { belt: 'brown', wpm: 76, aggression: 0.65 },
+  { belt: 'black', wpm: 110, aggression: 0.8 },
+  { belt: 'black2', wpm: 124, aggression: 0.85 },
+  { belt: 'black3', wpm: 140, aggression: 0.9 },
 ] as const;
 
-/** The 15 CPU levels' WPM (index = level). */
-export const CPU_LEVEL_WPM = [25, 28, 31, 35, 38, 41, 45, 51, 58, 65, 72, 81, 90, 105, 120] as const;
+/** The 15 CPU levels' label WPM (index = level): about 13 % apart; what each level's Results screen shows (early-typing spec §5). */
+export const CPU_LEVEL_WPM = [25, 28, 32, 36, 41, 46, 52, 59, 67, 76, 86, 97, 110, 124, 140] as const;
+
+/**
+ * The speed each level types at underneath (index = level): hesitations on hard words and error pauses
+ * slow it to its label WPM. First estimate: 12000 / (12000/label − 13 ms − err·300 ms); the balance
+ * simulation's honest-labels check calibrates it (tests/sim/balance.test.ts).
+ */
+export const CPU_NOMINAL_WPM = [27, 30, 35, 40, 46, 53, 60, 70, 81, 94, 109, 126, 147, 170, 198] as const;

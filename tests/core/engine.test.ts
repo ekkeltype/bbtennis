@@ -744,8 +744,8 @@ describe('Engine: training flags', () => {
 });
 
 describe('Engine: extreme typists (Review Focus 2)', () => {
-  const FAST: CpuProfile = { wpm: 160, err: 0.01, reactionMs: 200, aggression: 0.95 };
-  const SLOW: CpuProfile = { wpm: 15, err: 0.08, reactionMs: 1000, aggression: 0.1 };
+  const FAST: CpuProfile = { wpm: 160, nominalWpm: 160, err: 0.01, wordPauseMs: 200, serveChasePauseMs: 200, earlyPauseMs: 100, aggression: 0.95 };
+  const SLOW: CpuProfile = { wpm: 15, nominalWpm: 15, err: 0.08, wordPauseMs: 1000, serveChasePauseMs: 1000, earlyPauseMs: 500, aggression: 0.1 };
 
   /** Plays a match, checking every strike's flight and every event. */
   function checkedMatch(seed: number, typists: [Typist, Typist]): Driver {

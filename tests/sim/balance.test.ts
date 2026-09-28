@@ -82,7 +82,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { cpuProfile, type CpuPolicy } from '../../src/core/cpu';
-import { humanTypist, simulateMatch, simulatePoints, summarize, type PointRecord, type SimTypist } from '../../src/core/sim';
+import { simTypist, simulateMatch, simulatePoints, summarize, type PointRecord, type SimTypist } from '../../src/core/sim';
 import type { MatchConfig, PaceId, PlayerId } from '../../src/core/types';
 
 const FULL = import.meta.env.BBT_SIM === '1';
@@ -154,7 +154,7 @@ function higherLevelSetShare(lo: number, hi: number, seed: number, sets: number)
 
 describe('balance smoke', () => {
   it('300 points at Normal / 50 WPM all end, with finite times and a median rally of 2–10 shots', () => {
-    const points = simulatePoints({ config: config('normal'), typists: [humanTypist(50), humanTypist(50)], seed: 42, points: 300 });
+    const points = simulatePoints({ config: config('normal'), typists: [simTypist(50), simTypist(50)], seed: 42, points: 300 });
     expect(points).toHaveLength(300);
     for (const p of points) {
       expect(Number.isFinite(p.ms) && p.ms > 0).toBe(true);
@@ -172,7 +172,7 @@ describe.skipIf(!FULL).concurrent('balance simulation (spec §6)', { timeout: TE
     '$pace at $wpm WPM, equal human-model players',
     ({ pace, wpm, median: [lo, hi], seed }) => {
       const s = once(() =>
-        summarize(simulatePoints({ config: config(pace), typists: [humanTypist(wpm), humanTypist(wpm)], seed, points: CELL_POINTS })),
+        summarize(simulatePoints({ config: config(pace), typists: [simTypist(wpm), simTypist(wpm)], seed, points: CELL_POINTS })),
       );
       it(`median rally is ${lo}–${hi} shots`, ({ expect }) => {
         expect(s().medianShots).toBeGreaterThanOrEqual(lo);
@@ -214,7 +214,7 @@ describe.skipIf(!FULL).concurrent('balance simulation (spec §6)', { timeout: TE
     '$pace at $wpm WPM, the insane option between equal players',
     ({ pace, wpm, seed }) => {
       const s = once(() =>
-        summarize(simulatePoints({ config: config(pace), typists: [humanTypist(wpm), humanTypist(wpm)], seed, points: INSANE_POINTS })),
+        summarize(simulatePoints({ config: config(pace), typists: [simTypist(wpm), simTypist(wpm)], seed, points: INSANE_POINTS })),
       );
       it('sees at least 200 clean insane shots (raise INSANE_POINTS if not)', ({ expect }) => {
         expect(s().insaneShotsClean).toBeGreaterThanOrEqual(200);
@@ -232,7 +232,7 @@ describe.skipIf(!FULL).concurrent('balance simulation (spec §6)', { timeout: TE
       // Accepted 2026-09-27: at Relaxed insane is a wash (never-insane wins 50.04 %: 2 points in
       // 5,000 over an even split), so the cap is 51 %; the other paces sit at 48.5–48.8 %.
       it('wins 40–51 % of points: insane never dominates', ({ expect }) => {
-        const typists: [SimTypist, SimTypist] = [humanTypist(wpm, 'neverInsane'), humanTypist(wpm)];
+        const typists: [SimTypist, SimTypist] = [simTypist(wpm, 'neverInsane'), simTypist(wpm)];
         const points = simulatePoints({ config: config(pace), typists, seed, points: CELL_POINTS });
         expect(winShare(points, 0)).toBeGreaterThanOrEqual(0.4);
         expect(winShare(points, 0)).toBeLessThanOrEqual(0.51);
@@ -246,7 +246,7 @@ describe.skipIf(!FULL).concurrent('balance simulation (spec §6)', { timeout: TE
       it.for(FIXED_POLICIES.map((policy, j) => ({ policy, seed: seed + j })))(
         '$policy wins ≤ 53 % of points',
         ({ policy, seed: cellSeed }, { expect }) => {
-          const typists: [SimTypist, SimTypist] = [humanTypist(wpm, policy), humanTypist(wpm)];
+          const typists: [SimTypist, SimTypist] = [simTypist(wpm, policy), simTypist(wpm)];
           const points = simulatePoints({ config: config(pace), typists, seed: cellSeed, points: CELL_POINTS });
           expect(winShare(points, 0)).toBeLessThanOrEqual(0.53);
         },

@@ -1,16 +1,12 @@
-import { CpuBrain, type CpuPolicy, type CpuProfile } from './cpu';
+import { aggressionAt, CpuBrain, typistProfile, type CpuPolicy, type CpuProfile } from './cpu';
 import { Engine } from './engine';
 import { forkSeed } from './rng';
 import { nextDeadline } from './turn';
 import type { GameEvent, Look, MatchConfig, PlayerId, PlayerInfo, PointReason } from './types';
 import { TIERS } from './types';
-import { clamp, lerp } from './util';
 
-/**
- * A simulated typist: a CpuBrain with this profile, choice policy (default 'adaptive') and chase
- * reaction (ms; default: the CPU's own rule of spec §3.8).
- */
-export interface SimTypist { profile: CpuProfile; policy?: CpuPolicy; chaseReactionMs?: number }
+/** A simulated typist: a CpuBrain with this profile and choice policy (default 'adaptive'). */
+export interface SimTypist { profile: CpuProfile; policy?: CpuPolicy }
 
 /**
  * One simulated point: in-play strikes (serve included, as the engine counts a rally), duration in
@@ -44,23 +40,6 @@ export interface SimSummary {
   fullMeterRate: number;
 }
 
-/** Spec §6 human model: error rate and reaction interpolate linearly in WPM between these rows. */
-const HUMAN = {
-  slow: { wpm: 25, err: 0.07, reactionMs: 900 },
-  fast: { wpm: 120, err: 0.015, reactionMs: 400 },
-} as const;
-
-/**
- * Aggression of the spec §6 human model, whose policy is "hardest option that fits" on every serve
- * and choice. CpuBrain takes the hardest fitting option with probability `aggression`, scaled by 0.4
- * on a second serve (the CPU's caution of spec §3.8, not part of the human model); 1 / 0.4 keeps
- * that probability at 1 on second serves too. tests/sim/sim.test.ts checks this against CpuBrain.
- */
-const HUMAN_AGGRESSION = 2.5;
-
-/** Reaction before a chase word's first key in the spec §6 human model (ms). */
-export const HUMAN_CHASE_REACTION_MS = 250;
-
 /** Guards against a turn or match that never ends (the engine should make both impossible). */
 const MAX_CALLS_PER_TURN = 10_000;
 const MAX_TURNS_PER_MATCH = 100_000;
@@ -72,33 +51,11 @@ const PLAYERS: [PlayerInfo, PlayerInfo] = [
 ];
 
 /**
- * The spec §6 human model's CpuBrain profile at `wpm`: per-key error 7 % at 25 WPM → 1.5 % at
- * 120 WPM and reaction 900 → 400 ms, linear in WPM and held at the end rows outside that range;
- * aggression HUMAN_AGGRESSION, so the adaptive policy always takes the hardest option that fits,
- * second serves included. The full model adds the 250 ms chase reaction: use humanTypist.
- *
- * Recorded deviation from spec §6: typing runs on CpuBrain, so each word's interval factor is the
- * CPU's 1 + 0.15·z (clamped 0.7–1.4), not the 12 % per-word variation §6 gives the human model. The
- * balance figures in tests/sim/balance.test.ts (and rulings R35/R36) were measured with 15 %.
+ * A balance-simulation player at `wpm` (early-typing spec §4, §5): the typist model's pauses and errors
+ * at that speed, the calibrated nominal speed, and the aggression the belt ladder gives that speed.
  */
-export function humanProfile(wpm: number): CpuProfile {
-  if (!Number.isFinite(wpm) || wpm <= 0) throw new RangeError(`humanProfile: WPM must be finite and positive, got ${wpm}`);
-  const { slow, fast } = HUMAN;
-  const f = clamp((wpm - slow.wpm) / (fast.wpm - slow.wpm), 0, 1);
-  return {
-    wpm,
-    err: lerp(slow.err, fast.err, f),
-    reactionMs: lerp(slow.reactionMs, fast.reactionMs, f),
-    aggression: HUMAN_AGGRESSION,
-  };
-}
-
-/**
- * The spec §6 human model at `wpm`: humanProfile with the 250 ms chase reaction (and CpuBrain's 15 %
- * per-word variation in place of §6's 12 %; see humanProfile).
- */
-export function humanTypist(wpm: number, policy: CpuPolicy = 'adaptive'): SimTypist {
-  return { profile: humanProfile(wpm), chaseReactionMs: HUMAN_CHASE_REACTION_MS, policy };
+export function simTypist(wpm: number, policy: CpuPolicy = 'adaptive'): SimTypist {
+  return { profile: typistProfile(wpm, aggressionAt(wpm)), policy };
 }
 
 /**
@@ -213,7 +170,7 @@ function* matchPoints(config: MatchConfig, typists: [SimTypist, SimTypist], seed
 }
 
 function brainFor(player: PlayerId, t: SimTypist, seed: number): CpuBrain {
-  return new CpuBrain(player, t.profile, seed, { policy: t.policy, chaseReactionMs: t.chaseReactionMs });
+  return new CpuBrain(player, t.profile, seed, { policy: t.policy });
 }
 
 /**
