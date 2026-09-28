@@ -27,7 +27,7 @@ import { PAUSE_ICON_RECT, Renderer } from '../../src/render/renderer';
 import type { Screen } from '../../src/render/screen';
 import type { SpriteSheet } from '../../src/render/sprites/sheet';
 import { drawWorld, worldFrame, type WorldFrame } from '../../src/render/world';
-import { RALLY_IN, RALLY_OUT, opt, returnData, serveData } from '../core/turnFixtures';
+import { INSANE_WORD, RALLY_IN, RALLY_OUT, opt, returnData, serveData } from '../core/turnFixtures';
 
 const LOOK: Look = { skin: 1, hairStyle: 2, hair: 3, shirt: 6, shorts: 7, headband: 5, racket: 2 };
 const STATS: PlayerStats = {
@@ -344,6 +344,20 @@ describe('Effects', () => {
     expect(fx.crowdExcite).toBeGreaterThan(before);
     fx.update(frameWith([], { pointNo: 2 }), poses, 16, false);
     expect(fx.clayMarks).toEqual([]);
+  });
+
+  it('cheers the strike that returns an insane shot, and no other strike (choice-stack spec §4)', () => {
+    const poses = posesFor(view(matchState(createTurn(serveData())), 0));
+    const strikeIn = (turn: number): GameEvent => ({
+      turn, τ: 0, type: 'strike', player: 1, word: 'drop', tier: 'easy', kmh: 100, isServe: false, stretch: false, forehand: true,
+    });
+    for (const [chase, cheers] of [[INSANE_WORD, true], ['volley', false]] as const) {
+      const t = createTurn(returnData({ chase: opt(chase) }));
+      const fx = new Effects();
+      fx.update(worldFrame(view(matchState(t), 0, 0, { events: [strikeIn(8)] })), poses, 16, false);
+      if (cheers) expect(fx.crowdExcite, chase).toBeGreaterThanOrEqual(0.69);
+      else expect(fx.crowdExcite, chase).toBe(0);
+    }
   });
 
   it('throws confetti when the match is won', () => {

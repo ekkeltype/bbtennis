@@ -321,3 +321,48 @@ describe('AudioDirector muted (attract mode)', () => {
     expect(engine.crowdLevels.slice(1)).toEqual([0]);
   });
 });
+
+describe('AudioDirector cheer for an insane return (choice-stack spec §4)', () => {
+  /** A state whose return turn 7 chases a `tier` word: the current turn, or the last one when `moved`. */
+  function returning(tier: Tier, moved = false): PublicState {
+    const ret = { data: { turnId: CURRENT_TURN, kind: 'return', chase: { word: 'w', len: 1, tier } }, τ: 1000 };
+    return {
+      players: [{ name: 'Alex' }, { name: 'Bo' }],
+      score: { points: [1, 0] },
+      turn: moved ? { data: { turnId: CURRENT_TURN + 1, kind: 'serve' }, τ: 0 } : ret,
+      lastTurn: moved ? ret : null,
+    } as unknown as PublicState;
+  }
+  const mine = (tier: Tier): EventBody => ({ ...strike(tier), player: 0 });
+
+  it('applauds when the viewer hits back an insane shot', () => {
+    director.onEvents([ev(mine('easy'))], context({ state: returning('insane') }));
+    expect(engine.plays).toEqual([
+      { name: 'hit', opts: undefined },
+      { name: 'applause', opts: undefined },
+    ]);
+  });
+
+  it("applauds politely when the opponent hits back the viewer's insane shot, and fully for a spectator", () => {
+    director.onEvents([ev(strike('medium'))], context({ state: returning('insane') }));
+    expect(engine.plays.at(-1)).toEqual({ name: 'applause', opts: { gain: 0.5 } });
+    director.onEvents([ev(strike('medium'))], context({ viewer: 'spectator', state: returning('insane') }));
+    expect(engine.plays.at(-1)).toEqual({ name: 'applause', opts: undefined });
+  });
+
+  it('finds the return turn after it has become the last turn', () => {
+    director.onEvents([ev(mine('easy'))], context({ state: returning('insane', true) }));
+    expect(engine.names()).toEqual(['hit', 'applause']);
+  });
+
+  it('stays quiet for the return of any other tier, and for a serve', () => {
+    for (const tier of ['easy', 'medium', 'hard'] as const) director.onEvents([ev(mine('easy'))], context({ state: returning(tier) }));
+    director.onEvents([ev({ ...mine('easy'), isServe: true })], context());
+    expect(engine.names()).toEqual(['hit', 'hit', 'hit', 'hit']);
+  });
+
+  it('an insane return of an insane shot hits hard, goes "ooh" and applauds', () => {
+    director.onEvents([ev(mine('insane'))], context({ state: returning('insane') }));
+    expect(engine.names()).toEqual(['hitHard', 'ooh', 'applause']);
+  });
+});

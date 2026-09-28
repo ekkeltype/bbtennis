@@ -65,9 +65,10 @@ function turnById(f: WorldFrame, id: number): TurnState | null {
 /**
  * Cosmetic effects (spec §4.1, Task 18 ruling 6), driven by the frame's events and the players'
  * animations: hit sparks, bounce puffs, clay ball marks (kept until the next point), run dust and
- * clay slide dust, crowd excitement (points, aces, long rallies), confetti on the match win and a
- * 2 px screen shake on an ACE or WINNER. `reduce` (Reduce effects) drops the shake, thins the dust
- * and confetti and shortens the sparks. Particles live in fixed pools; nothing is allocated per frame.
+ * clay slide dust, crowd excitement (points, aces, long rallies, insane returns), confetti on the
+ * match win and a 2 px screen shake on an ACE or WINNER. `reduce` (Reduce effects) drops the shake,
+ * thins the dust and confetti and shortens the sparks. Particles live in fixed pools; nothing is
+ * allocated per frame.
  */
 export class Effects {
   private readonly parts: Particle[] = Array.from({ length: PARTICLES }, () => ({
@@ -138,7 +139,10 @@ export class Effects {
   private onEvent(f: WorldFrame, e: GameEvent, reduce: boolean): void {
     switch (e.type) {
       case 'strike': {
-        const o = turnById(f, e.turn)?.outcome;
+        const t = turnById(f, e.turn);
+        // Returning an insane shot draws a cheer, whatever the return's own outcome (choice-stack spec §4).
+        if (t?.data.kind === 'return' && t.data.chase.tier === 'insane') this.excite = Math.max(this.excite, EXCITE.point);
+        const o = t?.outcome;
         if (o?.kind !== 'strike') return;
         const p = o.strike.flight.p0;
         this.spawn('spark', p.x, p.y, p.z, 0, 0, 0, reduce ? SPARK_MS / 2 : SPARK_MS, PAL.white);

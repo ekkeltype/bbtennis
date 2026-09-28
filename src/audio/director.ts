@@ -1,7 +1,7 @@
 import { POWER_MAX } from '../core/power';
 import { umpireCall } from '../core/scoring';
 import type { KeyResult } from '../core/typing';
-import type { CallKind, GameEvent, PlayerId, PointReason, PublicState, Surface } from '../core/types';
+import type { CallKind, GameEvent, PlayerId, PointReason, PublicState, Surface, TurnState } from '../core/types';
 import { clamp } from '../core/util';
 import type { AudioEngine, SfxName } from './engine';
 import type { Umpire } from './speech';
@@ -69,6 +69,18 @@ function panFor(x: number, viewer: PlayerId | 'spectator'): number {
   return clamp((viewer === 1 ? -x : x) / PAN_WIDTH_M, -1, 1);
 }
 
+/** The turn of `s` (current or previous) with id `id`, or null. */
+function turnById(s: PublicState, id: number): TurnState | null {
+  if (s.turn?.data.turnId === id) return s.turn;
+  return s.lastTurn?.data.turnId === id ? s.lastTurn : null;
+}
+
+/** True when the strike `ev` hits back an insane shot: its turn is a return chasing an insane word (choice-stack spec §4). */
+function returnsInsane(ev: GameEvent, s: PublicState): boolean {
+  const d = turnById(s, ev.turn)?.data;
+  return d?.kind === 'return' && d.chase.tier === 'insane';
+}
+
 /**
  * Maps game events to sounds, crowd level and umpire calls (spec §4.4). The viewer's own keystrokes
  * sound through `onLocalKey` the moment they are typed; the opponent's arrive as events, quieter.
@@ -111,6 +123,11 @@ export class AudioDirector {
         case 'strike':
           this.audio.play(ev.tier === 'hard' || ev.tier === 'insane' ? 'hitHard' : 'hit');
           if (ev.tier === 'insane') this.audio.play('ooh');
+          // The crowd cheers the retrieval itself, before the return's own outcome is called.
+          if (returnsInsane(ev, ctx.state)) {
+            const polite = ctx.viewer !== 'spectator' && ev.player !== ctx.viewer;
+            this.audio.play('applause', polite ? { gain: POLITE_APPLAUSE_GAIN } : undefined);
+          }
           break;
         case 'power': {
           const opts = ctx.viewer === 'spectator' || ev.player === ctx.viewer ? undefined : { gain: REMOTE_POWER_GAIN };
