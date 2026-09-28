@@ -15,7 +15,7 @@ import { drawText, textWidth } from './font';
 import { beltColor } from './hud';
 import { layoutChoice, layoutServeFar, layoutServeNear, layoutSingle, type PlateBox } from './layout';
 import { OUTLINE, PAL } from './palette';
-import { drawPlate, drawTimingBar, type PlateDraw, type PlateStyle } from './plates';
+import { drawPlate, drawTimingBar, type PlateDraw, type PlateStyle, type Pt } from './plates';
 import type { PlayerPose } from './players';
 import { createLayer, type Layer } from './screen';
 import { CELL, type View } from './sprites/animations';
@@ -46,8 +46,8 @@ export function headHeight(look: Look, view: View): number {
 
 /** A ground ring at screen (x, y); `alpha` 0–1. The world pass draws it, depth-sorted with the players (R33). */
 export interface RingMark { tier: Tier; x: number; y: number; alpha: number }
-/** A leader from a plate's bottom edge to its ring centre; the world pass draws it under the players (R42). */
-export interface LeaderMark { from: { x: number; y: number }; to: { x: number; y: number }; tier: Tier; alpha: number }
+/** A choice leader: a polyline from its plate to its ring centre (the last point); the world pass draws it under the players (R42). */
+export interface LeaderMark { points: Pt[]; tier: Tier; alpha: number }
 /** The local typist's timing bar: remaining share `frac`, checker in the grace window. */
 export interface BarMark { x: number; y: number; w: number; frac: number; grace: boolean }
 /** The opponent's serve plate turning over at the strike: `step` 0–3 (hidden face on 0–1, revealed on 2–3). */
@@ -325,7 +325,7 @@ function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: Plat
     const alpha = 1 - fadeOf(c, n, i);
     const box = layout[i]!;
     s.rings.push({ tier, x: to.x, y: to.y, alpha });
-    s.leaders.push({ from: { x: box.x + Math.floor(box.w / 2), y: box.y + box.h }, to: { x: to.x, y: to.y }, tier, alpha });
+    s.leaders.push({ points: [{ x: box.x + Math.floor(box.w / 2), y: box.y + box.h }, { x: to.x, y: to.y }], tier, alpha });
   });
   if (style !== 'localActive' || v.phase !== 'choice') return;
   const share = contactShare(v, d, turnViewAt(c.t, choice.shownAt).simτ);

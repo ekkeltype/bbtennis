@@ -252,10 +252,11 @@ describe('promptScene', () => {
     expect(s.leaders).toHaveLength(3);
     s.leaders.forEach((l, i) => {
       const box = s.plates[i]!.box;
-      expect(l.to).toEqual({ x: targets[i]!.x, y: targets[i]!.y });
-      expect(l.from.y).toBe(box.y + box.h);
-      expect(l.from.x).toBeGreaterThanOrEqual(box.x);
-      expect(l.from.x).toBeLessThan(box.x + box.w);
+      const from = l.points[0]!;
+      expect(l.points.at(-1)).toEqual({ x: targets[i]!.x, y: targets[i]!.y });
+      expect(from.y).toBe(box.y + box.h);
+      expect(from.x).toBeGreaterThanOrEqual(box.x);
+      expect(from.x).toBeLessThan(box.x + box.w);
     });
     const row = s.plates.map((p) => p.box);
     expect(s.bar).toMatchObject({ x: Math.min(...row.map((b) => b.x)) });
@@ -460,7 +461,7 @@ describe('drawPrompts', () => {
 
   it('leaves the ground rings and the leaders to the world pass, which draws them under the players (R33, R42)', () => {
     const ring = { tier: 'hard' as const, x: 200, y: 180, alpha: 1 };
-    const leader = { from: { x: 150, y: 150 }, to: { x: ring.x, y: ring.y }, tier: ring.tier, alpha: 1 };
+    const leader = { points: [{ x: 150, y: 150 }, { x: ring.x, y: ring.y }], tier: ring.tier, alpha: 1 };
     const { ctx, rects } = recordingContext();
     drawPrompts(ctx, { ...empty(), rings: [ring], leaders: [leader] });
     expect(rects).toEqual([]);

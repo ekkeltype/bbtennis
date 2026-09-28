@@ -6,7 +6,7 @@ import { contrastRatio } from '../../src/render/color';
 import { GLYPHS, textWidth } from '../../src/render/font';
 import { layoutServeFar, type PlateBox } from '../../src/render/layout';
 import { BELT_COLOR, OUTLINE, PAL, PLATE, RAMPS, TIER_COLOR, TIER_TYPED } from '../../src/render/palette';
-import { drawLeader, drawPlate, drawTierRing, drawTimingBar, type PlateDraw } from '../../src/render/plates';
+import { drawLeader, drawLeaderPath, drawPlate, drawTierRing, drawTimingBar, inRingKeepOut, leaderPixels, type PlateDraw } from '../../src/render/plates';
 
 /** A minimal software 2D canvas: whole-pixel fillRect and 1:1 drawImage with source-over alpha. */
 class PixelCanvas {
@@ -913,6 +913,46 @@ describe('drawLeader', () => {
     const g = scene(60, 60);
     drawLeader(as2d(g), { x: 10, y: 5 }, { x: 1e12, y: 30 }, 'medium');
     expect(colours(g, 0, 0, 60, 60)).toEqual(new Set([BG]));
+  });
+
+  it('draws an elbow path: along the row, up the column, into the ring, as one outlined mark (choice-stack spec §3)', () => {
+    const g = scene(60, 60);
+    drawLeaderPath(as2d(g), [{ x: 50, y: 50 }, { x: 20, y: 50 }, { x: 20, y: 10 }], 'medium');
+    drawTierRing(as2d(g), 'medium', 20, 10);
+    const tier = TIER_COLOR.medium;
+    for (let x = 20; x <= 50; x++) expect(at(g, x, 50), `row pixel ${x}`).toBe(tier);
+    for (let y = 15; y <= 50; y++) expect(at(g, 20, y), `column pixel ${y}`).toBe(tier);
+    expect(at(g, 21, 49)).toBe(OUTLINE);
+    expect(at(g, 19, 51)).toBe(OUTLINE);
+    expect(marks(g)).toBe(1);
+  });
+
+  it('lists each leader pixel once, corners included, and stops at the ring keep-out', () => {
+    const px = leaderPixels([{ x: 10, y: 40 }, { x: 30, y: 40 }, { x: 30, y: 10 }], 'easy');
+    const keys = px.map(([x, y]) => `${x},${y}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toContain('30,40');
+    expect(px.every(([x, y]) => (y === 40 && x >= 10 && x <= 30) || (x === 30 && y <= 40))).toBe(true);
+    // The easy ring's keep-out reaches 4 px below its centre, so the column stops 5 px below it.
+    expect(Math.min(...px.filter(([x]) => x === 30).map(([, y]) => y))).toBe(15);
+    expect(leaderPixels([{ x: 10.4, y: 5 }], 'easy')).toEqual([]);
+    expect(leaderPixels([{ x: 10, y: 5 }, { x: NaN, y: 20 }, { x: 30, y: 30 }], 'easy')).toEqual([]);
+  });
+
+  it('draws the same pixels for drawLeader(from, to) and a 2-point path', () => {
+    const a = scene(60, 50);
+    const b = scene(60, 50);
+    drawLeader(as2d(a), { x: 10, y: 5 }, { x: 40.4, y: 35.2 }, 'hard');
+    drawLeaderPath(as2d(b), [{ x: 10, y: 5 }, { x: 40.4, y: 35.2 }], 'hard');
+    for (let y = 0; y < 50; y++) for (let x = 0; x < 60; x++) expect(at(b, x, y)).toBe(at(a, x, y));
+  });
+
+  it("knows each ring's keep-out: the filled ring grown by 1 px", () => {
+    expect(inRingKeepOut('easy', 0, 4)).toBe(true);
+    expect(inRingKeepOut('easy', 0, 5)).toBe(false);
+    expect(inRingKeepOut('easy', 7, 0)).toBe(true);
+    expect(inRingKeepOut('easy', 8, 0)).toBe(false);
+    expect(inRingKeepOut('medium', 0, 0)).toBe(true);
   });
 });
 

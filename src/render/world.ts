@@ -4,7 +4,7 @@ import { drawBall, drawBallShadow, type BallView } from './ball';
 import { checker, drawCourt } from './court';
 import type { Effects } from './effects';
 import { OUTLINE, PAL } from './palette';
-import { drawLeader, drawTierRing } from './plates';
+import { drawLeaderPath, drawTierRing } from './plates';
 import type { PlayerPose } from './players';
 import { netScreenY, project, viewerEnd } from './projection';
 import type { LeaderMark, RingMark } from './prompts';
@@ -150,7 +150,7 @@ function drawLeaders(ctx: CanvasRenderingContext2D, leaders: readonly LeaderMark
     if (l.alpha <= 0) continue;
     ctx.save();
     ctx.globalAlpha = l.alpha;
-    drawLeader(ctx, l.from, l.to, l.tier);
+    drawLeaderPath(ctx, l.points, l.tier);
     ctx.restore();
   }
 }

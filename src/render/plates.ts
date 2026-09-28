@@ -378,27 +378,55 @@ function linePixels(x0: number, y0: number, x1: number, y1: number): Offsets {
   }
 }
 
+/** A screen point in buffer pixels (unrounded; leaders round each end). */
+export interface Pt { x: number; y: number }
+
 /**
- * Draws the leader joining a choice plate to its ground ring (spec §4.2): a 1 px tier-coloured line
- * from `from` (the plate end) towards the ring centre `to` (the point given to `drawTierRing`),
- * outlined 1 px in near-black and stopping where it meets the ring's outline, so the ring stays clean
- * whichever is drawn first. Draw it before the plate so the plate covers its top end. Nothing is drawn
- * for a non-finite end or an off-screen length (`linePixels`).
+ * The ink pixels of a leader along `points`, a polyline from a plate to the ring centre (the last
+ * point), each pixel once: every segment walked between rounded ends (`linePixels`), minus the ring's
+ * keep-out around the last point. Empty for fewer than 2 points, an end that is not a finite whole
+ * pixel once rounded, or a segment longer than `MAX_LEADER` (a malformed peer target).
  */
-export function drawLeader(
-  ctx: CanvasRenderingContext2D,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  tier: Tier,
-): void {
-  const tx = Math.round(to.x);
-  const ty = Math.round(to.y);
+export function leaderPixels(points: readonly Pt[], tier: Tier): [x: number, y: number][] {
+  if (points.length < 2) return [];
+  const ends = points.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+  const out: [number, number][] = [];
+  for (let i = 0; i + 1 < ends.length; i++) {
+    const a = ends[i]!;
+    const b = ends[i + 1]!;
+    const seg = linePixels(a.x, a.y, b.x, b.y);
+    if (seg.length === 0) return [];
+    out.push(...(i === 0 ? seg : seg.slice(1)));
+  }
+  const ring = ends[ends.length - 1]!;
   const { keepOut } = RINGS[tier];
-  const pixels = linePixels(Math.round(from.x), Math.round(from.y), tx, ty).filter(
-    ([x, y]) => !keepOut.has(key(x - tx, y - ty)),
-  );
+  return out.filter(([x, y]) => !keepOut.has(key(x - ring.x, y - ring.y)));
+}
+
+/**
+ * Draws a leader joining a choice plate to its ground ring (spec §4.2, choice-stack spec §3): a 1 px
+ * tier-coloured polyline through `points`, outlined 1 px in near-black and stopping where it meets the
+ * outline of the ring centred on the last point, so the ring stays clean whichever is drawn first.
+ * Draw it before the plate so the plate covers its start. Nothing is drawn for a malformed path
+ * (`leaderPixels`).
+ */
+export function drawLeaderPath(ctx: CanvasRenderingContext2D, points: readonly Pt[], tier: Tier): void {
+  const pixels = leaderPixels(points, tier);
   for (const [x, y] of pixels) rect(ctx, x - 1, y - 1, 3, 3, OUTLINE);
   for (const [x, y] of pixels) rect(ctx, x, y, 1, 1, TIER_COLOR[tier]);
+}
+
+/** A straight leader from `from` (the plate end) to the ring centre `to`: `drawLeaderPath` with two points. */
+export function drawLeader(ctx: CanvasRenderingContext2D, from: Pt, to: Pt, tier: Tier): void {
+  drawLeaderPath(ctx, [from, to], tier);
+}
+
+/**
+ * True when offset (dx, dy) from a `tier` ring's centre lies in its keep-out: the filled ring grown
+ * by 1 px, where no pixel of another ring's leader may go (choice-stack spec §3).
+ */
+export function inRingKeepOut(tier: Tier, dx: number, dy: number): boolean {
+  return RINGS[tier].keepOut.has(key(dx, dy));
 }
 
 /** Grace-window checker cell size: the bar's full 2 px height, and 2 px wide. */

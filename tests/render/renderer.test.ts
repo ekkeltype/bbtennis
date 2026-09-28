@@ -196,8 +196,8 @@ describe('drawWorld', () => {
     const feet = project({ ...far, z: 0 }, 0);
     // From the far prompt band straight down through the far player to a ring 3 m inside the baseline.
     const ring = project({ x: far.x, y: far.y + 3, z: 0 }, 0);
-    const leader: LeaderMark = { from: { x: feet.x, y: 38 }, to: { x: ring.x, y: ring.y }, tier: 'easy', alpha: 1 };
-    const faded: LeaderMark = { ...leader, from: { x: feet.x + 60, y: 38 }, to: { x: ring.x + 60, y: ring.y }, alpha: 0 };
+    const leader: LeaderMark = { points: [{ x: feet.x, y: 38 }, { x: ring.x, y: ring.y }], tier: 'easy', alpha: 1 };
+    const faded: LeaderMark = { ...leader, points: [{ x: feet.x + 60, y: 38 }, { x: ring.x + 60, y: ring.y }], alpha: 0 };
     const { ops, sheets } = paint([near, far], [], [leader, faded]);
     const leaderPixels = ops.filter((o) => o.name === 'fillRect' && o.style === TIER_COLOR.easy);
     expect(leaderPixels.length).toBeGreaterThan(20);
