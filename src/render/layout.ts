@@ -8,7 +8,8 @@ export interface PlateBox { x: number; y: number; w: number; h: number; option: 
 export const BANDS: { hud: [0, 21]; far: [22, 38] } = { hud: [0, 21], far: [22, 38] };
 
 /** Area every plate must stay inside (spec §4.2): x 4–476, y 22–266. */
-const AREA = { left: 4, right: 476, top: BANDS.far[0], bottom: 266 };
+export const PLATE_AREA = { left: 4, right: 476, top: BANDS.far[0], bottom: 266 } as const;
+const AREA = PLATE_AREA;
 const CENTRE_X = (AREA.left + AREA.right) / 2;
 const PLATE_H = 16;
 const SLOT_X = { left: 90, centre: 240, right: 390 };
@@ -84,6 +85,46 @@ function fourSlots(targetsScreenX: number[]): number[] {
     slots[option] = SLOTS_4[k]!;
   });
   return slots;
+}
+
+/** Height of a choice stack of `n` plates, 3 px apart (choice-stack spec §2). */
+export function stackHeight(n: number): number {
+  return n * PLATE_H + (n - 1) * STACK_GAP;
+}
+
+/**
+ * The near typist's choice plates (choice-stack spec §2) for `lens` in option order, [easy, medium,
+ * hard] or [easy, medium, hard, insane]: a stack in that order from the top, 3 px apart, the last plate
+ * ending at `bottomY` (exclusive), every plate centred on `columnX`. Each tier's words are longer than
+ * the tier above, so the stack is a pyramid. Not clamped: `placeChoiceStack` (leaders.ts) fits the stack
+ * and its leaders into the plate area as one unit. Throws unless given 3 or 4 lengths.
+ */
+export function layoutChoiceStack(lens: number[], columnX: number, bottomY: number): PlateBox[] {
+  if (lens.length !== 3 && lens.length !== 4) {
+    throw new Error(`layoutChoiceStack needs 3 or 4 word lengths, got ${lens.length}`);
+  }
+  const top = Math.round(bottomY) - stackHeight(lens.length);
+  return lens.map((len, option) => {
+    const w = plateWidth(len);
+    return { x: Math.round(columnX - (w - 1) / 2), y: top + option * (PLATE_H + STACK_GAP), w, h: PLATE_H, option };
+  });
+}
+
+/**
+ * A choice-stack plate redrawn at 2× (a locked word with Large words; choice-stack spec §2): around its
+ * centre column with its bottom edge kept, so it grows away from the head below the stack; kept inside
+ * x 4–476 and y 22–266.
+ */
+export function growUp(box: PlateBox): PlateBox {
+  const w = box.w * 2;
+  const h = box.h * 2;
+  return {
+    x: centredX(box.x + (box.w - 1) / 2, w),
+    y: clamp(box.y + box.h - h, AREA.top, AREA.bottom - h),
+    w,
+    h,
+    option: box.option,
+  };
 }
 
 /**

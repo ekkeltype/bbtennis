@@ -7,11 +7,14 @@ import { COURT } from '../../src/core/court';
 import { TUNING } from '../../src/core/tuning';
 import {
   BANDS,
+  growUp,
   layoutChoice,
+  layoutChoiceStack,
   layoutServeFar,
   layoutServeNear,
   layoutSingle,
   plateWidth,
+  stackHeight,
   type PlateBox,
 } from '../../src/render/layout';
 import { CELL, type View } from '../../src/render/sprites/animations';
@@ -447,5 +450,49 @@ describe('layoutSingle', () => {
 
   it('clamps to the left edge and below the HUD band', () => {
     expect(layoutSingle(14, 0, 30, 2)).toEqual({ x: 4, y: 22, w: 190, h: 32, option: 0 });
+  });
+});
+
+describe('layoutChoiceStack (choice-stack spec §2)', () => {
+  /** Every length of each tier's band (easy 2–4, medium 5–7, hard 8–11, insane 12–15), 3 and 4 options. */
+  const STACKS: number[][] = [2, 3, 4].flatMap((e) =>
+    [5, 6, 7].flatMap((m) => [8, 9, 10, 11].flatMap((h) => [[e, m, h], ...[12, 13, 14, 15].map((i) => [e, m, h, i])])),
+  );
+
+  it('stacks the options in tier order, 3 px apart, ending at bottomY, each centred on the column', () => {
+    const boxes = layoutChoiceStack([4, 7, 11, 15], 200, 190);
+    expect(boxes.map((b) => b.option)).toEqual([0, 1, 2, 3]);
+    expect(boxes.map((b) => b.w)).toEqual([35, 53, 77, 101]);
+    expect(boxes.map((b) => b.y)).toEqual([117, 136, 155, 174]);
+    expect(boxes.every((b) => b.h === 16)).toBe(true);
+    for (const b of boxes) expect(b.x + (b.w - 1) / 2).toBe(200);
+    expect(stackHeight(4)).toBe(73);
+    expect(stackHeight(3)).toBe(54);
+  });
+
+  it('is a pyramid: each plate reaches at least 3 px farther than the one above on both sides', () => {
+    for (const lens of STACKS) {
+      const boxes = layoutChoiceStack(lens, 240.4, 200);
+      for (let i = 1; i < boxes.length; i++) {
+        const [up, b] = [boxes[i - 1]!, boxes[i]!];
+        expect(b.x, `${lens}`).toBeLessThanOrEqual(up.x - 3);
+        expect(b.x + b.w, `${lens}`).toBeGreaterThanOrEqual(up.x + up.w + 3);
+      }
+    }
+  });
+
+  it('throws unless given 3 or 4 lengths', () => {
+    expect(() => layoutChoiceStack([4, 7], 240, 200)).toThrow('layoutChoiceStack needs 3 or 4 word lengths');
+  });
+});
+
+describe('growUp (choice-stack spec §2, Large words)', () => {
+  it('doubles a stack plate around its centre column, keeping its bottom edge', () => {
+    expect(growUp({ x: 150, y: 174, w: 101, h: 16, option: 3 })).toEqual({ x: 100, y: 158, w: 202, h: 32, option: 3 });
+  });
+
+  it('stays inside x 4–476 and y 22–266', () => {
+    expect(growUp({ x: 4, y: 30, w: 101, h: 16, option: 3 })).toEqual({ x: 4, y: 22, w: 202, h: 32, option: 3 });
+    expect(growUp({ x: 375, y: 250, w: 101, h: 16, option: 3 }).x).toBe(274);
   });
 });
