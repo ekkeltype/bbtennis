@@ -73,7 +73,7 @@ function view(
   viewer: PlayerId | 'spectator' = 0,
   over: Partial<ViewModel> = {},
 ): ViewModel {
-  return { pub, viewer, turnτ, liveTurn: null, events: [], overlay: OVERLAY, ...over };
+  return { pub, viewer, turnτ, liveTurn: null, early: null, events: [], overlay: OVERLAY, ...over };
 }
 
 function typeWord(t: TurnState, word: string, from: number, gap = 100): number {

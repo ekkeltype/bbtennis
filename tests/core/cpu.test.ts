@@ -915,7 +915,25 @@ describe('CpuBrain — early typing (early-typing spec §2, §5)', () => {
     const chase = t.prompts[0]!;
     for (const k of early.slice(0, 2)) applyLetter(chase, k.key, k.τ - strikeτ);
     const rest = brain.plan(t);
-    expect(rest.slice(0, 2)).toEqual(early.slice(2).map((k) => ({ key: k.key, τ: k.τ - strikeτ })));
+    const expected = early.slice(2).map((k) => ({ key: k.key, τ: k.τ - strikeτ }));
+    // (lock + dt) − strike on the striker's side, (lock − strike) + dt on the receiver's: equal up to rounding.
+    expect(rest.slice(0, 2).map((k) => k.key)).toEqual(expected.map((k) => k.key));
+    rest.slice(0, 2).forEach((k, i) => expect(k.τ).toBeCloseTo(expected[i]!.τ, 6));
+  });
+
+  it('draws each early plan from its own stream: asking for it, or not, never changes the brain\'s other plans', () => {
+    const asked = new CpuBrain(0, PROFILE, 7);
+    asked.planEarly(striker());
+    const skipped = new CpuBrain(0, PROFILE, 7);
+    expect(asked.plan(returnTurn({ turnId: 9 }))).toEqual(skipped.plan(returnTurn({ turnId: 9 })));
+  });
+
+  it('plans the same chase keys whether the early plan was asked for before the strike or only in the return turn', () => {
+    const asked = new CpuBrain(0, PROFILE, 7);
+    const early = asked.planEarly(striker());
+    const strikeτ = early.at(-1)!.τ + 500;
+    const ret = (): TurnState => returnTurn({ owner: 0, turnId: 6, chase: 'drop', earlyFrom: 900 - strikeτ });
+    expect(new CpuBrain(0, PROFILE, 7).plan(ret())).toEqual(asked.plan(ret()));
   });
 
   it('a pause that ends after the strike starts the chase in the turn, with no second pause', () => {

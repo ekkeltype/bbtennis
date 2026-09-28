@@ -70,6 +70,8 @@ export function drive(
     stop?: (vm: ViewModel) => boolean;
     /** Time between frames (default FRAME); keys are still pressed at their own times. */
     frameMs?: number;
+    /** Also type the typist's early chase keys (its `planEarly`), on the displayed striker turn's clock (early-typing spec §2). */
+    early?: boolean;
   },
 ): ViewModel {
   const step = opts.frameMs ?? FRAME;
@@ -79,7 +81,17 @@ export function drive(
   while (!session.over && !(opts.stop?.(vm) ?? false) && s.now() < end) {
     const turn = vm.pub.turn;
     let pressed = false;
-    if (opts.typist !== null && turn !== null && turn.data.owner === opts.me) {
+    const e = vm.early;
+    if (opts.early === true && opts.typist !== null && turn !== null && e !== null && e.player === opts.me) {
+      const next = opts.typist.planEarly(turn)[e.prompt.correctKeys + e.prompt.wrongKeys];
+      const at = next === undefined ? null : turnStart(s, vm) + next.τ;
+      if (next !== undefined && at !== null && at <= s.now() + step) {
+        if (at > s.now()) s.advance(at - s.now());
+        session.key(keyOf(next.key), s.now());
+        pressed = true;
+      }
+    }
+    if (!pressed && opts.typist !== null && turn !== null && turn.data.owner === opts.me) {
       const next = opts.typist.plan(turn)[0];
       const at = next === undefined ? null : turnStart(s, vm) + next.τ;
       if (next !== undefined && at !== null && at <= s.now() + step) {

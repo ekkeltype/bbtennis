@@ -440,6 +440,7 @@ export class GuestSession implements Session {
       viewer: GUEST,
       turnτ: this.queue.τ,
       liveTurn: live ? pub.turn : null,
+      early: null,
       events: this.fresh.release(this.queue, now),
       overlay: onlineOverlay(this.link, this.wait, now, this.stall.update(f, this.link.rttMs, now)),
     };

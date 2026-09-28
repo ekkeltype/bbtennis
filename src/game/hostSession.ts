@@ -367,6 +367,7 @@ export class HostSession implements Session {
       viewer: HOST,
       turnτ: this.queue.τ,
       liveTurn: null,
+      early: null,
       events: redactEvents(this.fresh.release(this.queue, now), state, HOST),
       overlay: onlineOverlay(this.link, this.wait, now, this.stall.update(f, this.link.rttMs, now)),
     };

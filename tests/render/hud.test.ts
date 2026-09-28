@@ -77,6 +77,7 @@ function view(pub: MatchState, turnτ: number, viewer: PlayerId | 'spectator' = 
     viewer,
     turnτ,
     liveTurn: null,
+    early: null,
     events,
     overlay: {
       paused: false, countdown: null, coach: null, wait: false, unstable: false,

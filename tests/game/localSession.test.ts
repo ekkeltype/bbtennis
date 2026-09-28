@@ -401,3 +401,77 @@ describe('LocalSession: lifecycle', () => {
     expect(other.session.frame(FRAME).pub.turn?.phase).toBe('toss');
   });
 });
+
+describe('LocalSession: early typing (early-typing spec §2, §6.2)', () => {
+  /** Plays with a scripted human (player 0, level 6) until `stop`, returning the session and its view. */
+  function until(seed: number, stop: (vm: ViewModel) => boolean, early = false) {
+    const { s, session: x } = session({ seed });
+    const human = new CpuBrain(0, cpuProfile(6), 99);
+    const vm = drive(s, x, { me: 0, typist: human, limitMs: 20 * 60 * 1000, stop, early });
+    return { s, x, human, vm };
+  }
+
+  it("shows WAIT for the human's letters in the CPU's turn before its lock, and none after it", () => {
+    const { s, x } = until(7, (v) => v.pub.turn?.data.kind === 'return' && v.pub.turn.data.owner === 1 && v.early === null);
+    x.key(keyOf('q'), s.now());
+    expect(x.frame(FRAME).overlay.wait).toBe(true);
+    s.advance(1100); // past the WAIT tag's once-per-second limit
+    const open = frameUntil(s, x, (v) => v.early?.player === 0);
+    x.key(keyOf(open.early!.prompt.options[0]!.word[0]!), s.now());
+    const after = x.frame(FRAME);
+    expect(after.overlay.wait).toBe(false);
+    expect(after.early?.prompt.typed).toBe(1);
+    expect(after.events.some((e) => e.type === 'keyOk' && e.player === 0)).toBe(true);
+  });
+
+  it('carries the early keys into the return turn when the CPU strikes, and drops them when it does not', () => {
+    let carried = 0;
+    for (let seed = 1; seed <= 12 && carried === 0; seed++) {
+      const { s, x } = until(seed, (v) => v.early?.player === 0);
+      const cpuTurn = x.view!.pub.turn!.data.turnId;
+      const word = x.view!.early!.prompt.options[0]!.word;
+      x.key(keyOf(word[0]!), s.now());
+      const before = x.frame(FRAME).pub.stats[0].correctKeys;
+      const next = frameUntil(s, x, (v) => v.pub.turn !== null && v.pub.turn.data.turnId !== cpuTurn);
+      expect(next.early).toBeNull();
+      expect(next.events.every((e) => e.τ >= 0)).toBe(true);
+      const t = next.pub.turn!;
+      if (t.data.kind === 'return' && t.data.owner === 0) {
+        expect(t.prompts[0]).toMatchObject({ typed: 1 });
+        expect(t.prompts[0]!.tFirst).toBeLessThan(0);
+        carried++;
+      } else {
+        expect(next.pub.stats[0].correctKeys).toBe(before); // nothing counted
+      }
+    }
+    expect(carried).toBeGreaterThan(0);
+  });
+
+  it("a CPU receiver's early chase fills live and reaches the engine at the strike", () => {
+    const { s, x } = until(5, (v) => v.early?.player === 1 && v.early.prompt.typed > 0);
+    const humanTurn = x.view!.pub.turn!.data.turnId;
+    const next = frameUntil(s, x, (v) => v.pub.turn !== null && v.pub.turn.data.turnId !== humanTurn);
+    const t = next.pub.turn!;
+    if (t.data.kind === 'return') expect(t.prompts[0]!.tFirst).toBeLessThan(0);
+  });
+
+  it('a pause during the early window keeps the chase and stamps later keys on game time', () => {
+    const { s, x } = until(7, (v) => v.early?.player === 0);
+    const word = x.view!.early!.prompt.options[0]!.word;
+    x.key(keyOf(word[0]!), s.now());
+    const first = x.frame(FRAME).early!.prompt.tFirst!;
+    x.pause();
+    s.advance(5000);
+    x.resume();
+    s.advance(1600); // the 3-2-1 countdown
+    x.frame(FRAME);
+    x.key(keyOf(word[1]!), s.now());
+    const vm = x.frame(FRAME);
+    if (vm.early !== null) expect(vm.early.prompt.tLast! - first).toBeLessThan(2000);
+  });
+
+  it('a whole match with a human who types early plays to the end', () => {
+    const { x } = until(3, () => false, true);
+    expect(x.over).toBe(true);
+  });
+});

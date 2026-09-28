@@ -369,12 +369,16 @@ export interface Overlay {
   rttMs: number | null;       // online round-trip time, for the HUD corner
 }
 
+/** An early chase a view shows (early-typing spec §6.4): its typist and chase prompt, times on the striker's turn clock. */
+export interface EarlyView { player: PlayerId; prompt: PromptState }
+
 /** Everything the renderer needs for one frame (spec §5.2 passive playback). */
 export interface ViewModel {
   pub: PublicState;                    // redacted for `viewer`
   viewer: PlayerId | 'spectator';
   turnτ: number;                       // τ at which to render the current turn
   liveTurn: TurnState | null;          // viewer-owned live turn state (e.g. guest runner), else null
+  early: EarlyView | null;             // the open early chase the viewer may see (its own, or a local CPU's)
   events: GameEvent[];                 // events that became visible since the previous frame
   overlay: Overlay;
 }

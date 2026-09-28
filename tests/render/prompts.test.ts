@@ -68,7 +68,7 @@ function view(
   viewer: PlayerId | 'spectator' = 0,
   over: Partial<ViewModel> = {},
 ): ViewModel {
-  return { pub, viewer, turnτ, liveTurn: null, events: [], overlay: OVERLAY, ...over };
+  return { pub, viewer, turnτ, liveTurn: null, early: null, events: [], overlay: OVERLAY, ...over };
 }
 
 const hidden = (o: WordOption): WordOption => ({ word: '', len: o.len, tier: o.tier, hidden: true });
