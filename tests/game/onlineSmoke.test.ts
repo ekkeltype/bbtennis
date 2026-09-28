@@ -100,7 +100,9 @@ function nextKey(x: Side, now: number): { at: number; key: string } | null {
   const t = vm === null ? null : vm.liveTurn ?? vm.pub.turn;
   if (vm === null || t === null || t.data.owner !== x.me || !t.started || t.ended) return null;
   const k = x.typist.plan(t)[0];
-  return k === undefined ? null : { at: now - vm.turnτ + k.τ, key: k.key };
+  // A late-stamped key pressed at the turn's very start would be stamped before it and dropped (spec §5.2);
+  // a rally chase can start at τ 0 now (its early keys, never pressed here, lie before the strike).
+  return k === undefined ? null : { at: now - vm.turnτ + Math.max(k.τ, x.lateMs ?? 0), key: k.key };
 }
 
 /** Frames both sides every FRAME ms, pressing each typist's keys at their planned times, until both are over. */

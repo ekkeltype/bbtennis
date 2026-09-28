@@ -170,7 +170,8 @@ class ScriptedTypist {
     const word = p.options[option]?.word ?? '';
     const wordFactor = 0.85 + 0.3 * uniform(r);
     const keys: PlannedKey[] = [];
-    let τ = p.shownAt + reaction;
+    // A rally chase is shown at the striker's lock, before τ 0 (early-typing spec §2); this typist starts in its own turn.
+    let τ = Math.max(p.shownAt, 0) + reaction;
     for (let i = 0; i < word.length; i++) {
       const letter = word.charAt(i);
       if (i > 0) τ += this.intervalMs * wordFactor * (0.75 + 0.5 * uniform(r));

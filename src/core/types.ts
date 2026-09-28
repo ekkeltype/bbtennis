@@ -162,6 +162,9 @@ export interface ServeTurnData {
   power: number | null;    // owner's meter level when the turn was created; null = meter off (training)
 }
 
+/** A key the receiver typed before the strike (early-typing spec §2): a letter at receiver-clock τ ≤ 0. */
+export interface EarlyKey { key: string; τ: number }
+
 /** Start data of a return turn, owned by the receiver: incoming ball, chase word and choice prompt (spec §3.3). */
 export interface ReturnTurnData {
   kind: 'return';
@@ -172,6 +175,7 @@ export interface ReturnTurnData {
   incoming: BallFlight;
   chase: WordOption;        // the striker's exact word
   isServeReturn: boolean;
+  earlyFrom: number | null; // receiver-clock τ (≤ 0) at which early typing opened: the striker's lock − the strike; null on a serve return (early-typing spec §2)
   n: number;                // rally depth used for incoming T (spec §3.4)
   choice: { options: WordOption[]; targets: Vec2[]; m: 1 | -1 }; // 3 options, or 4 (insane last) at a full meter
   pace: number;

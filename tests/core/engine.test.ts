@@ -15,6 +15,7 @@ import {
   type PlayerInfo,
   type PromptKind,
   type PromptState,
+  type ReturnTurnData,
   type ServeTurnData,
   type TrainingFlags,
   type TurnState,
@@ -760,7 +761,8 @@ describe('Engine: extreme typists (Review Focus 2)', () => {
       expect(flight.T).toBeGreaterThan(0);
       expect(flight.grace).toBeGreaterThan(0);
     }
-    for (const ev of d.events) expect(Number.isFinite(ev.τ) && ev.τ >= 0).toBe(true);
+    // Every event is at τ ≥ 0 but a rally chase, shown at the striker's lock before the strike (early-typing spec §2).
+    for (const ev of d.events) expect(Number.isFinite(ev.τ) && (ev.τ >= 0 || (ev.type === 'promptShown' && ev.kind === 'chase'))).toBe(true);
     for (const st of e.state.stats) {
       expect(Number.isFinite(averageWpm(st))).toBe(true);
       expect(Number.isFinite(accuracy(st))).toBe(true);
@@ -886,5 +888,54 @@ describe('power meter in the engine (power-meter spec §4)', () => {
     }
     expect(engine.state.power).toEqual([0, 0]);
     expect(driver.events.filter((e) => e.type === 'power')).toEqual([]);
+  });
+});
+
+describe('Engine: early typing (early-typing spec §2)', () => {
+  const returnDataOf = (t: TurnState | null): ReturnTurnData => {
+    if (t?.data.kind !== 'return') throw new Error('expected a return turn');
+    return t.data;
+  };
+
+  /** Plays the serve and the receiver's return (easy choice); the server's rally chase turn is next. */
+  function toServersChase(seed = 17) {
+    const e = newEngine(seed);
+    const server = e.owner() as PlayerId;
+    const d = new Driver(e, byRole(server, scripted({ choice: null }), scripted({ choice: 0 })));
+    d.playTurn();
+    const serveReturn = e.state.turn as TurnState;
+    d.playTurn();
+    return { e, server, serveReturn };
+  }
+
+  it("a serve return has no early window; the next rally turn's opens at the striker's lock", () => {
+    const { e, server, serveReturn } = toServersChase();
+    expect(returnDataOf(serveReturn).earlyFrom).toBeNull();
+    const striker = e.state.lastTurn as TurnState;
+    const lock = striker.log.find((x) => x.k === 'lock');
+    const next = returnDataOf(e.state.turn);
+    expect(next.owner).toBe(server);
+    expect(next.earlyFrom).toBe((lock?.τ ?? Number.NaN) - strikeOf(striker).τ);
+    expect(next.earlyFrom).toBeLessThan(0);
+  });
+
+  it('start takes early keys: the chase is typed before τ 0 and the choice waits for τ 0', () => {
+    const { e, server } = toServersChase();
+    const d = returnDataOf(e.state.turn);
+    const from = d.earlyFrom as number;
+    const step = -from / (d.chase.len + 1);
+    const events = e.start(server, [...d.chase.word].map((key, i) => ({ key, τ: from + step * (i + 1) })));
+    const [chase, choice] = (e.state.turn as TurnState).prompts;
+    expect(chase?.completedAt).toBeLessThan(0);
+    expect(choice?.shownAt).toBe(0);
+    expect(events.filter((x) => x.type === 'keyOk').every((x) => x.τ < 0)).toBe(true);
+  });
+
+  it('start on a started turn does nothing, early keys or not', () => {
+    const { e, server } = toServersChase();
+    e.start(server);
+    const before = JSON.stringify(e.state);
+    expect(e.start(server, [{ key: 'z', τ: -1 }])).toEqual([]);
+    expect(JSON.stringify(e.state)).toBe(before);
   });
 });

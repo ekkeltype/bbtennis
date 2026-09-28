@@ -90,9 +90,9 @@ function serveTurn(o: ServeOpts = {}): TurnState {
   return newTurn(data, 'preServe', leadInMs);
 }
 
-interface ReturnOpts { turnId?: number; owner?: PlayerId; chase?: string; choice?: string[]; T?: number; isServeReturn?: boolean }
+interface ReturnOpts { turnId?: number; owner?: PlayerId; chase?: string; choice?: string[]; T?: number; isServeReturn?: boolean; earlyFrom?: number | null }
 
-/** A started return turn: chase prompt (id promptBase) shown and locked at τ = 0. */
+/** A started return turn: chase prompt (id promptBase) shown and locked at earlyFrom (0 by default for a rally, and for a serve return). */
 function returnTurn(o: ReturnOpts = {}): TurnState {
   const owner = o.owner ?? 0;
   const turnId = o.turnId ?? 1;
@@ -123,6 +123,7 @@ function returnTurn(o: ReturnOpts = {}): TurnState {
     incoming,
     chase,
     isServeReturn,
+    earlyFrom: o.earlyFrom === undefined ? (isServeReturn ? null : 0) : o.earlyFrom,
     n: 0,
     choice: { options: (o.choice ?? CHOICE_WORDS).map(toOption), targets: [0, 1, 2].map(() => ({ x: 0, y: 0 })), m: 1 },
     pace: 1,
@@ -131,9 +132,10 @@ function returnTurn(o: ReturnOpts = {}): TurnState {
     power: 0,
   };
   const t = newTurn(data, 'chase', 0);
-  t.prompts.push(createPrompt(data.promptBase, 'chase', [chase], 0));
+  const shownAt = data.earlyFrom ?? 0;
+  t.prompts.push(createPrompt(data.promptBase, 'chase', [chase], shownAt));
   t.active = 0;
-  t.log.push({ τ: 0, k: 'show', prompt: data.promptBase });
+  t.log.push({ τ: shownAt, k: 'show', prompt: data.promptBase });
   return t;
 }
 

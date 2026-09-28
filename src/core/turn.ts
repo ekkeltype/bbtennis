@@ -1,5 +1,6 @@
 import { choiceOptions, levelAfterStrike, levelFromKeys } from './power';
 import type {
+  EarlyKey,
   EventBody,
   GameEvent,
   PromptKind,
@@ -25,6 +26,9 @@ const CUES: readonly Deadline['kind'][] = ['netHit', 'bounce'];
 
 const LETTER = /^[a-z]$/;
 
+/** Most early keys a return turn takes (early-typing spec §6.1). */
+export const MAX_EARLY_KEYS = 40;
+
 /**
  * Creates an unstarted turn from its start data (copied). `seenKinds` starts empty: for match-wide
  * training freezes the engine carries it over from the previous turn before `startTurn`.
@@ -49,17 +53,45 @@ export function createTurn(data: TurnData): TurnState {
   };
 }
 
-/** Starts the owner's clock at τ=0 (idempotent). Returns events (turnStart, preServe or promptShown...). */
-export function startTurn(t: TurnState): GameEvent[] {
+/**
+ * Starts the owner's clock at τ=0 (idempotent). Returns events (turnStart, preServe or promptShown...).
+ * A rally return turn (earlyFrom set) shows its chase prompt at earlyFrom, the striker's lock, and
+ * first applies `early`: the keys its owner typed before the strike, each at its own τ ≤ 0, until the
+ * chase word is complete (early-typing spec §2). An invalid list is ignored whole (`validEarly`).
+ */
+export function startTurn(t: TurnState, early: readonly EarlyKey[] = []): GameEvent[] {
   if (t.started) return [];
   const d = t.data;
   const out: GameEvent[] = [];
   t.started = true;
   t.τ = 0;
   emit(t, out, 0, { type: 'turnStart', owner: d.owner, kind: d.kind });
-  if (d.kind === 'return') showPrompt(t, 'chase', [d.chase], 0, out);
+  if (d.kind === 'return') {
+    const keys = validEarly(d, early) ? early : [];
+    showPrompt(t, 'chase', [d.chase], d.earlyFrom ?? 0, out, keys.length === 0);
+    const chase = t.prompts[0];
+    for (const k of keys) {
+      if (chase === undefined || isComplete(chase)) break;
+      letter(t, k.key, k.τ, out);
+    }
+  }
   advance(t, 0, true, out);
   return out;
+}
+
+/**
+ * True when `early` may start `d` (early-typing spec §6.1): a rally return turn, and at most
+ * MAX_EARLY_KEYS letters a–z at finite, non-decreasing τ within [earlyFrom, 0].
+ */
+function validEarly(d: ReturnTurnData, early: readonly EarlyKey[]): boolean {
+  const from = d.earlyFrom;
+  if (from === null || d.isServeReturn || early.length > MAX_EARLY_KEYS) return false;
+  let last = from;
+  for (const k of early) {
+    if (!LETTER.test(k.key) || !Number.isFinite(k.τ) || k.τ < last || k.τ > 0) return false;
+    last = k.τ;
+  }
+  return true;
 }
 
 /**
@@ -249,8 +281,10 @@ function completed(t: TurnState, p: PromptState, τ: number, out: GameEvent[]): 
     return;
   }
   if (p.kind === 'chase') {
+    // Choice words never show before the strike (early-typing spec §2): an early chase shows them at τ 0.
+    const at = Math.max(τ, 0);
     t.phase = 'choice';
-    showPrompt(t, 'choice', choiceOptions(t, d, τ), τ, out);
+    showPrompt(t, 'choice', choiceOptions(t, d, at), at, out);
     return;
   }
   const contactτ = d.incoming.T + t.frozenMs;
@@ -265,8 +299,11 @@ function completed(t: TurnState, p: PromptState, τ: number, out: GameEvent[]): 
 // ---------------------------------------------------------------------------------------------
 // Transitions
 
-/** Shows a prompt; with `freezeFirst`, the first prompt of a kind freezes the simulation until its first correct key. */
-function showPrompt(t: TurnState, kind: PromptKind, options: WordOption[], τ: number, out: GameEvent[]): void {
+/**
+ * Shows a prompt; with `freezeFirst`, the first prompt of a kind freezes the simulation until its first
+ * correct key (from τ 0 at the earliest), unless `mayFreeze` is false (early keys came).
+ */
+function showPrompt(t: TurnState, kind: PromptKind, options: WordOption[], τ: number, out: GameEvent[], mayFreeze = true): void {
   const p = createPrompt(t.data.promptBase + t.prompts.length, kind, options.map((o) => ({ ...o })), τ);
   t.prompts.push(p);
   t.active = t.prompts.length - 1;
@@ -274,9 +311,11 @@ function showPrompt(t: TurnState, kind: PromptKind, options: WordOption[], τ: n
   emit(t, out, τ, { type: 'promptShown', player: t.data.owner, prompt: p.id, kind });
   if (t.seenKinds.includes(kind)) return;
   t.seenKinds.push(kind);
-  if (t.data.freezeFirst && t.freezeSince === null) {
-    t.freezeSince = τ;
-    t.log.push({ τ, k: 'freeze', on: true });
+  if (mayFreeze && t.data.freezeFirst && t.freezeSince === null) {
+    // A chase shown before the strike (early typing) freezes from τ 0, when this turn's clock starts.
+    const at = Math.max(τ, 0);
+    t.freezeSince = at;
+    t.log.push({ τ: at, k: 'freeze', on: true });
   }
 }
 
