@@ -3,6 +3,7 @@ import {
   APP_ID, MAX_MSG_CHARS, MAX_SEND_BYTES, PROTO, decodeMsg, encodeMsg, encodeWithBytes, msgBytes, parseMsg, type NetMsg,
 } from '../../src/net/protocol';
 import { sanitizeName } from '../../src/core/text';
+import { MAX_EARLY_KEYS } from '../../src/core/turn';
 import type { GameEvent, Look, MatchConfig, PlayerStats, Profile, PublicState } from '../../src/core/types';
 
 const look: Look = { skin: 2, hairStyle: 1, hair: 3, shirt: 4, shorts: 5, headband: 6, racket: 1 };
@@ -81,6 +82,7 @@ const samples: NetMsg[] = [
   { type: 'rematch', want: false },
   { type: 'forfeit' },
   { type: 'leave' },
+  { type: 'early', turn: 12, keys: [{ key: 'd', τ: -300 }, { key: 'x', τ: -120.5 }] },
 ];
 
 /** Simulates the wire: JSON out, JSON in. */
@@ -101,8 +103,8 @@ const find = <K extends NetMsg['type']>(type: K): Extract<NetMsg, { type: K }> =
   samples.find((m) => m.type === type) as Extract<NetMsg, { type: K }>;
 
 describe('constants', () => {
-  it('protocol version is 2 and messages are capped at 32 KB of JSON', () => {
-    expect(PROTO).toBe(2);
+  it('protocol version is 3 and messages are capped at 32 KB of JSON', () => {
+    expect(PROTO).toBe(3);
     expect(MAX_MSG_CHARS).toBe(32 * 1024);
   });
 
@@ -275,7 +277,7 @@ describe('parseMsg round trip', () => {
   it('the samples cover every message type', () => {
     const types = new Set(samples.map((m) => m.type));
     expect([...types].sort()).toEqual(
-      ['clock', 'forfeit', 'frame', 'hello', 'input', 'leave', 'lobby', 'ping', 'pong', 'ready', 'reject', 'rematch', 'start', 'welcome'],
+      ['clock', 'early', 'forfeit', 'frame', 'hello', 'input', 'leave', 'lobby', 'ping', 'pong', 'ready', 'reject', 'rematch', 'start', 'welcome'],
     );
   });
 
@@ -506,7 +508,32 @@ describe('frame states and the power meter (PROTO 2)', () => {
     expect(decodeMsg(frame({ ...publicState(), v: 1 }))).toBeNull();
   });
 
-  it('is protocol version 2', () => {
-    expect(PROTO).toBe(2);
+  it('is protocol version 3 (2 brought the meter; early typing brought 3)', () => {
+    expect(PROTO).toBe(3);
+  });
+});
+
+describe('early (early-typing spec §6.3)', () => {
+  const keys = [{ key: 'd', τ: -300 }, { key: 'r', τ: -120.5 }];
+
+  it('passes a valid list, copied clean', () => {
+    expect(parseMsg({ type: 'early', turn: 12, keys: keys.map((k) => ({ ...k, extra: 1 })), junk: true })).toEqual({ type: 'early', turn: 12, keys });
+    expect(parseMsg({ type: 'early', turn: 12, keys: [] })).toEqual({ type: 'early', turn: 12, keys: [] });
+  });
+
+  it.each([
+    ['a non-integer turn', { turn: 1.5, keys }],
+    ['a key after τ 0', { turn: 1, keys: [{ key: 'd', τ: 1 }] }],
+    ['a non-finite τ', { turn: 1, keys: [{ key: 'd', τ: null }] }],
+    ['a non-letter', { turn: 1, keys: [{ key: 'toss', τ: -1 }] }],
+    ['an upper-case letter', { turn: 1, keys: [{ key: 'D', τ: -1 }] }],
+    ['more than MAX_EARLY_KEYS keys', { turn: 1, keys: Array.from({ length: MAX_EARLY_KEYS + 1 }, () => ({ key: 'z', τ: -1 })) }],
+    ['keys that are not a list', { turn: 1, keys: 'dr' }],
+  ])('drops a message with %s', (_name, m) => {
+    expect(parseMsg({ type: 'early', ...m })).toBeNull();
+  });
+
+  it('is protocol version 3', () => {
+    expect(PROTO).toBe(3);
   });
 });

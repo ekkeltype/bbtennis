@@ -1,11 +1,15 @@
 import { POWER_MAX } from '../core/power';
 import { sanitizeName } from '../core/text';
+import { MAX_EARLY_KEYS } from '../core/turn';
 import type {
-  DeuceRule, FormatId, GameEvent, Look, MatchConfig, PaceId, PlayerInfo, Profile, PublicState, Surface, TrainingFlags, WordPackId,
+  DeuceRule, EarlyKey, FormatId, GameEvent, Look, MatchConfig, PaceId, PlayerInfo, Profile, PublicState, Surface, TrainingFlags, WordPackId,
 } from '../core/types';
 
-/** Protocol version; bump on any change to the protocol, PublicState, TurnRunner or key classification (spec §5.3). */
-export const PROTO = 2;
+/**
+ * Protocol version; bump on any change to the protocol, PublicState, TurnRunner or key classification (spec §5.3).
+ * 3 since early typing (early-typing spec §6.3).
+ */
+export const PROTO = 3;
 
 /** Application id sent in `hello` and `reject`. */
 export const APP_ID = 'bbtennis';
@@ -40,6 +44,7 @@ export type NetMsg =
   | { type: 'start'; config: MatchConfig; hostProfile: Profile; guestProfile: Profile }
   | { type: 'input'; seq: number; turn: number; k: string; τ: number }
   | { type: 'clock'; turn: number; τ: number }
+  | { type: 'early'; turn: number; keys: EarlyKey[] }
   | { type: 'frame'; turn: number; τ: number; ev?: GameEvent[]; s?: PublicState }
   | { type: 'ping'; id: number }
   | { type: 'pong'; id: number }
@@ -147,6 +152,17 @@ function parsePower(v: unknown): [number, number] | null {
   return [clampLevel(v[0] as number), clampLevel(v[1] as number)];
 }
 
+/** A guest's early keys (early-typing spec §6.3): at most MAX_EARLY_KEYS letters a–z at finite τ ≤ 0, copied clean; null if any is not. */
+function parseEarlyKeys(v: unknown): EarlyKey[] | null {
+  if (!Array.isArray(v) || v.length > MAX_EARLY_KEYS) return null;
+  const keys: EarlyKey[] = [];
+  for (const k of v) {
+    if (!isRec(k) || !isStr(k.key) || !/^[a-z]$/.test(k.key) || !isNum(k.τ) || k.τ > 0) return null;
+    keys.push({ key: k.key, τ: k.τ });
+  }
+  return keys;
+}
+
 function parseReady(v: unknown): [boolean, boolean] | null {
   return Array.isArray(v) && v.length === 2 && isBool(v[0]) && isBool(v[1]) ? [v[0], v[1]] : null;
 }
@@ -201,6 +217,10 @@ function parseFields(m: Rec): NetMsg | null {
       return { type: 'input', seq: m.seq, turn: m.turn, k: m.k, τ: m.τ };
     case 'clock':
       return isInt(m.turn) && isNum(m.τ) ? { type: 'clock', turn: m.turn, τ: m.τ } : null;
+    case 'early': {
+      const keys = parseEarlyKeys(m.keys);
+      return isInt(m.turn) && keys ? { type: 'early', turn: m.turn, keys } : null;
+    }
     case 'frame':
       return parseFrame(m);
     case 'ping':
