@@ -25,7 +25,10 @@ const HUMAN_50 = simTypist(50);
 
 /** A record with defaults for the fields a summarize test does not care about. */
 function rec(over: Partial<PointRecord> = {}): PointRecord {
-  return { shots: 3, ms: 10000, reason: 'winner', serverWon: true, winner: 0, insaneClean: 0, insaneReturned: 0, insaneOffered: false, ...over };
+  return {
+    shots: 3, ms: 10000, reason: 'winner', serverWon: true, winner: 0, insaneClean: 0, insaneReturned: 0, insaneOffered: false,
+    rallyTiers: { easy: 0, medium: 0, hard: 0, insane: 0 }, rallyReturns: 0, earlyStarts: 0, earlyDone: 0, ...over,
+  };
 }
 
 /**
@@ -98,6 +101,17 @@ describe('summarize', () => {
     expect(s.medianSecPerPoint).toBe(12.5);
   });
 
+  it('gives the rally tier mix over all rally strikes and the early-typing shares of rally returns', () => {
+    const s = summarize([
+      rec({ rallyTiers: { easy: 3, medium: 1, hard: 0, insane: 0 }, rallyReturns: 4, earlyStarts: 3, earlyDone: 1 }),
+      rec({ rallyTiers: { easy: 1, medium: 1, hard: 1, insane: 1 }, rallyReturns: 4, earlyStarts: 1, earlyDone: 1 }),
+    ]);
+    expect([s.rallyEasy, s.rallyMedium, s.rallyHard, s.rallyInsane]).toEqual([0.5, 0.25, 0.125, 0.125]);
+    expect([s.earlyStartShare, s.earlyDoneShare]).toEqual([0.5, 0.25]);
+    const none = summarize([rec()]);
+    expect([none.rallyEasy, none.earlyStartShare, none.earlyDoneShare]).toEqual([0, 0, 0]);
+  });
+
   it('rejects an empty list instead of returning NaN', () => {
     expect(() => summarize([])).toThrow(RangeError);
   });
@@ -120,6 +134,13 @@ describe('simulatePoints', () => {
     const run = (seed: number): PointRecord[] => simulatePoints({ config: CONFIG, typists: [HUMAN_50, HUMAN_50], seed, points: 40 });
     expect(run(3)).toEqual(run(3));
     expect(run(3)).not.toEqual(run(4));
+  });
+
+  it('plays early typing: most rally returns get chase keys before the strike', () => {
+    const s = summarize(simulatePoints({ config: CONFIG, typists: [HUMAN_50, HUMAN_50], seed: 13, points: 200 }));
+    expect(s.earlyStartShare).toBeGreaterThan(0.5);
+    expect(s.earlyDoneShare).toBeGreaterThan(0);
+    expect(s.rallyEasy + s.rallyMedium + s.rallyHard + s.rallyInsane).toBeCloseTo(1, 9);
   });
 
   it('never stalls or produces NaN with extreme typists (15 and 160 WPM)', () => {
@@ -158,6 +179,11 @@ describe('simulateMatch', () => {
     points.forEach(expectConsistent);
   });
 
+  it("returns both players' match stats", () => {
+    const { stats } = simulateMatch({ config: config({ format: 'tiebreak' }), typists: [HUMAN_50, HUMAN_50], seed: 21 });
+    expect(stats[0].wordsCompleted + stats[1].wordsCompleted).toBeGreaterThan(0);
+  });
+
   it('is won by a black belt 3rd dan against a white belt', () => {
     const typists: [SimTypist, SimTypist] = [{ profile: cpuProfile(0) }, { profile: cpuProfile(14) }];
     expect(simulateMatch({ config: CONFIG, typists, seed: 1 }).winner).toBe(1);
@@ -171,7 +197,10 @@ function serverOf(p: PointRecord): PlayerId {
 
 describe('insane metrics (power-meter spec §7)', () => {
   it('summarize: clean insane shots, the share returned, and the share of points offering insane', () => {
-    const base = { shots: 3, ms: 1000, reason: 'winner' as const, serverWon: true, winner: 0 as const };
+    const base = {
+      shots: 3, ms: 1000, reason: 'winner' as const, serverWon: true, winner: 0 as const,
+      rallyTiers: { easy: 0, medium: 0, hard: 0, insane: 0 }, rallyReturns: 0, earlyStarts: 0, earlyDone: 0,
+    };
     const s = summarize([
       { ...base, insaneClean: 2, insaneReturned: 1, insaneOffered: true },
       { ...base, insaneClean: 1, insaneReturned: 0, insaneOffered: true },
