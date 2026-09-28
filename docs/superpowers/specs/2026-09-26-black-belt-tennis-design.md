@@ -135,8 +135,8 @@ Keys from a player who is not the active typist are always dropped: never errors
 3. When the chase word completes, the **CHOICE** prompt appears (its words and targets were
    pre-picked with the return turn's start data): three words (a fourth, insane, one while the
    receiver's power meter is still full: pre-picked at a full meter, dropped if a wrong key in the
-   chase emptied it) aimed at the **opponent's half** (the near typist's words stack above its
-   head; amended: choice-stack spec 2026-09-28), visible to both players with live
+   chase emptied it) aimed at the **opponent's half** (the near typist's words stack beside the
+   spot it hits from; amended: choice-stack spec 2026-09-28), visible to both players with live
    typing progress (§4.2 layout). Targets are on the destination half, with `a` = lateral offset
    positive toward the destination player's right and `b` = distance from the net; world
    `x = s_dest·a`, `y = −s_dest·b`; `m = ±1` random:
@@ -378,10 +378,11 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
   options fade out.
 - **Layout**:
   - **Near typist's choice** (the player drawn at the bottom; amended: choice-stack spec 2026-09-28
-    §2–3): a stack where the chase plate was: easy on top, then medium, hard[, insane], 3 px gaps,
-    each plate centred on the chase plate's column, the bottom plate's bottom edge 4 px above the
-    head at turn start. The stack stays ≥ 8 px below the lowest ring centre and inside the plate
-    area, shifted as one unit with its leaders. Each leader leaves the middle of a plate side
+    §2–3): a stack beside the spot the chase runs the player to (the animator's stance): easy on
+    top, then medium, hard[, insane], 3 px gaps, all centred on one column on the side toward the
+    screen centre, the widest plate's near edge 24 px from the player's feet, the bottom plate's
+    bottom edge level with the top of the head there. The stack stays ≥ 8 px below the lowest ring
+    centre and inside the plate area, shifted as one unit with its leaders. Each leader leaves the middle of a plate side
     (medium and insane from medium's side, hard from the other, easy from the side facing its ring)
     and runs straight out and up to its ring, or up a lane beside the stack (lanes 4 px apart, lower
     plates outermost) and across. No two leaders touch; none crosses another plate or ring.

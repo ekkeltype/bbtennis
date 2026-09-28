@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { insaneRallyTarget, rallyTargets } from '../../src/core/court';
 import type { Look, Tier } from '../../src/core/types';
-import { layoutChoiceStack } from '../../src/render/layout';
+import { besideColumn, layoutChoiceStack, plateWidth } from '../../src/render/layout';
 import { placeChoiceStack, routeStackLeaders, type PlacedStack } from '../../src/render/leaders';
 import { inRingKeepOut, leaderPixels, type Pt } from '../../src/render/plates';
 import { project } from '../../src/render/projection';
@@ -99,10 +99,21 @@ function lengthSets(n: 3 | 4, all: boolean): number[][] {
   return sets;
 }
 
-/** The bottom edge of a near player's chase plate: 4 px above the head of a player standing `depth` m behind the net. */
-function chaseBottom(depth: number, head: number): number {
-  return Math.round(project({ x: 0, y: -depth, z: 0 }, 0).y) - head - 4;
+/** The stack's bottom edge beside a near player hitting `depth` m behind the net: level with the top of a `head`-px head. */
+function stackBottom(depth: number, head: number): number {
+  return Math.round(project({ x: 0, y: -depth, z: 0 }, 0).y) - head;
 }
+
+/** The shortest and tallest near-player head over every hair style, with and without a headband. */
+function headRange(): [number, number] {
+  const heads = [0, 1, 2, 3, 4].flatMap((hairStyle) =>
+    [0, null].map((headband) => headHeight({ ...LOOK, hairStyle, headband }, 'near')),
+  );
+  return [Math.min(...heads), Math.max(...heads)];
+}
+
+/** Depths (m behind the net) a near player can hit from: the service line to 1.2 m behind the baseline. */
+const DEPTHS = [6.4, 8, 10, 11.5, 12.2, 12.5, 13.085];
 
 describe('routeStackLeaders (choice-stack spec §3)', () => {
   // A centred 4-stack: easy x 223–257, medium 214–266, hard 202–278, insane 190–290; rows 127 / 146 / 165 / 184.
@@ -157,10 +168,7 @@ describe('placeChoiceStack (choice-stack spec §2)', () => {
   });
 
   it('meets the guarantee everywhere a near player can stand: no two leaders touch, none enters another plate or ring', () => {
-    const heads = [0, 1, 2, 3, 4].flatMap((hairStyle) =>
-      [0, null].map((headband) => headHeight({ ...LOOK, hairStyle, headband }, 'near')),
-    );
-    const headRange = [Math.min(...heads), Math.max(...heads)];
+    const heads = headRange();
     const fails: string[] = [];
     const check = (m: 1 | -1, lens: number[], col: number, bottom: number): void => {
       const rings = ringsFor(m).slice(0, lens.length);
@@ -170,18 +178,54 @@ describe('placeChoiceStack (choice-stack spec §2)', () => {
     };
     for (const m of [1, -1] as const) {
       // Every column (step 4), service line to 1.2 m behind the baseline, each band's extremes.
-      for (const depth of [6.4, 8, 10, 11.5, 12.2, 12.5, 13.085]) {
-        for (const head of headRange) {
+      for (const depth of DEPTHS) {
+        for (const head of heads) {
           for (let col = 4; col <= 476; col += 4) {
-            for (const n of [3, 4] as const) for (const lens of lengthSets(n, false)) check(m, lens, col, chaseBottom(depth, head));
+            for (const n of [3, 4] as const) for (const lens of lengthSets(n, false)) check(m, lens, col, stackBottom(depth, head));
           }
         }
       }
       // Every word length at the edges, the serve-return spots and the centre.
       for (const col of [4, 60, 158, 240, 322, 420, 476]) {
-        for (const n of [3, 4] as const) for (const lens of lengthSets(n, true)) check(m, lens, col, chaseBottom(12.5, headRange[0]!));
+        for (const n of [3, 4] as const) for (const lens of lengthSets(n, true)) check(m, lens, col, stackBottom(12.5, heads[0]));
       }
     }
     expect(fails).toEqual([]);
   }, 120_000);
+});
+
+describe('besideColumn (choice-stack spec §2, beside the hitting spot)', () => {
+  it('puts the widest plate\'s near edge 24 px from the feet, on the court-centre side (right at the centre)', () => {
+    const right = layoutChoiceStack([4, 7, 11, 15], besideColumn(100.4, 101), 200);
+    expect(right.at(-1)!.x).toBe(100 + 24);
+    const left = layoutChoiceStack([4, 7, 11], besideColumn(300.6, 77), 200);
+    expect(left.at(-1)!.x + left.at(-1)!.w - 1).toBe(301 - 24);
+    const centre = layoutChoiceStack([4, 7, 11], besideColumn(240, 77), 200);
+    expect(centre.at(-1)!.x).toBe(240 + 24);
+  });
+
+  it('keeps every placed stack clear of the player wherever a near player can hit from', () => {
+    const fails: string[] = [];
+    for (const m of [1, -1] as const) {
+      for (const depth of DEPTHS) {
+        // |x| ≤ 5.8 m at this depth, as screen x.
+        const [lo, hi] = [-5.8, 5.8].map((x) => project({ x, y: -depth, z: 0 }, 0).x) as [number, number];
+        for (let feetX = lo; feetX <= hi; feetX += 1.7) {
+          for (const n of [3, 4] as const) {
+            for (const lens of lengthSets(n, false)) {
+              const widest = Math.max(...lens.map((len) => plateWidth(len)));
+              const rings = ringsFor(m).slice(0, n);
+              const s = placeChoiceStack(lens, besideColumn(feetX, widest), stackBottom(depth, headRange()[0]), rings);
+              const feet = Math.round(feetX);
+              const clear = feet <= 240
+                ? s.boxes.every((b) => b.x >= feet + 24)
+                : s.boxes.every((b) => b.x + b.w - 1 <= feet - 24);
+              if (!clear && fails.length < 20) fails.push(`m ${m} depth ${depth} feet ${feetX.toFixed(1)} lens ${lens}`);
+            }
+          }
+        }
+      }
+    }
+    expect(fails).toEqual([]);
+  }, 60_000);
 });

@@ -1,3 +1,4 @@
+import { stanceFor } from '../core/trajectory';
 import { turnViewAt, type PromptView, type TurnView } from '../core/turnView';
 import type {
   DisplayPrefs,
@@ -13,7 +14,16 @@ import type {
 import { clamp } from '../core/util';
 import { drawText, textWidth } from './font';
 import { beltColor } from './hud';
-import { growUp, layoutChoice, layoutServeFar, layoutServeNear, layoutSingle, type PlateBox } from './layout';
+import {
+  besideColumn,
+  growUp,
+  layoutChoice,
+  layoutServeFar,
+  layoutServeNear,
+  layoutSingle,
+  plateWidth,
+  type PlateBox,
+} from './layout';
 import { placeChoiceStack, routeStackLeaders } from './leaders';
 import { OUTLINE, PAL } from './palette';
 import { drawPlate, drawTimingBar, type PlateDraw, type PlateStyle, type Pt } from './plates';
@@ -305,10 +315,10 @@ function chasePlate(c: Ctx, d: ReturnTurnData, chase: PromptView, style: PlateSt
 }
 
 /**
- * The choice prompt (spec §4.2): for the near typist, a stack where the chase plate was with side
- * leaders (choice-stack spec §2–3); for the far typist, today's row in the near band with straight
- * leaders from each plate's bottom centre. Rings on the targets; the local typist's timing bar under the
- * options (then under the locked one); the first-letter hint above the stack.
+ * The choice prompt (spec §4.2): for the near typist, a stack beside the spot the chase runs them to,
+ * with side leaders (choice-stack spec §2–3); for the far typist, today's row in the near band with
+ * straight leaders from each plate's bottom centre. Rings on the targets; the local typist's timing
+ * bar under the options (then under the locked one); the first-letter hint above the stack.
  */
 function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: PlateStyle): void {
   const { f, v, s } = c;
@@ -321,9 +331,12 @@ function choicePlates(c: Ctx, d: ReturnTurnData, choice: PromptView, style: Plat
   let paths: Pt[][];
   let column: number | null = null;
   if (d.owner === f.near) {
-    const head = headAt(c, d.owner, c.o.turnStart[d.owner]);
+    // Beside the spot the chase runs the player to (the animator's stance), so it never covers them.
+    const spot = stanceFor(d.incoming.contact, d.owner, c.o.turnStart[d.owner]).feet;
+    const head = headAt(c, d.owner, spot);
     const rings = targets.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
-    const placed = placeChoiceStack(lens, head.x, head.y - HEAD_GAP, rings);
+    const widest = Math.max(...lens.map((len) => plateWidth(len)));
+    const placed = placeChoiceStack(lens, besideColumn(head.x, widest), head.y, rings);
     column = placed.columnX;
     boxes = placed.boxes.map((b, i) => (i === large ? growUp(b) : b));
     paths = placed.routes;

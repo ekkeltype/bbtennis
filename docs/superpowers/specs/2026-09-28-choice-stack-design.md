@@ -12,8 +12,8 @@ meter). Reading them means a long jump up and a scan across the screen.
 
 Two changes, plus one small fix:
 
-1. **Choice stack.** The near typist's choice words appear as a vertical stack where the chase plate
-   was, like the near serve stack.
+1. **Choice stack.** The near typist's choice words appear as a vertical stack beside the spot the
+   chase runs them to, like the near serve stack (amended after review, see §2 Anchor).
 2. **Side leaders.** Each plate's leader leaves from one of its sides and is routed so that no two
    leaders overlap.
 3. **Cheer.** Returning an insane shot draws a cheer from the crowd.
@@ -28,7 +28,7 @@ Success criteria:
 | Topic | Decision |
 |---|---|
 | Scope | The stack and the cheer now. **Early typing** (the receiver may start the chase word as soon as the striker locks) is deferred to its own spec, after a playtest of this change. |
-| Stack position | Where the chase plate was, growing upward from it (not a fixed spot mid-court). |
+| Stack position | First agreed: where the chase plate was, growing upward from it (not a fixed spot mid-court). **Changed after review:** that spot hid the player when they ran forward to the ball (about 6 % of choices at Normal, 35 % at Lightning), so the stack now sits beside the hitting spot on the court-centre side, like the serve words. |
 | Indicators | Leader lines that start at the plates' sides, routed so they don't overlap. |
 | Opponent's choice | Unchanged: today's row just below the net, on the viewer's half. |
 
@@ -39,16 +39,19 @@ Success criteria:
   player's choice prompt keeps today's row in the near band (`layoutChoice(…, 'near')`).
 - **Order:** tier order from top to bottom (easy, medium, hard, then insane when offered), 1× plates,
   3 px gaps (as the near serve stack).
-- **Anchor:** the bottom plate's bottom edge is the chase plate's bottom edge, 4 px above the owner's
-  head where it stood when the turn began, whatever the chase plate's scale. Every plate is centred on
-  the column of that head x. Each tier's words are longer than the tier above (easy 2–4, medium
-  5–7, hard 8–11, insane 12–15 letters), so the stack is a pyramid, widest at the bottom.
+- **Anchor** (amended after review): the hitting spot is where the chase runs the player to, the
+  animator's stance for the incoming ball (`stanceFor(contact, owner, turn-start feet)`). The bottom
+  plate's bottom edge is level with the top of the player's head there. Every plate is centred on one
+  column, placed on the side toward the screen centre (right at exactly the centre) so that the widest
+  plate's near edge is 24 px from the player's feet column as drawn. That clears every frame shown
+  while choosing (a stretch reaches 22 px from the feet), so the stack never covers the player. Each
+  tier's words are longer than the tier above (easy 2–4, medium 5–7, hard 8–11, insane 12–15 letters),
+  so the stack is a pyramid, widest at the bottom.
 - **Bounds:** the stack, its leaders and its lanes shift together as one unit so that every plate
   lies within x 4–476, y 22–266.
 - **Below the rings:** the stack's top edge stays at least 8 px below the lowest ring centre it
-  shows. Normally it is far lower: the top is around y 119 against rings at y 80–91. Only a near
-  player who begins the turn about 1.6 m or more inside the baseline has a head high enough to break
-  this. The stack then moves down by the difference and may cover part of the player.
+  shows. A player hitting from well inside the baseline (a serve return that ran in) has a head high
+  enough to break this. The stack then moves down by the difference, still beside the player.
 - **After a lock:** the other plates and their leaders fade out over 200 ms, as now. The locked plate
   stays where it is. With Large words it is redrawn at 2× around its centre column with its **bottom
   edge kept** (it grows upward, so it never covers the head), clamped to the plate area, and its leader
@@ -94,6 +97,9 @@ plate's bottom centre.
 
   If routing cannot meet this for some case, implementation stops and the case goes to the user. No
   condition is dropped quietly.
+- **Beside the player (unit test):** for every hitting spot a near player can reach (|x| ≤ 5.8 m,
+  service line to 1.2 m behind the baseline), both medium sides and 3 or 4 options, every placed plate
+  stays at least 24 px from the player's feet column, on the court-centre side.
 
 ## 4. Cheer for an insane return (amends main spec §4.4, power-meter spec §6 Audio)
 
@@ -158,7 +164,7 @@ plate's bottom centre.
 ## 7. Docs to update on completion
 
 - Main spec §4.2 Layout (choice plates, leaders) and §4.4 Audio, each pointing to this spec.
-- README "Return" paragraph: the shot words appear above you, where the chase word was.
+- README "Return" paragraph: the shot words appear in a stack beside you.
 - The How to Play texts don't say where the words appear, so they are unchanged. Its "choose"
   illustration already shows a stack with leaders.
 

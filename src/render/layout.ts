@@ -87,6 +87,24 @@ function fourSlots(targetsScreenX: number[]): number[] {
   return slots;
 }
 
+/**
+ * Gap from a near player's feet column to the nearest edge of their choice stack: clears the widest
+ * frame they show while choosing (a stretch reaches 22 px from the feet; the swing comes after the
+ * plates are gone) plus a plate's 1 px halo.
+ */
+const PLAYER_CLEAR = 24;
+
+/**
+ * The column of a choice stack beside a near player whose feet are at screen x `feetX` (choice-stack
+ * spec §2): on the side toward the screen centre, which always has the more room (right at exactly the
+ * centre), with the widest plate, `widest` px wide, `PLAYER_CLEAR` px from the feet as drawn (rounded).
+ */
+export function besideColumn(feetX: number, widest: number): number {
+  const feet = Math.round(feetX);
+  const reach = PLAYER_CLEAR + (widest - 1) / 2;
+  return feet <= CENTRE_X ? feet + reach : feet - reach;
+}
+
 /** Height of a choice stack of `n` plates, 3 px apart (choice-stack spec §2). */
 export function stackHeight(n: number): number {
   return n * PLATE_H + (n - 1) * STACK_GAP;

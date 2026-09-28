@@ -90,11 +90,11 @@ function fitShift(boxes: readonly PlateBox[], routes: readonly Pt[][]): number {
 }
 
 /**
- * The near typist's choice stack for `lens` (choice-stack spec §2), placed where the chase plate was:
- * centred on `columnX`, the last plate ending at `bottomY`. It moves down if needed so its top stays
- * 8 px below the lowest of `rings` (whole-pixel ring centres, one per option), is kept inside y 22–266,
- * and is shifted sideways as one unit with its leaders until they fit x 4–476 (the plates alone as a
- * last resort, which the leader tests show never happens).
+ * The near typist's choice stack for `lens` (choice-stack spec §2), placed beside the hitting spot
+ * (`besideColumn`): centred on `columnX`, the last plate ending at `bottomY`. It moves down if needed
+ * so its top stays 8 px below the lowest of `rings` (whole-pixel ring centres, one per option), is
+ * kept inside y 22–266, and is shifted sideways as one unit with its leaders until they fit x 4–476
+ * (the plates alone as a last resort, which the leader tests show never happens).
  */
 export function placeChoiceStack(lens: number[], columnX: number, bottomY: number, rings: readonly Pt[]): PlacedStack {
   const h = stackHeight(lens.length);

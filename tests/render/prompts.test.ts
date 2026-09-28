@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { rallyTargets, receiverSpot, serverSpot } from '../../src/core/court';
 import { createScore } from '../../src/core/scoring';
+import { stanceFor } from '../../src/core/trajectory';
 import { createTurn, startTurn, turnClock, turnInput } from '../../src/core/turn';
 import type {
   DisplayPrefs,
@@ -239,21 +240,29 @@ describe('promptScene', () => {
     expect(large.plates[0]).toMatchObject({ scale: 2 });
   });
 
-  it('stacks the near typist\'s choice where the chase plate was, easy on top, side leaders to the rings (choice-stack spec §2–3)', () => {
+  it('stacks the near typist\'s choice beside the spot they will hit from, easy on top, side leaders to the rings (choice-stack spec §2–3)', () => {
     const t = createTurn(returnData());
     startTurn(t);
     typeWord(t, 'ball', 100);
     turnClock(t, 500);
     const a = new PlayerAnimator();
-    const chase = scene(view(matchState(t), 350, 1), PREFS, a).plates.find((p) => p.opt.word === 'ball')!.box;
+    scene(view(matchState(t), 350, 1), PREFS, a);
     const s = scene(view(matchState(t), 500, 1), PREFS, a);
     expect(s.plates.map((p) => [p.opt.word, p.style])).toEqual(CHOICE.map((w) => [w, 'localActive']));
     const stack = s.plates.map((p) => p.box);
     stack.slice(1).forEach((b, i) => expect(b.y).toBe(stack[i]!.y + 16 + 3));
+    // The hitting spot is where the chase runs the player to (stanceFor); the stack's bottom is level
+    // with the head top there, its widest plate 24 px to the court-centre side of the feet.
+    const spot = stanceFor(returnData().incoming.contact, 1, a.turnStartFeet(1)).feet;
+    const feet = project({ ...spot, z: 0 }, 1);
+    const headTop = Math.round(feet.y) - headHeight(matchState(t).players[1].look, 'near');
     const bottom = stack.at(-1)!;
-    expect(bottom.y + bottom.h).toBe(chase.y + chase.h);
-    const column = chase.x + (chase.w - 1) / 2;
-    for (const b of stack) expect(Math.abs(b.x + (b.w - 1) / 2 - column)).toBeLessThanOrEqual(0.5);
+    expect(bottom.y + bottom.h).toBe(headTop);
+    const feetX = Math.round(feet.x);
+    if (feetX <= 240) expect(bottom.x).toBe(feetX + 24);
+    else expect(bottom.x + bottom.w - 1).toBe(feetX - 24);
+    const column = bottom.x + (bottom.w - 1) / 2;
+    for (const b of stack) expect(b.x + (b.w - 1) / 2).toBe(column);
 
     const targets = returnData().choice.targets.map((p) => project({ ...p, z: 0 }, 1));
     expect(s.rings.map((r) => [r.x, r.y])).toEqual(targets.map((p) => [p.x, p.y]));
