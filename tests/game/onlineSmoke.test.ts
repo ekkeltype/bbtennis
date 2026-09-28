@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { CpuBrain, cpuProfile } from '../../src/core/cpu';
+import { EARLY_PROMPT } from '../../src/core/early';
 import { Engine } from '../../src/core/engine';
 import { redact } from '../../src/core/redact';
 import { TUNING } from '../../src/core/tuning';
@@ -203,8 +204,14 @@ describe('online sessions: a full match over a lossy-latency loopback', () => {
       expect(seen[side].filter((e) => e.type === 'match')).toHaveLength(1);
       expect(seen[side].filter((e) => e.type === 'coinToss')).toHaveLength(1);
     }
-    // Both players see the same events, each once: the guest's own turns from its runner, the rest from the host.
-    const sorted = (events: GameEvent[]): string[] => events.map((e) => JSON.stringify(e)).sort();
+    // Both players see the same game events, each once: the guest's own turns from its runner, the rest from the host.
+    // Each also sees its own early chase (early-typing spec §6.2), which the other side never gets.
+    const isEarly = (e: GameEvent): boolean => 'prompt' in e && e.prompt === EARLY_PROMPT;
+    for (const side of ['host', 'guest'] as const) {
+      const me = side === 'host' ? 0 : 1;
+      expect(seen[side].filter(isEarly).every((e) => 'player' in e && e.player === me)).toBe(true);
+    }
+    const sorted = (events: GameEvent[]): string[] => events.filter((e) => !isEarly(e)).map((e) => JSON.stringify(e)).sort();
     expect(sorted(seen.guest)).toEqual(sorted(seen.host));
 
     const frames = o.hostNet.sent.filter((m) => m.type === 'frame');

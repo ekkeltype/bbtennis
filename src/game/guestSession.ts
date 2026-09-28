@@ -1,9 +1,11 @@
+import { EarlyChase } from '../core/early';
 import { emptyStats } from '../core/engine';
 import { createScore } from '../core/scoring';
 import { appendWordSet, createTurn, startTurn, turnClock, turnInput } from '../core/turn';
 import type { KeyClass } from '../core/typing';
 import {
   other,
+  type EarlyKey,
   type GameEvent,
   type MatchConfig,
   type MatchState,
@@ -93,7 +95,9 @@ export interface GuestSessionOptions {
  * them. The host's result of each own turn is compared with the local one; a mismatch is logged as a
  * desync and the host's version is shown. A `start` from the host begins a new match. The rules of
  * a match's end (forfeit, leave, rematch, a lost host) are the shared OnlineLifecycle's. Online play
- * never pauses.
+ * never pauses. The guest types its chase early while the host's return turn plays back past its choice
+ * lock; its own turn then starts with those keys, which the host hears in an `early` message before the
+ * turn's first clock (early-typing spec §6.2).
  */
 export class GuestSession implements Session {
   private readonly scheduler: Scheduler;
@@ -115,6 +119,8 @@ export class GuestSession implements Session {
   private wantsRematch = false;
   private lastView: ViewModel | null = null;
   private malformedWarned = false;
+  /** The guest's early chase while a host return turn is displayed (early-typing spec §6.2), or null. */
+  private early: EarlyChase | null = null;
   /** Power events the local runner already held, so host frame copies of them are dropped (engine-only power is kept). */
   private localPower = new Set<string>();
 
@@ -177,7 +183,7 @@ export class GuestSession implements Session {
     const now = this.scheduler.now();
     const own = this.running();
     if (own === null) {
-      if (k.kind === 'letter') this.wait.show(now);
+      if (k.kind === 'letter' && !this.pressEarly(k.letter)) this.wait.show(now);
       return;
     }
     const t = Number.isFinite(timeStamp) ? Math.min(timeStamp, now) : now;
@@ -246,6 +252,42 @@ export class GuestSession implements Session {
       }
     }
     for (const entry of this.queue.advance(now)) if (entry.local) this.startOwn(entry);
+    this.watchEarly();
+  }
+
+  /** Opens the guest's early chase when the displayed host return turn reaches its choice lock; drops it once another turn is displayed. */
+  private watchEarly(): void {
+    const f = this.queue.front;
+    if (this.early !== null && f?.turn.data.turnId !== this.early.turnId) this.early = null;
+    if (this.early !== null || f === null || f.local || f.turn.data.owner === GUEST) return;
+    const opened = EarlyChase.open(f.turn, f.τ, this.meterOf());
+    if (opened === null) return;
+    this.early = opened.chase;
+    this.queue.hold(opened.events);
+  }
+
+  /** A guest letter while the host's turn is displayed: typed into the open early chase at the displayed τ; false when none is open. */
+  private pressEarly(letter: string): boolean {
+    const early = this.early;
+    const f = this.queue.front;
+    if (early === null || f === null || f.turn.data.turnId !== early.turnId) return false;
+    this.queue.hold(early.press(letter, f.τ));
+    return true;
+  }
+
+  /** The early keys for the guest's turn now starting (early-typing spec §6.2): the chase of the turn just displayed, re-based to its strike. */
+  private takeEarly(): EarlyKey[] {
+    const early = this.early;
+    this.early = null;
+    const p = this.queue.previous;
+    const o = p?.turn.outcome;
+    if (early === null || p === null || p.turn.data.turnId !== early.turnId || o?.kind !== 'strike') return [];
+    return early.keysAt(o.strike.τ);
+  }
+
+  /** The guest's meter level for early feedback, or null in training. */
+  private meterOf(): number | null {
+    return this.latest.config.training !== null ? null : this.latest.power[GUEST];
   }
 
   /**
@@ -283,15 +325,18 @@ export class GuestSession implements Session {
     return own;
   }
 
-  /** The guest's turn is displayed: a local runner starts from its start data now (τ 0), and the host hears clock 0. */
+  /** The guest's turn is displayed: a local runner starts from its start data now (τ 0) with the guest's early keys; the host hears them, then clock 0. */
   private startOwn(entry: DisplayEntry): void {
     const runner = createTurn(entry.turn.data);
     runner.seenKinds = [...entry.turn.seenKinds];
-    const events = startTurn(runner);
+    const early = this.takeEarly();
+    const events = startTurn(runner, early);
     entry.turn = runner;
     const own: OwnTurn = { entry, runner, start: entry.startedAt ?? this.scheduler.now(), sent: 0, outcome: null, checked: false, tossHeld: false };
     this.own = own;
-    this.link.send({ type: 'clock', turn: runner.data.turnId, τ: 0 });
+    const turn = runner.data.turnId;
+    if (early.length > 0) this.link.send({ type: 'early', turn, keys: early });
+    this.link.send({ type: 'clock', turn, τ: 0 });
     this.onOwnEvents(own, events);
   }
 
@@ -410,6 +455,7 @@ export class GuestSession implements Session {
     this.lastPushed = 0;
     this.own = null;
     this.localPower.clear();
+    this.early = null;
     this.life.reset();
     this.final = null;
     this.wantsRematch = false;
@@ -440,7 +486,7 @@ export class GuestSession implements Session {
       viewer: GUEST,
       turnτ: this.queue.τ,
       liveTurn: live ? pub.turn : null,
-      early: null,
+      early: this.early === null ? null : { player: GUEST, prompt: copy(this.early.prompt) },
       events: this.fresh.release(this.queue, now),
       overlay: onlineOverlay(this.link, this.wait, now, this.stall.update(f, this.link.rttMs, now)),
     };

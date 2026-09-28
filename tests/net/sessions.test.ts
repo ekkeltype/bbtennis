@@ -447,3 +447,27 @@ describe('online sessions: disconnect', () => {
     }
   });
 });
+
+describe('online early typing (early-typing spec §6.2)', () => {
+  it('both sides type chase words early, and the host and the guest never disagree', { timeout: 120000 }, () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const rig = new Rig({ config: config('tiebreak'), seed: 31, latencyMs: 150, jitterSeed: 5, hostTypist: { early: true }, guestTypist: { early: true } });
+      const early = new Set<number>();
+      rig.play({
+        limitMs: 2 * 60 * 60 * 1000,
+        onFrame: (side, vm) => {
+          if (side !== 'host') return;
+          for (const t of [vm.pub.turn, vm.pub.lastTurn]) {
+            if (t?.data.kind === 'return' && (t.prompts[0]?.tFirst ?? 0) < 0) early.add(t.data.owner);
+          }
+        },
+      });
+      expect(rig.host.over && rig.guest.over).toBe(true);
+      expect([...early].sort()).toEqual([0, 1]);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('desync'))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

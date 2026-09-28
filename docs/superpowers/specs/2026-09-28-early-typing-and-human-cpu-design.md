@@ -321,8 +321,10 @@ players. Every "25 → 140" value below is linear in `w` between 25 and 140 WPM 
     attract mode plays early typing on both sides.
 - **Net** (loopback):
   - `early` parse and validation; `PROTO` 3.
-  - Latency invariance and no-desync with early typing in both directions. The scripted match must
-    contain early typing by both host and guest (asserted).
+  - Latency invariance holds for typists that don't type early (as before). An early key is timed on
+    the receiver's playback of the striker's turn, whose rate depends on latency (main spec §5.2), so
+    no scripted typist can press it at the same τ at every latency. With early typing, the scripted
+    match checks that both sides typed early and that there is no desync.
   - The guest's early keys give the same outcome on both machines.
   - Redaction unchanged (serve words still never leak).
 - **Render:**

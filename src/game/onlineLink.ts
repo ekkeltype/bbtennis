@@ -1,3 +1,4 @@
+import { withoutEarlyEvents } from '../core/early';
 import { TUNING } from '../core/tuning';
 import type { GameEvent, MatchState, Overlay, PlayerId, PublicState } from '../core/types';
 import type { NetMsg } from '../net/protocol';
@@ -213,11 +214,14 @@ export class FreshEvents {
     if (this.late(now)) queue.dropStale(STALE_EVENT_MS);
   }
 
-  /** A frame at `now`: the events `queue` has reached, without the stale ones when frames had stopped. */
+  /**
+   * A frame at `now`: the events `queue` has reached, without the stale ones when frames had stopped, and
+   * without those stamped before τ 0 (early keys applied at a turn's start, early-typing spec §6.4).
+   */
   release(queue: DisplayQueue, now: number): GameEvent[] {
     if (this.late(now)) queue.dropStale(STALE_EVENT_MS);
     this.lastFrame = now;
-    return queue.release();
+    return withoutEarlyEvents(queue.release());
   }
 
   /** True when no frame has been drawn for more than 300 ms (false before the first). */

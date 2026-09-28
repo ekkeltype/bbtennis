@@ -1,8 +1,10 @@
+import { EarlyChase } from '../core/early';
 import { Engine } from '../core/engine';
 import { redact, redactEvents, redactTurn } from '../core/redact';
 import { forkSeed } from '../core/rng';
 import type { KeyClass } from '../core/typing';
-import type { GameEvent, MatchConfig, MatchState, PlayerId, PlayerInfo, PublicState, TurnState, ViewModel } from '../core/types';
+import type { EarlyKey, GameEvent, MatchConfig, MatchState, PlayerId, PlayerInfo, PublicState, TurnState, ViewModel } from '../core/types';
+import { jsonCopy } from '../core/util';
 import { MAX_SEND_BYTES, msgBytes, type NetMsg } from '../net/protocol';
 import type { Transport } from '../net/transport';
 import type { Scheduler } from './clock';
@@ -77,7 +79,9 @@ export interface HostSessionOptions {
  * order, and the host watches it in passive playback. The display queue decides what the host sees;
  * `pub` is the host's redacted state with the displayed turn, the one before it and the displayed
  * turn's scoreboard. Each match opens with `start`; `rematch`, `forfeit` and `leave` end or renew it
- * (their rules are the shared OnlineLifecycle's). Online play never pauses.
+ * (their rules are the shared OnlineLifecycle's). Online play never pauses. The host types its chase
+ * early while the guest's return turn plays back past its choice lock, and its own turn starts with
+ * those keys; a guest turn may start from the guest's `early` message (early-typing spec §6.2).
  */
 export class HostSession implements Session {
   private readonly config: MatchConfig;
@@ -100,6 +104,8 @@ export class HostSession implements Session {
   /** The guest's state as the last frame that carried it had it (turn clocks left out); null before the match's first. */
   private sentState: string | null = null;
   private readonly fitter = new FrameFit();
+  /** The host's early chase while a guest return turn is displayed (early-typing spec §6.2), or null. */
+  private early: EarlyChase | null = null;
   private final: MatchState | null = null;
   private wants: [boolean, boolean] = [false, false];
   private lastView: ViewModel | null = null;
@@ -165,7 +171,7 @@ export class HostSession implements Session {
     const f = this.queue.front;
     const turn = this.engine.state.turn;
     if (f === null || !f.local || f.startedAt === null || turn !== f.turn || !turn.started || turn.ended) {
-      if (k.kind === 'letter') this.wait.show(now);
+      if (k.kind === 'letter' && !this.pressEarly(k.letter)) this.wait.show(now);
       return;
     }
     const t = Number.isFinite(timeStamp) ? Math.min(timeStamp, now) : now;
@@ -211,6 +217,7 @@ export class HostSession implements Session {
     const [host, guest] = this.players;
     this.engine = new Engine({ config: this.config, players: this.players, seed });
     this.queue = new DisplayQueue(this.scheduler.now());
+    this.early = null;
     this.rate = new KeyRate();
     this.lastPushed = 0;
     this.sentState = null;
@@ -251,11 +258,48 @@ export class HostSession implements Session {
       this.absorb(this.engine.clock(HOST, now - f.startedAt));
     }
     for (const entry of this.queue.advance(now)) if (entry.local) this.startOwn(entry);
+    this.watchEarly();
   }
 
-  /** The host's turn is displayed: its clock starts now (τ 0). */
+  /** The host's turn is displayed: its clock starts now (τ 0), with the host's early keys. */
   private startOwn(entry: DisplayEntry): void {
-    if (this.engine.state.turn === entry.turn) this.absorb(this.engine.start(HOST));
+    if (this.engine.state.turn === entry.turn) this.absorb(this.engine.start(HOST, this.takeEarly()));
+  }
+
+  /** Opens the host's early chase when the displayed guest return turn reaches its choice lock; drops it once another turn is displayed. */
+  private watchEarly(): void {
+    const f = this.queue.front;
+    if (this.early !== null && f?.turn.data.turnId !== this.early.turnId) this.early = null;
+    if (this.early !== null || f === null || f.local || f.turn.data.owner !== GUEST) return;
+    const opened = EarlyChase.open(f.turn, f.τ, this.meterOf(HOST));
+    if (opened === null) return;
+    this.early = opened.chase;
+    this.queue.hold(opened.events);
+  }
+
+  /** A host letter while the guest's turn is displayed: typed into the open early chase at the displayed τ; false when none is open. */
+  private pressEarly(letter: string): boolean {
+    const early = this.early;
+    const f = this.queue.front;
+    if (early === null || f === null || f.turn.data.turnId !== early.turnId) return false;
+    this.queue.hold(early.press(letter, f.τ));
+    return true;
+  }
+
+  /** The early keys for the host's turn now starting (early-typing spec §6.2): the chase of the turn just displayed, re-based to its strike. */
+  private takeEarly(): EarlyKey[] {
+    const early = this.early;
+    this.early = null;
+    const p = this.queue.previous;
+    const o = p?.turn.outcome;
+    if (early === null || p === null || p.turn.data.turnId !== early.turnId || o?.kind !== 'strike') return [];
+    return early.keysAt(o.strike.τ);
+  }
+
+  /** A player's meter level for early feedback, or null in training. */
+  private meterOf(p: PlayerId): number | null {
+    const s = this.engine.state;
+    return s.config.training !== null ? null : s.power[p];
   }
 
   private onMessage(m: NetMsg): void {
@@ -264,6 +308,9 @@ export class HostSession implements Session {
       case 'input':
       case 'clock':
         this.onGuestTurn(m);
+        return;
+      case 'early':
+        this.onGuestEarly(m);
         return;
       case 'rematch':
         this.wants[GUEST] = m.want;
@@ -292,6 +339,13 @@ export class HostSession implements Session {
     }
     this.absorb(this.engine.clock(GUEST, m.τ));
     this.queue.confirm(m.turn, m.τ);
+  }
+
+  /** The guest's early keys (early-typing spec §6.2): they start its return turn, before any clock or input of it. */
+  private onGuestEarly(m: Extract<NetMsg, { type: 'early' }>): void {
+    const t = this.engine.state.turn;
+    if (!this.life.playing || t === null || t.data.turnId !== m.turn || t.data.owner !== GUEST || t.started) return;
+    this.absorb(this.engine.start(GUEST, m.keys));
   }
 
   /** `player` forfeits: the engine ends the match and the guest gets the final frame. */
@@ -367,7 +421,7 @@ export class HostSession implements Session {
       viewer: HOST,
       turnτ: this.queue.τ,
       liveTurn: null,
-      early: null,
+      early: this.early === null ? null : { player: HOST, prompt: jsonCopy(this.early.prompt) },
       events: redactEvents(this.fresh.release(this.queue, now), state, HOST),
       overlay: onlineOverlay(this.link, this.wait, now, this.stall.update(f, this.link.rttMs, now)),
     };
