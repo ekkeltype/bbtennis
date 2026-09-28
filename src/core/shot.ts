@@ -33,9 +33,10 @@ export function strikeV(cps: number, opts: { contactFactor?: number; stretch?: b
 }
 
 /**
- * Flight time T (ms) from a strike to the receiver's contact point (spec §3.4). `chaseLen` is the
- * struck word's length; `n` is the number of rally strikes after the serve before this one.
- * Rally flight is scaled by P(n).
+ * Flight time T (ms) from a strike to the receiver's contact point (early-typing spec §3). A serve:
+ * pace·(baseMs + perCharMs·len)/v · place + the reading allowance, `chaseLen` being the struck word's
+ * length. A rally shot: pace·rallyBaseMs/v · place[tier] · P(n), where `n` is the number of rally
+ * strikes after the serve before this one; the struck word's length does not matter.
  */
 export function flightTimeMs(a: {
   pace: number;
@@ -46,11 +47,12 @@ export function flightTimeMs(a: {
   n: number;
 }): number {
   const f = TUNING.flight;
-  // Easy/medium/hard serves stay at place 1. An insane serve uses placeServeInsane (may exceed
-  // place.hard). Insane rally shots use place.insane (< place.hard). Reading allowance unchanged.
-  const place = a.isServe ? (a.tier === 'insane' ? f.placeServeInsane : 1) : f.place[a.tier];
-  const readingAllowance = a.isServe ? f.serveReturnBonusMs + f.serveReturnBonusPaceMs * a.pace : 0;
-  return ((a.pace * (f.baseMs + f.perCharMs * a.chaseLen)) / a.v) * place * pressureFactor(a.n) + readingAllowance;
+  if (a.isServe) {
+    // Easy/medium/hard serves stay at place 1; an insane serve uses placeServeInsane (may exceed place.hard).
+    const place = a.tier === 'insane' ? f.placeServeInsane : 1;
+    return ((a.pace * (f.baseMs + f.perCharMs * a.chaseLen)) / a.v) * place + f.serveReturnBonusMs + f.serveReturnBonusPaceMs * a.pace;
+  }
+  return ((a.pace * f.rallyBaseMs) / a.v) * f.place[a.tier] * pressureFactor(a.n);
 }
 
 /** Stretch-shot window after T: 400 ms × pace (spec §3.4). */
@@ -58,11 +60,14 @@ export function graceMs(pace: number): number {
   return TUNING.graceMs * pace;
 }
 
-/** Displayed ball speed in whole km/h (flavour only, spec §3.4); divides by P(n); the serve ×1.25 is applied before rounding. */
+/**
+ * Displayed ball speed in whole km/h (flavour only, spec §3.4): divides by P(n), but never by less than
+ * 1/maxPressureBoost; the serve ×1.25 is applied before rounding.
+ */
 export function displayKmh(v: number, tier: Tier, n: number, isServe: boolean): number {
   const k = TUNING.kmh;
   const serveMult = isServe ? k.serveMult : 1;
-  return Math.round((k.base * v * k.tierBonus[tier] * serveMult) / pressureFactor(n));
+  return Math.round((k.base * v * k.tierBonus[tier] * serveMult) / Math.max(pressureFactor(n), 1 / k.maxPressureBoost));
 }
 
 /** Slips on the shot word that count toward accuracy: min(slips, 3) (spec §3.5). */

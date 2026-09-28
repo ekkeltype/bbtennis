@@ -24,17 +24,23 @@ export const TUNING = {
   catchMs: 500,
   contactFactorMin: 0.85,
   flight: {
+    // Serves only (early-typing spec §3): T = pace·(baseMs + perCharMs·len)/v · place + the reading allowance.
     baseMs: 2200,
     perCharMs: 100,
-    place: { easy: 1.0, medium: 0.85, hard: 0.7, insane: 0.55 } as Record<Tier, number>,
+    // Rally shots (early-typing spec §3): T = pace·rallyBaseMs/v · place[tier] · P(n), with no per-letter
+    // term, since the receiver types the chase word early, during the striker's own typing. A harder
+    // shot cuts the flight more (the attack). Starting values from the 2026-09-28 probe; the balance
+    // simulation sets the final ones (tests/sim/balance.test.ts).
+    rallyBaseMs: 4500,
+    place: { easy: 1.0, medium: 0.7, hard: 0.45, insane: 0.3 } as Record<Tier, number>,
     // Insane serve flight place (power-meter spec §4.3): above place.hard so Fast/Lightning clean-insane
     // serve returns can reach 15–40 %; rally insane stays on place.insane (< hard). Balance sets the value.
     placeServeInsane: 0.75,
-    // Rally pressure P(n) = max(pressureFloor, pressure^⌊n/2⌋) (power-meter spec §2; was 0.85 with no
-    // floor): a gentler speed-up with a floor, so rallies run longer and hard words stay playable deep
-    // into a rally. Final values: balance simulation (tests/sim/balance.test.ts).
-    pressure: 0.93,
-    pressureFloor: 0.65,
+    // Rally pressure P(n) = max(pressureFloor, pressure^⌊n/2⌋) (early-typing spec §3; was 0.93 with a
+    // 0.65 floor): with early typing and long rally flights, rallies end only because the ball keeps
+    // speeding up until someone breaks, so there is no floor. Final values: the balance simulation.
+    pressure: 0.88,
+    pressureFloor: 0,
     // Serve reading allowance 250 + 750·pace ms (spec §3.4; the original draft's 500 + 500·pace →
     // 250 + 750·pace, amended ac7c81b; the same 1 s at Normal): keeps the server's share of points
     // near 60 % at every preset (balance simulation, spec §6).
@@ -47,7 +53,8 @@ export const TUNING = {
   // kept Relaxed/30 WPM points ≤ 35 s (at the original pressure 0.85) and keeps Lightning/90 WPM
   // rallies at 3+ shots with the spec's pace multipliers (balance simulation, spec §6).
   speed: { base: 0.875, perCps: 0.025, cpsRef: 3, min: 0.8, max: 1.3, stretchMult: 0.9, minSpanS: 0.05 },
-  kmh: { base: 95, tierBonus: { easy: 1.0, medium: 1.05, hard: 1.1, insane: 1.2 } as Record<Tier, number>, serveMult: 1.25 },
+  // maxPressureBoost: displayed km/h divides by P(n), but never by less than 1/maxPressureBoost (P(n) has no floor now).
+  kmh: { base: 95, tierBonus: { easy: 1.0, medium: 1.05, hard: 1.1, insane: 1.2 } as Record<Tier, number>, serveMult: 1.25, maxPressureBoost: 2 },
   // Insane (power-meter spec §4.3): σ0 0.04 m keeps a flawless insane shot 0.139 m < its 0.15 m margin inside the lines.
   accuracy: {
     sigma0: { easy: 0.10, medium: 0.12, hard: 0.10, insane: 0.04 } as Record<Tier, number>,

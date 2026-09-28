@@ -760,7 +760,8 @@ describe('online sessions: confirmation-only frames (spec §5.3)', () => {
 
   it('the host sends s only when the state changed since the last s it sent (always with events); every other frame is a bare {type, turn, τ} confirmation', () => {
     const o = online({ seed: seedWhere(0) });
-    play(o.s, sides(o), 20000);
+    // 30 s: rally balls fly longer since early typing (early-typing spec §3), so events come more slowly.
+    play(o.s, sides(o), 30000);
     const frames = o.hostNet.sent.filter((m): m is FrameMsg => m.type === 'frame');
     let last: string | null = null;
     let confirmations = 0;

@@ -97,27 +97,31 @@ describe('strikeV', () => {
 });
 
 describe('flightTimeMs', () => {
-  it('rally: pace·(2200 + 100·len)/v · place · P(n)', () => {
-    const p = TUNING.flight.pressure;
-    expect(flightTimeMs({ pace: 1, chaseLen: 8, v: 1, tier: 'medium', isServe: false, n: 3 })).toBeCloseTo(3000 * 0.85 * p, 9);
-    expect(flightTimeMs({ pace: 0.6, chaseLen: 5, v: 1.25, tier: 'hard', isServe: false, n: 0 })).toBeCloseTo(907.2, 9);
+  it('rally: pace·rallyBase/v · place · P(n), whatever the chase word\'s length (early-typing spec §3)', () => {
+    const { rallyBaseMs: b, place, pressure: p } = TUNING.flight;
+    expect(flightTimeMs({ pace: 1, chaseLen: 8, v: 1, tier: 'medium', isServe: false, n: 3 })).toBeCloseTo(b * place.medium * p, 9);
+    expect(flightTimeMs({ pace: 0.6, chaseLen: 5, v: 1.25, tier: 'hard', isServe: false, n: 0 })).toBeCloseTo(((0.6 * b) / 1.25) * place.hard, 9);
+    for (const chaseLen of [2, 9, 15]) {
+      expect(flightTimeMs({ pace: 1, chaseLen, v: 1, tier: 'easy', isServe: false, n: 0 })).toBeCloseTo(b, 9);
+    }
   });
 
   it('applies pressure once per two rally strikes (⌊n/2⌋) and never below the floor', () => {
-    const { pressure: p, pressureFloor: floor } = TUNING.flight;
+    const { rallyBaseMs: b, pressure: p, pressureFloor: floor } = TUNING.flight;
     const at = (n: number): number => flightTimeMs({ pace: 1, chaseLen: 3, v: 1, tier: 'easy', isServe: false, n });
-    expect(at(0)).toBeCloseTo(2500, 9);
-    expect(at(1)).toBeCloseTo(2500, 9);
-    expect(at(2)).toBeCloseTo(2500 * p, 9);
-    expect(at(4)).toBeCloseTo(2500 * p * p, 9);
-    expect(at(5)).toBeCloseTo(2500 * p * p, 9);
-    expect(at(200)).toBeCloseTo(2500 * floor, 9);
+    expect(at(0)).toBeCloseTo(b, 9);
+    expect(at(1)).toBeCloseTo(b, 9);
+    expect(at(2)).toBeCloseTo(b * p, 9);
+    expect(at(4)).toBeCloseTo(b * p * p, 9);
+    expect(at(5)).toBeCloseTo(b * p * p, 9);
+    expect(at(200)).toBeGreaterThanOrEqual(b * floor);
+    expect(at(200)).toBeLessThan(at(40));
     for (let n = 0; n <= 60; n++) expect(at(n + 1)).toBeLessThanOrEqual(at(n));
   });
 
-  it('keeps the pressure constants sane: 0 < floor < 1, floor < pressure < 1', () => {
+  it('keeps the pressure constants sane: 0 ≤ floor < pressure < 1', () => {
     const { pressure, pressureFloor } = TUNING.flight;
-    expect(pressureFloor).toBeGreaterThan(0);
+    expect(pressureFloor).toBeGreaterThanOrEqual(0);
     expect(pressureFloor).toBeLessThan(pressure);
     expect(pressure).toBeLessThan(1);
   });
@@ -145,16 +149,8 @@ describe('flightTimeMs', () => {
   });
 
   it('insane rally: still uses place.insane', () => {
-    const { place, baseMs, perCharMs, pressure } = TUNING.flight;
-    const pace = 1;
-    const chaseLen = 14;
-    const v = 1;
-    const n = 2;
-    const base = (pace * (baseMs + perCharMs * chaseLen)) / v;
-    expect(flightTimeMs({ pace, chaseLen, v, tier: 'insane', isServe: false, n })).toBeCloseTo(
-      base * place.insane * pressure,
-      9,
-    );
+    const { place, rallyBaseMs, pressure } = TUNING.flight;
+    expect(flightTimeMs({ pace: 1, chaseLen: 14, v: 1, tier: 'insane', isServe: false, n: 2 })).toBeCloseTo(rallyBaseMs * place.insane * pressure, 9);
   });
 
   it('never leaves more time for harder placement: T(insane) < T(hard) < T(medium) < T(easy)', () => {
@@ -193,12 +189,13 @@ describe('displayKmh', () => {
     expect(displayKmh(0.8, 'easy', 0, false)).toBe(76);
   });
 
-  it('divides by P(n) so deeper rallies read faster, up to the floor', () => {
-    const { pressure: p, pressureFloor: floor } = TUNING.flight;
+  it('divides by P(n) so deeper rallies read faster, but never by less than 1/maxPressureBoost', () => {
+    const { pressure: p } = TUNING.flight;
+    const { maxPressureBoost } = TUNING.kmh;
     expect(displayKmh(1, 'easy', 1, false)).toBe(95);
     expect(displayKmh(1, 'easy', 2, false)).toBe(Math.round(95 / p));
     expect(displayKmh(1, 'easy', 4, false)).toBe(Math.round(95 / (p * p)));
-    expect(displayKmh(1, 'easy', 200, false)).toBe(Math.round(95 / floor));
+    expect(displayKmh(1, 'easy', 200, false)).toBe(Math.round(95 * maxPressureBoost));
   });
 
   it('multiplies serves by 1.25 and still shows a whole number', () => {
