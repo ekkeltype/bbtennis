@@ -1,5 +1,5 @@
 import { CpuBrain, cpuProfile } from '../core/cpu';
-import { EarlyChase, withoutEarlyEvents } from '../core/early';
+import { byTurnTime, EarlyChase, withoutEarlyEvents } from '../core/early';
 import { Engine } from '../core/engine';
 import { redact, redactEvents } from '../core/redact';
 import { TUNING } from '../core/tuning';
@@ -362,7 +362,3 @@ export class LocalSession implements Session {
   }
 }
 
-/** Events in the order they happened: by turn, then by τ (a stable sort keeps same-τ events in emission order). */
-function byTurnTime(a: GameEvent, b: GameEvent): number {
-  return a.turn - b.turn || a.τ - b.τ;
-}

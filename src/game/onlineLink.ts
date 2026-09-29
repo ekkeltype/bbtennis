@@ -1,4 +1,4 @@
-import { withoutEarlyEvents } from '../core/early';
+import { byTurnTime, withoutEarlyEvents } from '../core/early';
 import { TUNING } from '../core/tuning';
 import type { GameEvent, MatchState, Overlay, PlayerId, PublicState } from '../core/types';
 import type { NetMsg } from '../net/protocol';
@@ -204,24 +204,44 @@ export class WaitTag {
  * hidden tab), so once more than 300 ms have passed since the last frame, the events the display passed
  * more than 300 ms ago are dropped: on each tick of that spell, so none pile up, and in the first frame
  * back. What they changed is in the view's state already; only their one-shot sounds, effects and calls
- * are lost.
+ * are lost. The local player's early-chase feedback skips the queue: it is shown by the next frame.
  */
 export class FreshEvents {
   private lastFrame: number | null = null;
+  /** Early-chase feedback not yet shown, with the time it happened. */
+  private early: { e: GameEvent; at: number }[] = [];
 
-  /** The 50 ms tick at `now`: while frames have stopped, `queue` drops its stale events. */
+  /** The 50 ms tick at `now`: while frames have stopped, `queue` and the early-chase feedback drop their stale events. */
   tick(queue: DisplayQueue, now: number): void {
-    if (this.late(now)) queue.dropStale(STALE_EVENT_MS);
+    if (this.late(now)) this.dropStale(queue, now);
   }
 
   /**
-   * A frame at `now`: the events `queue` has reached, without the stale ones when frames had stopped, and
-   * without those stamped before τ 0 (early keys applied at a turn's start, early-typing spec §6.4).
+   * The local player's early-chase feedback at `now` (early-typing spec §6.4): it sounds when the key
+   * is pressed, so it is shown by the next frame and not held behind the striker's events still to be
+   * played back.
+   */
+  live(events: readonly GameEvent[], now: number): void {
+    for (const e of events) this.early.push({ e, at: now });
+  }
+
+  /**
+   * A frame at `now`: the events `queue` has reached and the early-chase feedback, in turn and τ order,
+   * without the stale ones when frames had stopped, and without those stamped before τ 0 (early keys
+   * applied at a turn's start, early-typing spec §6.4).
    */
   release(queue: DisplayQueue, now: number): GameEvent[] {
-    if (this.late(now)) queue.dropStale(STALE_EVENT_MS);
+    if (this.late(now)) this.dropStale(queue, now);
     this.lastFrame = now;
-    return withoutEarlyEvents(queue.release());
+    const early = this.early.map((x) => x.e);
+    this.early = [];
+    return withoutEarlyEvents(queue.release()).concat(early).sort(byTurnTime);
+  }
+
+  /** Drops the events the display passed, and the early-chase feedback that happened, more than 300 ms ago. */
+  private dropStale(queue: DisplayQueue, now: number): void {
+    queue.dropStale(STALE_EVENT_MS);
+    this.early = this.early.filter((x) => now - x.at <= STALE_EVENT_MS);
   }
 
   /** True when no frame has been drawn for more than 300 ms (false before the first). */

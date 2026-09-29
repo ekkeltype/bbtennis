@@ -93,3 +93,8 @@ export class EarlyChase {
 export function withoutEarlyEvents(events: readonly GameEvent[]): GameEvent[] {
   return events.filter((e) => e.τ >= 0);
 }
+
+/** Events in the order they happened: by turn, then by τ (a stable sort keeps same-τ events in emission order). */
+export function byTurnTime(a: GameEvent, b: GameEvent): number {
+  return a.turn - b.turn || a.τ - b.τ;
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GameEvent, PlayerId, ViewModel } from '../../src/core/types';
+import { EARLY_PROMPT } from '../../src/core/early';
 import { ONLINE_PLAYBACK } from '../../src/game/displayQueue';
 import { TICK_MS } from '../../src/game/onlineLink';
 import type { NetMsg } from '../../src/net/protocol';
@@ -466,6 +467,35 @@ describe('online early typing (early-typing spec §6.2)', () => {
       expect(rig.host.over && rig.guest.over).toBe(true);
       expect([...early].sort()).toEqual([0, 1]);
       expect(warn.mock.calls.filter((c) => String(c[0]).includes('desync'))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("sounds each early key in the frame its letter shows, ahead of the striker's events still held (early-typing spec §6.4)", { timeout: 120000 }, () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const rig = new Rig({ config: config('tiebreak'), seed: 31, latencyMs: 150, jitterSeed: 5, hostTypist: { early: true }, guestTypist: { early: true } });
+      const sounded = { host: new Map<number, number>(), guest: new Map<number, number>() };
+      let keys = 0;
+      const late: string[] = [];
+      rig.play({
+        limitMs: 2 * 60 * 60 * 1000,
+        onFrame: (side, vm) => {
+          for (const e of vm.events) {
+            if ((e.type !== 'keyOk' && e.type !== 'keyBad') || e.prompt !== EARLY_PROMPT) continue;
+            sounded[side].set(e.turn, (sounded[side].get(e.turn) ?? 0) + 1);
+          }
+          const turn = vm.pub.turn?.data.turnId;
+          if (vm.early === null || turn === undefined) return;
+          const shown = vm.early.prompt.correctKeys + vm.early.prompt.wrongKeys;
+          keys = Math.max(keys, shown);
+          const heard = sounded[side].get(turn) ?? 0;
+          if (heard !== shown) late.push(`${side} turn ${turn}: ${shown} shown, ${heard} sounded`);
+        },
+      });
+      expect(keys).toBeGreaterThan(0);
+      expect(late).toEqual([]);
     } finally {
       warn.mockRestore();
     }

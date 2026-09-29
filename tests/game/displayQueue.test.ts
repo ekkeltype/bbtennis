@@ -347,6 +347,35 @@ describe('FreshEvents: the events a frame shows (spec §5.2)', () => {
     q.advance(1700);
     expect(fresh.release(q, 1700)).toEqual([ev(1, 1500)]);
   });
+
+  it("shows early-chase feedback in the next frame, ahead of held events the display has not reached, in turn and τ order (early-typing spec §6.4)", () => {
+    const q = new DisplayQueue(0);
+    q.push(turnOf(1), true);
+    q.advance(0);
+    const fresh = new FreshEvents();
+    fresh.release(q, 0);
+    q.hold([ev(1, 50), ev(1, 400)]);
+    q.advance(100);
+    fresh.live([ev(1, 90)], 100);
+    expect(fresh.release(q, 100)).toEqual([ev(1, 50), ev(1, 90)]);
+    q.advance(116);
+    expect(fresh.release(q, 116)).toEqual([]);
+  });
+
+  it('once frames stop for more than 300 ms, drops early-chase feedback more than 300 ms old, on a tick or the first frame back', () => {
+    const q = new DisplayQueue(0);
+    q.push(turnOf(1), true);
+    q.advance(0);
+    const fresh = new FreshEvents();
+    fresh.release(q, 0);
+    fresh.live([ev(1, 10)], 10);
+    fresh.live([ev(1, 700)], 700);
+    q.advance(750);
+    fresh.tick(q, 750);
+    fresh.live([ev(1, 760)], 760);
+    q.advance(1050);
+    expect(fresh.release(q, 1050)).toEqual([ev(1, 760)]);
+  });
 });
 
 describe('StallWatch: stalled confirmations (spec §5.3)', () => {

@@ -263,7 +263,7 @@ export class GuestSession implements Session {
     const opened = EarlyChase.open(f.turn, f.τ, this.meterOf());
     if (opened === null) return;
     this.early = opened.chase;
-    this.queue.hold(opened.events);
+    this.fresh.live(opened.events, this.scheduler.now());
   }
 
   /** A guest letter while the host's turn is displayed: typed into the open early chase at the displayed τ; false when none is open. */
@@ -271,7 +271,7 @@ export class GuestSession implements Session {
     const early = this.early;
     const f = this.queue.front;
     if (early === null || f === null || f.turn.data.turnId !== early.turnId) return false;
-    this.queue.hold(early.press(letter, f.τ));
+    this.fresh.live(early.press(letter, f.τ), this.scheduler.now());
     return true;
   }
 
