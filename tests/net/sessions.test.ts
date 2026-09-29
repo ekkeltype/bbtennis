@@ -500,4 +500,37 @@ describe('online early typing (early-typing spec §6.2)', () => {
       warn.mockRestore();
     }
   });
+
+  it('the host ignores an early for another turn, or for a guest turn it has already started (early-typing spec §6.3)', { timeout: 120000 }, () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const rig = new Rig({ config: config('tiebreak'), seed: 31, latencyMs: 150, jitterSeed: 5, hostTypist: { early: true }, guestTypist: { early: true } });
+      /** The guest's rally return turn the host's latest state carries, while not started yet, or null. */
+      const waiting = (): number | null => {
+        for (let i = rig.hostWire.sent.length - 1; i >= 0; i--) {
+          const m = rig.hostWire.sent[i]!.m;
+          if (m.type !== 'frame' || m.s === undefined) continue;
+          const t = m.s.turn;
+          return t?.data.kind === 'return' && t.data.owner === 1 && t.data.earlyFrom !== null && !t.started ? t.data.turnId : null;
+        }
+        return null;
+      };
+      // The host has just struck, and the guest is typing its chase early.
+      rig.play({ limitMs: 10 * 60 * 1000, stop: () => waiting() !== null && (rig.guest.view?.early?.prompt.typed ?? 0) > 0 });
+      const turn = waiting()!;
+      expect(turn).not.toBeNull();
+      const stray = [{ key: 'z', τ: -1 }];
+      rig.guestWire.send({ type: 'early', turn: turn - 1, keys: stray });
+      rig.guestWire.send({ type: 'early', turn: turn + 1, keys: stray });
+      const started = () => rig.hostWire.received.some((h) => h.m.type === 'clock' && h.m.turn === turn);
+      rig.play({ limitMs: 60 * 1000, stop: started });
+      expect(rig.hostWire.received.some((h) => h.m.type === 'early' && h.m.turn === turn)).toBe(true);
+      rig.guestWire.send({ type: 'early', turn, keys: stray });
+      rig.play({ limitMs: 2 * 60 * 60 * 1000 });
+      expect(rig.host.over && rig.guest.over).toBe(true);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('desync'))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

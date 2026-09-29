@@ -424,27 +424,42 @@ describe('LocalSession: early typing (early-typing spec §2, §6.2)', () => {
     expect(after.events.some((e) => e.type === 'keyOk' && e.player === 0)).toBe(true);
   });
 
-  it('carries the early keys into the return turn when the CPU strikes, and drops them when it does not', () => {
-    let carried = 0;
-    for (let seed = 1; seed <= 12 && carried === 0; seed++) {
-      const { s, x } = until(seed, (v) => v.early?.player === 0);
-      const cpuTurn = x.view!.pub.turn!.data.turnId;
-      const word = x.view!.early!.prompt.options[0]!.word;
-      x.key(keyOf(word[0]!), s.now());
-      const before = x.frame(FRAME).pub.stats[0].correctKeys;
-      const next = frameUntil(s, x, (v) => v.pub.turn !== null && v.pub.turn.data.turnId !== cpuTurn);
-      expect(next.early).toBeNull();
-      expect(next.events.every((e) => e.τ >= 0)).toBe(true);
-      const t = next.pub.turn!;
-      if (t.data.kind === 'return' && t.data.owner === 0) {
-        expect(t.prompts[0]).toMatchObject({ typed: 1 });
-        expect(t.prompts[0]!.tFirst).toBeLessThan(0);
-        carried++;
-      } else {
-        expect(next.pub.stats[0].correctKeys).toBe(before); // nothing counted
-      }
-    }
-    expect(carried).toBeGreaterThan(0);
+  it('carries the early keys into the return turn when the CPU strikes', () => {
+    const { s, x } = until(1, (v) => v.early?.player === 0);
+    const cpuTurn = x.view!.pub.turn!.data.turnId;
+    const word = x.view!.early!.prompt.options[0]!.word;
+    x.key(keyOf(word[0]!), s.now());
+    x.frame(FRAME);
+    const next = frameUntil(s, x, (v) => v.pub.turn !== null && v.pub.turn.data.turnId !== cpuTurn);
+    expect(next.early).toBeNull();
+    expect(next.events.every((e) => e.τ >= 0)).toBe(true);
+    const t = next.pub.turn!;
+    expect(t.data).toMatchObject({ kind: 'return', owner: 0 });
+    expect(t.prompts[0]).toMatchObject({ typed: 1 });
+    expect(t.prompts[0]!.tFirst).toBeLessThan(0);
+  });
+
+  it("drops the early keys when the striker's turn ends without a strike: the next serve has none and no stats change (early-typing spec §2)", () => {
+    // The human locks a shot word and types no more, so the ball passes; the CPU has typed its chase early.
+    const choosing = (v: ViewModel): boolean => {
+      const t = v.pub.turn;
+      const p = t === null || t.active === null ? undefined : t.prompts[t.active];
+      return t?.data.kind === 'return' && t.data.owner === 0 && p?.kind === 'choice' && p.locked === null;
+    };
+    const { s, x } = until(5, choosing);
+    const human = x.view!.pub.turn!;
+    const word = human.prompts[human.active!]!.options[2]!.word;
+    x.key(keyOf(word[0]!), s.now());
+    const typed = frameUntil(s, x, (v) => v.early?.player === 1 && v.early.prompt.typed > 0);
+    const before = typed.pub.stats[1];
+    const next = frameUntil(s, x, (v) => v.pub.turn !== null && v.pub.turn.data.turnId !== human.data.turnId);
+    expect(next.pub.lastTurn?.outcome?.kind).toBe('miss');
+    expect(next.early).toBeNull();
+    const t = next.pub.turn!;
+    expect(t.data.kind).toBe('serve');
+    expect(t.prompts.every((p) => p.typed === 0 && p.tFirst === null)).toBe(true);
+    const after = next.pub.stats[1];
+    expect([after.correctKeys, after.wrongKeys, after.wordsCompleted, after.typingMs]).toEqual([before.correctKeys, before.wrongKeys, before.wordsCompleted, before.typingMs]);
   });
 
   it("a CPU receiver's early chase fills live and reaches the engine at the strike", () => {
