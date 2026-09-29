@@ -8,7 +8,7 @@ import type { ScreenFactory } from '../router';
 const RULES: Record<string, { title: string; text: string }> = {
   serve: { title: '1. SERVE', text: 'Press SPACE to toss, then type one of the three words before the ball drops.' },
   choose: { title: '2. PICK A SHOT', text: 'The first letter picks the shot. Harder words aim wider: riskier, and harder to return.' },
-  chase: { title: '3. CHASE, THEN CHOOSE', text: 'To return, type the word your opponent hit to run to the ball, then pick your shot.' },
+  chase: { title: '3. CHASE, THEN CHOOSE', text: 'Type their word to run to the ball, as soon as they pick it. Then pick your shot.' },
   typos: { title: '4. TYPOS COST YOU', text: "A wrong key doesn't advance and makes the shot riskier: out, or into the net." },
 };
 

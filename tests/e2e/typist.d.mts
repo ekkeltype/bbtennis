@@ -14,6 +14,8 @@ export interface Snapshot {
   points: number;
   /** Training coach text, or null. */
   coach: string | null;
+  /** The viewer's open early chase: the word and the letters typed, or null. */
+  early: { word: string; typed: number } | null;
 }
 
 /** A screenshot moment of a match. */

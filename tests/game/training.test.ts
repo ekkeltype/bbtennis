@@ -268,3 +268,9 @@ describe('Training session', () => {
     expect(session.frame(16).overlay.coach).toBeNull();
   });
 });
+
+describe('Training coach: early typing (early-typing spec §6.4)', () => {
+  it('tells the trainee that they may start typing the opponent\'s word once it is picked', () => {
+    expect(COACH.watch).toBe('WHEN THEY PICK A WORD, START TYPING IT: YOU CAN CHASE EARLY');
+  });
+});

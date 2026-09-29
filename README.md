@@ -34,15 +34,18 @@ lock a word and don't finish it, the ball drops: fault. A 30-second serve clock 
 strike, and running out is a fault. Two faults lose the point.
 
 **Return.** When your opponent strikes, the word they hit with appears above you. Type it to run to
-the ball (the chase). Three shot words then appear in a stack beside you, each joined by a line to
-the spot it aims for on your opponent's side: type the first letter of one to pick it, and finish it
-before the ball reaches you. Finish just late and you play a stretch
+the ball (the chase). In a rally you may start as soon as your opponent picks their word (types its
+first letter), so a fast typist often finishes the chase before the ball is even struck and has the
+whole flight for an attack. Three shot words then appear in a stack beside you, each joined by a line
+to the spot it aims for on your opponent's side: type the first letter of one to pick it, and finish
+it before the ball reaches you. Finish just late and you play a stretch
 shot, which is slower and riskier. Finish too late and the ball goes past you: an ace or a winner.
 
-**Placement.** Easy shots land deep in the middle and are safe. Medium goes near a sideline. Hard
-goes 0.5 m inside the sideline and the baseline. It reaches your opponent sooner and is the hardest
-to return, but it is the most sensitive to typos. Serve targets work the same way in the service box.
-Typing a word faster hits the ball faster, and rallies speed up the longer they last.
+**Placement.** Easy shots land deep in the middle and are safe: a slow lob that gives your opponent
+time to attack. Medium goes near a sideline. Hard goes 0.5 m inside the sideline and the baseline. It
+is an attack that reaches your opponent far sooner and is the hardest to return, but it is the most
+sensitive to typos. Serve targets work the same way in the service box. Typing a word faster hits the
+ball faster, and rallies speed up the longer they last.
 
 **Typos.** The cursor is strict: a wrong key doesn't advance and there is no backspace. Every slip on
 your shot word raises the chance of hitting the net or out, most of all on hard shots. Slips on a
@@ -83,7 +86,7 @@ countdown.
 
   | Belt | White | Yellow | Green | Brown | Black | 2nd dan | 3rd dan |
   |---|---|---|---|---|---|---|---|
-  | WPM | 25 · 28 · 31 | 35 · 38 · 41 | 45 · 51 · 58 | 65 · 72 · 81 | 90 | 105 | 120 |
+  | WPM | 25 · 28 · 32 | 36 · 41 · 46 | 52 · 59 · 67 | 76 · 86 · 97 | 110 | 124 | 140 |
 
   Beat any level of a colour, stripes and dan grades included, to earn that belt; every level you have
   beaten gets a tick on the belt strip. Your highest belt colours your default headband. Every
@@ -153,7 +156,8 @@ Build-time settings are Vite environment variables. Set them when you run `npm r
 | `VITE_PEER_HOST`, `VITE_PEER_PORT`, `VITE_PEER_PATH`, `VITE_PEER_KEY` | Use your own PeerJS server instead of the public broker |
 | `VITE_ICE_SERVERS` | A JSON array of `RTCIceServer` objects that replaces the default STUN/TURN list |
 
-The design spec is in `docs/superpowers/specs/2026-09-26-black-belt-tennis-design.md`.
+The design spec is in `docs/superpowers/specs/2026-09-26-black-belt-tennis-design.md`; later specs in the
+same folder amend it (power meter, choice stack, early typing and the human-like CPU).
 
 ### End-to-end run (`npm run e2e`)
 

@@ -14,7 +14,7 @@ const TYPING = new Set(['toss', 'chase', 'choice']);
 export function pageSnapshot(w = window) {
   const b = w.__bbt;
   const vm = b === undefined ? null : b.view();
-  if (b === undefined || vm === null) return { status: 'none', me: null, owner: null, words: null, points: 0, coach: null };
+  if (b === undefined || vm === null) return { status: 'none', me: null, owner: null, words: null, points: 0, coach: null, early: null };
   const turn = vm.liveTurn ?? vm.pub.turn;
   return {
     status: b.status(),
@@ -23,6 +23,7 @@ export function pageSnapshot(w = window) {
     words: b.activeWords(),
     points: vm.pub.stats[0].pointsWon + vm.pub.stats[1].pointsWon,
     coach: vm.overlay.coach,
+    early: vm.early != null && vm.early.player === vm.viewer ? { word: vm.early.prompt.options[0].word, typed: vm.early.prompt.typed } : null,
   };
 }
 
@@ -42,6 +43,8 @@ export function hardestOption(words) {
  * option `choose` picks while nothing is locked.
  */
 export function nextKey(s, choose = mediumOption) {
+  // The viewer's early chase: the opponent's locked word, typed in their turn (early-typing spec §2).
+  if (s.me !== null && s.early != null) return s.early.typed < s.early.word.length ? s.early.word.charAt(s.early.typed) : null;
   if (s.me === null || s.owner !== s.me) return null;
   if (s.status === 'preServe') return 'Space';
   const w = s.words;

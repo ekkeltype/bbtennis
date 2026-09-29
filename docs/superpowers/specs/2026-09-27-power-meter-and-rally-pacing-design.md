@@ -34,6 +34,9 @@ Success criteria:
 
 ## 2. Rally pacing (amends main spec §3.4, §6)
 
+Superseded for rally shots by early-typing spec 2026-09-28 §3: a rally base with no per-letter term, new place values and
+pressure 0.78 with no floor.
+
 - The pressure factor becomes `P(n) = max(pressureFloor, pressure^⌊n/2⌋)`, computed by repeated
   multiplication as now. Starting values: `pressure = 0.93` (was 0.85), `pressureFloor = 0.65`.
   The balance simulation (§7) sets the final values.
@@ -230,6 +233,8 @@ Success criteria:
   the new bands (their current words already do).
 
 ## 7. Balance targets (replaces main spec §6 balance targets)
+
+Replaced by early-typing spec 2026-09-28 §4 and its accepted result.
 
 For each pace at its reference WPM (Relaxed 30, Normal 50, Fast 70, Lightning 90), equal
 human-model players, ≥ 5,000 points per cell, with the human model's "hardest option that fits"

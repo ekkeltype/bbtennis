@@ -91,6 +91,8 @@ measured on a single **turn clock τ** (ms, starting at 0) that belongs to the o
 In INTRO, CATCH, FAULT_CALL, POINT_CALL and MATCH_OVER all letter/toss inputs are dropped.
 Keys from a player who is not the active typist are always dropped: never errors, never buffered
 (the client shows a small "WAIT" tag above its own player for 300 ms, at most once per second).
+Exception: from the striker's choice lock in a rally to the strike, the receiver may type the
+striker's word early; those keys start the receiver's return turn (amended: early-typing spec 2026-09-28 §2).
 
 ### 3.2 Serve
 1. Server stands on the deuce side when the point count of the current game (or tiebreak) is
@@ -127,6 +129,8 @@ Keys from a player who is not the active typist are always dropped: never errors
    World mapping for receiver sign `s_r` and side σ: `x = s_r·σ·a`, `y = −s_r·b`.
 
 ### 3.3 Return turn (τ = 0 when the ball leaves the striker's racket)
+In a rally the chase word is shown at the striker's choice lock and may be typed early, before the
+strike; the choice words still appear no earlier than τ = 0 (amended: early-typing spec 2026-09-28 §2).
 1. Every strike — including one already resolved as OUT or NET — immediately starts the
    receiver's **CHASE** prompt (single prompt = the striker's exact word), so outcomes are never
    revealed early. For a serve, the chase word becomes visible to the receiver only at this moment.
@@ -159,6 +163,9 @@ Keys from a player who is not the active typist are always dropped: never errors
    for the striker.
 
 ### 3.4 Timing and trajectory
+Rally shots fly `T = pace × rallyBase / v × place[tier] × P(n)` with no per-letter term, new place
+values and no pressure floor; serves keep the formula below with a retuned reading allowance
+(amended: early-typing spec 2026-09-28 §3, §4).
 Pace multiplies exactly: toss apex/tooLow, T and grace. It does **not** scale the serve clock,
 CPU toss delay, reaction/key intervals, call/banner durations, lag compensation, v or km/h.
 
@@ -237,6 +244,8 @@ no choice: winner = player 0 if the first match-RNG draw < 0.5. Repeated on ever
 restart and rematch.
 
 ### 3.8 CPU opponent (belts & stripes)
+Replaced: one human-like typist model drives every CPU and the balance simulation, on a 25 → 140 WPM
+ladder whose labels are the Results average (amended: early-typing spec 2026-09-28 §5).
 The CPU is an input source emitting timestamped keystrokes into the same engine as a human.
 Levels (15), displayed as a belt with 0–2 stripes; parameters interpolate linearly in WPM between
 milestone rows:
@@ -360,6 +369,8 @@ row of each point. The first vs-CPU setup defaults to White belt, Relaxed pace, 
   columns.
 
 ### 4.2 Word plates and turn signalling
+The receiver's early chase shows as the chase plate above their head from the striker's lock, with no
+timing bar before the strike (amended: early-typing spec 2026-09-28 §6.4).
 - **Tier colours** (Okabe–Ito, snapped to palette): easy sky `#56B4E9`, medium yellow `#F0E442`,
   hard vermillion `#D55E00`, insane reddish purple `#CC79A7` (typed shade `#B06FA0`, the re-tinted
   crowd purple). Tier is never shown by colour alone: plates carry 1/2/3 pips (2×2 px) at the left
@@ -423,6 +434,8 @@ typing live, so a wrong key empties it on screen at once. An insane shot leaves 
 trail (off with Reduce effects).
 
 ### 4.4 Audio (WebAudio, synthesized; no files)
+Early keys sound when pressed; turn events stamped before τ 0 play no sound or effect (amended:
+early-typing spec 2026-09-28 §6.4).
 Racket hit, bounce (surface-dependent), net cord, key click, error buzz, lock tick, word-complete
 chime, "your turn" tick, crowd murmur loop + applause / "ooh" swells, procedural chiptune title
 theme. Power meter (amended: power-meter spec 2026-09-27): a rising 3-note cue when a meter fills,
@@ -534,6 +547,8 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
 - **ui/**: screens, settings/profile/career storage.
 
 ### 5.2 Session loops and turn clocks
+The receiver's early window follows its own playback of the striker's turn: it opens when the display
+reaches the lock and closes at the strike (amended: early-typing spec 2026-09-28 §6.2).
 - A local owner's turn clock is `τ = performance.now() − turnStartLocal` (key inputs use
   `event.timeStamp − turnStartLocal`). `Date.now()` is never used for game timing.
 - **Passive playback**: whenever the local viewer does not own the current turn (CPU turn, remote
@@ -614,7 +629,9 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
     PublicState, TurnRunner or key classification. Mismatch text: "Versions differ (host vA,
     you vB) — reload with Ctrl+Shift+R". It is **2** since the power meter (PublicState `v: 2`
     carries `power: [number, number]`, each clamped to 0–4 on receipt; the guest's scoreboard
-    snapshot per displayed turn includes it; amended: power-meter spec 2026-09-27).
+    snapshot per displayed turn includes it; amended: power-meter spec 2026-09-27). It is **3**
+    since early typing: `ReturnTurnData.earlyFrom` and the guest's `early{turn, keys}` message, sent
+    before its turn's `clock 0` (amended: early-typing spec 2026-09-28 §6.3).
 - **Secrecy**: `redact` sends serve words (and the spare set) and a turn's pre-drawn randomness only
   to that turn's owner; choice words are public. Stale inputs (turn ≠ current turn) are dropped
   silently.
@@ -648,7 +665,9 @@ ui/ (DOM screens) ── game/ (sessions, controllers, loop, keyboard) ── co
   call timing, dropped off-turn keys, training flags), redact (no serve words leak: across 1,000
   simulated serves, JSON of every guest frame contains none of the not-yet-struck serve words),
   JSON round-trip of state and PublicState, plate layout, palette contrast/CVD checks.
-- **Balance simulation** (≥ 5,000 points per cell; human model: interval 12/WPM ± 35 %, 12 %
+- **Balance simulation**: replaced by early-typing spec 2026-09-28 §4 (the typist model of its §5, early typing on,
+  and the result the user accepted). The text below is the original.
+- **Balance simulation (original)** (≥ 5,000 points per cell; human model: interval 12/WPM ± 35 %, 12 %
   per-word variation, error rate 7 % @ 25 → 1.5 % @ 120 WPM, reaction 0.9 → 0.4 s, chase reaction
   0.25 s, "hardest option that fits" policy, insane included). For each preset at its reference WPM
   (Relaxed 30, Normal 50, Fast 70, Lightning 90), equal players: median rally Relaxed 10–14,

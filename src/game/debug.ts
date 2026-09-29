@@ -8,7 +8,7 @@ export interface ActiveWords { words: string[]; locked: number | null; typed: nu
 export interface DebugHooks {
   /** The latest frame's view model, or null without a session or before its first frame. */
   view(): ViewModel | null;
-  /** The current turn's active prompt (serve words stay hidden from a non-owner), or null. */
+  /** The viewer's open early chase (kind 'early'), else the current turn's active prompt (serve words stay hidden from a non-owner), or null. */
   activeWords(): ActiveWords | null;
   /** Owner of the current turn while the match is being played, else null. */
   owner(): 0 | 1 | null;
@@ -44,6 +44,10 @@ export function installDebugHooks(
     view,
     activeWords: () => {
       const vm = view();
+      const e = vm?.early ?? null;
+      if (vm !== null && e !== null && e.player === vm.viewer) {
+        return { words: [e.prompt.options[0]?.word ?? ''], locked: 0, typed: e.prompt.typed, kind: 'early' };
+      }
       const t = vm === null ? null : vm.liveTurn ?? vm.pub.turn;
       const p = t === null || t.active === null ? undefined : t.prompts[t.active];
       if (p === undefined) return null;
