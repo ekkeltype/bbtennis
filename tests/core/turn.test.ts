@@ -135,8 +135,8 @@ describe('serve turn', () => {
     expect(s.shot.landing.x).toBeCloseTo(s.target.x, 12);
     expect(s.shot.landing.y).toBeCloseTo(s.target.y, 12);
     expect(s.kmh).toBe(Math.round(95 * v * 1.0 * 1.25));
-    // Serve T: pace·(2.2 s + 0.1 s·len)/v · place 1 · 0.85⁰ + (0.5 s + 0.5 s·pace).
-    expect(s.flight.T).toBeCloseTo((2200 + 100 * 4) / v + 1000, 6);
+    // Serve T: pace·(2.2 s + 0.1 s·len)/v · place 1 + the reading allowance (0.5 s + 0.35 s·pace, early-typing tuning).
+    expect(s.flight.T).toBeCloseTo((2200 + 100 * 4) / v + 850, 6);
     expect(s.flight.grace).toBe(400);
     expect(s.flight.isServe).toBe(true);
     expect(s.flight.destEnd).toBe(1);

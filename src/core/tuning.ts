@@ -4,13 +4,10 @@ import type { PaceId, Tier } from './types';
 export const PACE_MULT: Record<PaceId, number> = { relaxed: 1.5, normal: 1.0, fast: 0.75, lightning: 0.6 };
 
 /**
- * All gameplay constants (spec §3). Balance targets (spec §6 as amended in ac7c81b, rulings R35/R36,
- * and by the power-meter spec of 2026-09-27), for equal players at each pace's reference WPM
- * (Relaxed 30, Normal 50, Fast 70, Lightning 90): median rally Relaxed 10–14, Normal 7–11, Fast 4–7,
- * Lightning 3–5 shots (the measured result, accepted by the user), p90 ≤ 22, max 60; aces ≤ 15 %
- * (no lower bound); double faults 1–8 %; server wins 55–65 %; ≤ 65 s per point; clean insane shots
- * returned 15–40 %; never-insane wins 40–51 %. These constants meet all of them (measured values:
- * tests/sim/balance.test.ts).
+ * All gameplay constants (spec §3). Balance targets: early-typing spec §4 with the result the user
+ * accepted on 2026-09-28, for equal typist-model players at each pace's reference WPM (Relaxed 30,
+ * Normal 50, Fast 70, Lightning 90). The full list and the measured values are in the header of
+ * tests/sim/balance.test.ts; these constants meet all of them.
  */
 export const TUNING = {
   serveClockMs: 30000,
@@ -29,23 +26,26 @@ export const TUNING = {
     perCharMs: 100,
     // Rally shots (early-typing spec §3): T = pace·rallyBaseMs/v · place[tier] · P(n), with no per-letter
     // term, since the receiver types the chase word early, during the striker's own typing. A harder
-    // shot cuts the flight more (the attack). Starting values from the 2026-09-28 probe; the balance
-    // simulation sets the final ones (tests/sim/balance.test.ts).
-    rallyBaseMs: 4500,
-    place: { easy: 1.0, medium: 0.7, hard: 0.45, insane: 0.3 } as Record<Tier, number>,
+    // shot cuts the flight more (the attack). Tuned 2026-09-28 (probe start 4500 and 1 / 0.7 / 0.45 /
+    // 0.3): a long easy ball leaves time to answer with a long word, and an attack strong enough to pay
+    // for the out-of-court risk of a slip (at 0.45 for hard, always-easy beat the adaptive player 60 %
+    // of points and aggression 0.8 lost to 0.2).
+    rallyBaseMs: 7300,
+    place: { easy: 1.0, medium: 0.45, hard: 0.22, insane: 0.19 } as Record<Tier, number>,
     // Insane serve flight place (power-meter spec §4.3): above place.hard so Fast/Lightning clean-insane
     // serve returns can reach 15–40 %; rally insane stays on place.insane (< hard). Balance sets the value.
     placeServeInsane: 0.75,
     // Rally pressure P(n) = max(pressureFloor, pressure^⌊n/2⌋) (early-typing spec §3; was 0.93 with a
     // 0.65 floor): with early typing and long rally flights, rallies end only because the ball keeps
-    // speeding up until someone breaks, so there is no floor. Final values: the balance simulation.
-    pressure: 0.88,
+    // speeding up until someone breaks, so there is no floor (a floor of 0.4–0.5 let rallies run past
+    // 40 shots). 0.78 also keeps the top belts apart at Normal (0.79 let 12 v 14 fall to 75 % of short sets).
+    pressure: 0.78,
     pressureFloor: 0,
-    // Serve reading allowance 250 + 750·pace ms (spec §3.4; the original draft's 500 + 500·pace →
-    // 250 + 750·pace, amended ac7c81b; the same 1 s at Normal): keeps the server's share of points
-    // near 60 % at every preset (balance simulation, spec §6).
-    serveReturnBonusMs: 250,
-    serveReturnBonusPaceMs: 750,
+    // Serve reading allowance 500 + 350·pace ms (early-typing spec §4 tuning; was 250 + 750·pace): with
+    // rallies that favour the attacker, a smaller allowance at the slow paces keeps the server's share of
+    // points at 55 % or more, and the larger fixed part softens Lightning, where the first attack decides.
+    serveReturnBonusMs: 500,
+    serveReturnBonusPaceMs: 350,
   },
   graceMs: 400,
   // Speed factor v = 0.875 + 0.025·(cps − 3) (spec §3.4; the original draft's 0.85 + 0.05·(cps − 3)
@@ -121,7 +121,8 @@ export const CPU_LEVEL_WPM = [25, 28, 32, 36, 41, 46, 52, 59, 67, 76, 86, 97, 11
 
 /**
  * The speed each level types at underneath (index = level): hesitations on hard words and error pauses
- * slow it to its label WPM. First estimate: 12000 / (12000/label − 13 ms − err·300 ms); the balance
- * simulation's honest-labels check calibrates it (tests/sim/balance.test.ts).
+ * slow it to its label WPM. Calibrated 2026-09-28 by the balance simulation (40 short sets per level at
+ * Normal, level against itself, until every level's average is within 1 % of its label); the honest-labels
+ * check in tests/sim/balance.test.ts guards it.
  */
-export const CPU_NOMINAL_WPM = [27, 30, 35, 40, 46, 53, 60, 70, 81, 94, 109, 126, 147, 170, 198] as const;
+export const CPU_NOMINAL_WPM = [26, 30, 34, 39, 46, 52, 61, 72, 85, 101, 119, 142, 173, 211, 264] as const;

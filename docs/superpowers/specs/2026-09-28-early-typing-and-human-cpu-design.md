@@ -98,19 +98,22 @@ speed. That is why "faster wins" is judged at each pace's reference speed (§4).
 
 ## 3. Rally flight (amends main spec §3.4; replaces power-meter spec §2's rally formula)
 
-- **Serves: unchanged.** `T = pace × (2.2 s + 0.10 s × len)/v × place` (place 1, insane serve
-  `placeServeInsane`) `+ (0.25 s + 0.75 s × pace)`.
+- **Serves:** `T = pace × (2.2 s + 0.10 s × len)/v × place` (place 1, insane serve
+  `placeServeInsane`) `+ the reading allowance`. The formula is unchanged; the allowance, a §4 knob,
+  is now `0.5 s + 0.35 s × pace` (was `0.25 s + 0.75 s × pace`; tuned 2026-09-28).
 - **Rally shots:** `T = pace × rallyBase / v × place[tier] × P(n)`. There is no per-letter term:
   the receiver types the chase word during the striker's typing.
   - `P(n) = max(pressureFloor, pressure^⌊n/2⌋)`, computed by repeated multiplication as now.
-  - Starting values (from the probe): `rallyBase = 4.5 s`, `place = { easy 1.0, medium 0.70,
-    hard 0.45, insane 0.30 }`, `pressure = 0.88`, `pressureFloor = 0` (no floor). The balance
-    simulation (§4) sets the final values.
+  - Final values (tuned 2026-09-28; the probe started at 4.5 s, 1 / 0.7 / 0.45 / 0.3 and 0.88):
+    `rallyBase = 7.3 s`, `place = { easy 1.0, medium 0.45, hard 0.22, insane 0.19 }`,
+    `pressure = 0.78`, `pressureFloor = 0` (no floor). The attack had to be this strong for
+    attacking to pay against the out-of-court risk of a slipped long word.
 - **Unchanged:** grace, the speed factor v, contact factor, stretch rules, km/h (still divides by
   `P(n)`), accuracy and OUT/NET rules, and the ball path's shape (bounce at 0.6T and so on).
-- **What players see:** easy rally balls float slower than today (about 4.5 s at Normal instead of
-  about 2.7 s), like a defensive lob. Hard shots fly about as fast as today (about 2.0 s instead of
-  2.2 s). Deep in a rally everything keeps speeding up until someone breaks.
+- **What players see:** easy rally balls float much slower than before (about 7–8 s at Normal early
+  in a rally, instead of about 2.7 s), like a defensive lob, which leaves time to answer with a long
+  word. Hard shots are fast attacks (about 1.8 s). Everything keeps speeding up (0.78 every two
+  strikes) until someone breaks.
 
 ## 4. Balance targets (replaces power-meter spec §7)
 
@@ -150,9 +153,31 @@ Measured tables go into the header comment of `tests/sim/balance.test.ts` and th
 `tuning.ts`. **If the targets cannot all be met at once, implementation stops and the trade-off goes
 to the user.** No target is loosened quietly.
 
-Known risks from the probe: p90 rally came out at 23–27 at Normal (target ≤ 22), rallies are bimodal
-(points end at the serve return or at the pressure break), server wins dropped to 46–57 % (target
-55–65 %), and the slow easy balls lengthen Relaxed points (probe: up to 90 s at 26 shots).
+**Accepted result (2026-09-28).** The targets above could not all be met at once. The knobs traded
+more long words against the faster typist's edge, and Relaxed's floating lobs and passive 30-WPM belts
+kept its rallies long. The user chose:
+
+- **Relaxed is judged apart:** median ≤ 20 shots, ≤ 100 s per point, and no tier-mix or faster-wins
+  target.
+- **Six targets are re-set to guard the chosen tuning:** Lightning server wins ≤ 76 %; clean insane
+  returns 3–50 %; no double-fault floor at Relaxed and Normal; Relaxed aggression 0.8-vs-0.2 ≥ 45 %;
+  faster wins ≥ 63 % at Normal and Fast; CPU levels 2 apart ≥ 78 %.
+- **Normal's median band becomes 6–11.** A 0.79 speed-up gave 7, but let the top belts drift together.
+
+Measured, per preset (Relaxed / Normal / Fast / Lightning):
+
+- **Rallies:** median 9 / 6 / 5 / 3 shots; p90 18 / 15 / 8 / 6; 64 / 33 / 21 / 14 s per point.
+- **Rally shots:** easy 71 / 61 / 57 / 55 %; hard + insane 10 / 21 / 29 / 34 %.
+- **Serve:** server wins 56 / 58 / 64 / 73 %; double faults 0.2 / 1.1 / 2.1 / 3.6 %.
+- **Insane:** clean insane shots returned 49 / 32 / 17 / 7 %.
+- **Speed and strategy:**
+  - a 20 % faster typist wins — / 66 / 64 / 66 % of points;
+  - always-easy wins 49 / 41 / 32 / 28 % against the adaptive player;
+  - aggression 0.8 beats 0.2 in 48 / 57 / 61 / 61 %.
+- **Belts:** every level's Results WPM is within 1 % of its label; levels 2 apart win 81–100 % of short
+  sets.
+
+Full tables: `tests/sim/balance.test.ts`.
 
 ## 5. Typist model and belt ladder (replaces main spec §3.8 table and parameters, and the §6 human model)
 

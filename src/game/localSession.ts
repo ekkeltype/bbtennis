@@ -292,9 +292,10 @@ export class LocalSession implements Session {
     if (endτ === null) return;
     const ended = this.engine.state.lastTurn;
     this.turnStartLocal += endτ;
+    // Taken even when the match is over, so the early chase is brought up to the end at any frame rate.
+    const early = this.takeEarly(ended, endτ);
     const next = this.engine.owner();
-    if (next !== null) this.absorb(this.engine.start(next, this.takeEarly(ended, endτ)));
-    else this.early = null;
+    if (next !== null) this.absorb(this.engine.start(next, early));
   }
 
   private noteChoice(prompt: number): void {

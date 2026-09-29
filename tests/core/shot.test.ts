@@ -126,10 +126,10 @@ describe('flightTimeMs', () => {
     expect(pressure).toBeLessThan(1);
   });
 
-  it('serve: place 1 for every tier plus the 250 + 750·pace reading allowance', () => {
-    expect(flightTimeMs({ pace: 1.5, chaseLen: 4, v: 1, tier: 'hard', isServe: true, n: 0 })).toBeCloseTo(5275, 9);
+  it('serve: place 1 for every tier plus the 500 + 350·pace reading allowance', () => {
+    expect(flightTimeMs({ pace: 1.5, chaseLen: 4, v: 1, tier: 'hard', isServe: true, n: 0 })).toBeCloseTo(4925, 9); // 3900 + 500 + 525
     for (const tier of TIERS) {
-      expect(flightTimeMs({ pace: 1, chaseLen: 10, v: 0.8, tier, isServe: true, n: 0 })).toBeCloseTo(5000, 9); // 3200/0.8 + 250 + 750
+      expect(flightTimeMs({ pace: 1, chaseLen: 10, v: 0.8, tier, isServe: true, n: 0 })).toBeCloseTo(4850, 9); // 3200/0.8 + 500 + 350
     }
   });
 
