@@ -97,14 +97,12 @@ export interface TypistOptions {
   catchChance: number;
   /** Chance of a wrong key before each letter but a prompt's first. */
   errorChance: number;
-  /** Type the chase word early, from the opponent's lock, on the displayed striker turn's clock (early-typing spec §2). */
-  early: boolean;
 }
 
 /** One key of a typist: a letter or 'toss', at turn-clock τ. */
 interface PlannedKey { key: string; τ: number }
 
-const DEFAULT_TYPIST: TypistOptions = { wpm: 55, catchChance: 0.25, errorChance: 0.04, early: false };
+const DEFAULT_TYPIST: TypistOptions = { wpm: 55, catchChance: 0.25, errorChance: 0.04 };
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz';
 /**
  * Planned key times are multiples of 1/256 ms. Session times stay on that grid too (frames, the
@@ -170,28 +168,9 @@ class ScriptedTypist {
     const reaction = p.kind === 'chase' ? 250 + 150 * uniform(r) : 300 + 200 * uniform(r);
     const option = p.kind === 'chase' ? 0 : this.choose(p.options, deadline(t, p) - p.shownAt - reaction, r);
     const word = p.options[option]?.word ?? '';
-    // A rally chase is shown at the striker's lock, before τ 0 (early-typing spec §2); this typist starts in its own turn.
-    return this.typeOut(r, word, Math.max(p.shownAt, 0) + reaction);
-  }
-
-  /**
-   * The next key of this player's early chase while `vm` shows it (early-typing spec §2), on the
-   * displayed striker turn's clock, or null: the word from the lock after a 250–400 ms pause.
-   */
-  nextEarly(vm: ViewModel): PlannedKey | null {
-    const e = vm.early;
-    if (!this.opts.early || e === null || e.player !== this.me || e.prompt.completedAt !== null) return null;
-    const word = e.prompt.options[0]?.word ?? '';
-    const r = this.rng('early', word, e.prompt.shownAt);
-    const keys = this.typeOut(r, word, e.prompt.shownAt + 250 + 150 * uniform(r));
-    return keys[e.prompt.correctKeys + e.prompt.wrongKeys] ?? null;
-  }
-
-  /** Every key of `word`, right and wrong, from τ `from` on: jittered intervals at the typist's speed and an occasional wrong key. */
-  private typeOut(r: RngState, word: string, from: number): PlannedKey[] {
     const wordFactor = 0.85 + 0.3 * uniform(r);
     const keys: PlannedKey[] = [];
-    let τ = from;
+    let τ = p.shownAt + reaction;
     for (let i = 0; i < word.length; i++) {
       const letter = word.charAt(i);
       if (i > 0) τ += this.intervalMs * wordFactor * (0.75 + 0.5 * uniform(r));
@@ -770,12 +749,9 @@ export class Rig {
       const vm = side.session.view;
       if (!side.frames || vm === null || side.viewAt !== this.s.now() || side.session.endReason !== null) continue;
       const t = vm.liveTurn ?? vm.pub.turn;
-      const own = t === null ? null : side.typist.next(t);
-      const early = own === null ? side.typist.nextEarly(vm) : null;
-      const k = own ?? early;
+      const k = t === null ? null : side.typist.next(t);
       if (k === null) continue;
-      // An early key is timed on the playback of the striker's turn, which need not run at wall-clock rate.
-      const at = early !== null ? Math.max(this.s.now(), side.viewAt - vm.turnτ + k.τ) : side.viewAt - vm.turnτ + k.τ;
+      const at = side.viewAt - vm.turnτ + k.τ;
       if (at < this.s.now()) throw new Error(`${side.name} typist fell behind: ${k.key} due at ${at}, now ${this.s.now()}`);
       if (at <= until && (first === null || at < first.at)) first = { side, at, key: k.key };
     }

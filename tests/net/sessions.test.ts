@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GameEvent, PlayerId, ViewModel } from '../../src/core/types';
-import { EARLY_PROMPT } from '../../src/core/early';
 import { ONLINE_PLAYBACK } from '../../src/game/displayQueue';
 import { TICK_MS } from '../../src/game/onlineLink';
 import type { NetMsg } from '../../src/net/protocol';
@@ -248,11 +247,11 @@ describe('online sessions: redaction', () => {
       expect(scan.confirmations, where).toBeGreaterThan(scan.frames / 2);
       // The scan had something to find: frames carrying host turns, and every frame checked against each
       // host serve word still secret (spare and appended sets too) and each host random. The floors are
-      // about half the smallest match's counts (the 0 ms tiebreak; since the early-typing tuning its
-      // points are shorter: randoms ~1.5M, the smallest match 0.94M, so that floor is 750k).
+      // about half the smallest match's counts (the 0 ms tiebreak: ~97k word checks after gentler rally
+      // pressure, randoms still ~1.9M).
       expect(scan.framesWithHostTurns, where).toBeGreaterThan(500);
       expect(scan.wordsChecked, where).toBeGreaterThan(50_000);
-      expect(scan.randomsChecked, where).toBeGreaterThan(750_000);
+      expect(scan.randomsChecked, where).toBeGreaterThan(1_000_000);
       expect(run.secrets.maxSets, where).toBeGreaterThanOrEqual(3);
     }
   }, SHORT_SETS_TIMEOUT + INVARIANCE_TIMEOUT);
@@ -443,92 +442,6 @@ describe('online sessions: disconnect', () => {
       expect(rig.host.over).toBe(true);
       expect(rig.host.result?.status).toBe('playing');
       expect(warn).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-});
-
-describe('online early typing (early-typing spec §6.2)', () => {
-  it('both sides type chase words early, and the host and the guest never disagree', { timeout: 120000 }, () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const rig = new Rig({ config: config('tiebreak'), seed: 31, latencyMs: 150, jitterSeed: 5, hostTypist: { early: true }, guestTypist: { early: true } });
-      const early = new Set<number>();
-      rig.play({
-        limitMs: 2 * 60 * 60 * 1000,
-        onFrame: (side, vm) => {
-          if (side !== 'host') return;
-          for (const t of [vm.pub.turn, vm.pub.lastTurn]) {
-            if (t?.data.kind === 'return' && (t.prompts[0]?.tFirst ?? 0) < 0) early.add(t.data.owner);
-          }
-        },
-      });
-      expect(rig.host.over && rig.guest.over).toBe(true);
-      expect([...early].sort()).toEqual([0, 1]);
-      expect(warn.mock.calls.filter((c) => String(c[0]).includes('desync'))).toEqual([]);
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("sounds each early key in the frame its letter shows, ahead of the striker's events still held (early-typing spec §6.4)", { timeout: 120000 }, () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const rig = new Rig({ config: config('tiebreak'), seed: 31, latencyMs: 150, jitterSeed: 5, hostTypist: { early: true }, guestTypist: { early: true } });
-      const sounded = { host: new Map<number, number>(), guest: new Map<number, number>() };
-      let keys = 0;
-      const late: string[] = [];
-      rig.play({
-        limitMs: 2 * 60 * 60 * 1000,
-        onFrame: (side, vm) => {
-          for (const e of vm.events) {
-            if ((e.type !== 'keyOk' && e.type !== 'keyBad') || e.prompt !== EARLY_PROMPT) continue;
-            sounded[side].set(e.turn, (sounded[side].get(e.turn) ?? 0) + 1);
-          }
-          const turn = vm.pub.turn?.data.turnId;
-          if (vm.early === null || turn === undefined) return;
-          const shown = vm.early.prompt.correctKeys + vm.early.prompt.wrongKeys;
-          keys = Math.max(keys, shown);
-          const heard = sounded[side].get(turn) ?? 0;
-          if (heard !== shown) late.push(`${side} turn ${turn}: ${shown} shown, ${heard} sounded`);
-        },
-      });
-      expect(keys).toBeGreaterThan(0);
-      expect(late).toEqual([]);
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it('the host ignores an early for another turn, or for a guest turn it has already started (early-typing spec §6.3)', { timeout: 120000 }, () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const rig = new Rig({ config: config('tiebreak'), seed: 31, latencyMs: 150, jitterSeed: 5, hostTypist: { early: true }, guestTypist: { early: true } });
-      /** The guest's rally return turn the host's latest state carries, while not started yet, or null. */
-      const waiting = (): number | null => {
-        for (let i = rig.hostWire.sent.length - 1; i >= 0; i--) {
-          const m = rig.hostWire.sent[i]!.m;
-          if (m.type !== 'frame' || m.s === undefined) continue;
-          const t = m.s.turn;
-          return t?.data.kind === 'return' && t.data.owner === 1 && t.data.earlyFrom !== null && !t.started ? t.data.turnId : null;
-        }
-        return null;
-      };
-      // The host has just struck, and the guest is typing its chase early.
-      rig.play({ limitMs: 10 * 60 * 1000, stop: () => waiting() !== null && (rig.guest.view?.early?.prompt.typed ?? 0) > 0 });
-      const turn = waiting()!;
-      expect(turn).not.toBeNull();
-      const stray = [{ key: 'z', τ: -1 }];
-      rig.guestWire.send({ type: 'early', turn: turn - 1, keys: stray });
-      rig.guestWire.send({ type: 'early', turn: turn + 1, keys: stray });
-      const started = () => rig.hostWire.received.some((h) => h.m.type === 'clock' && h.m.turn === turn);
-      rig.play({ limitMs: 60 * 1000, stop: started });
-      expect(rig.hostWire.received.some((h) => h.m.type === 'early' && h.m.turn === turn)).toBe(true);
-      rig.guestWire.send({ type: 'early', turn, keys: stray });
-      rig.play({ limitMs: 2 * 60 * 60 * 1000 });
-      expect(rig.host.over && rig.guest.over).toBe(true);
-      expect(warn.mock.calls.filter((c) => String(c[0]).includes('desync'))).toEqual([]);
     } finally {
       warn.mockRestore();
     }

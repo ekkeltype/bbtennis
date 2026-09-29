@@ -3,17 +3,16 @@ import type { ActiveWords, DebugHooks } from '../../src/game/debug';
 import { hardestOption, mediumOption, momentOf, nextKey, pageSnapshot, type Snapshot } from './typist.mjs';
 
 /** A snapshot of player 0's own turn in `status`, with `words` active. */
-const own = (status: string, words: ActiveWords | null = null): Snapshot => ({ status, me: 0, owner: 0, words, points: 0, coach: null, early: null });
+const own = (status: string, words: ActiveWords | null = null): Snapshot => ({ status, me: 0, owner: 0, words, points: 0, coach: null });
 const serve = (locked: number | null, typed: number): ActiveWords => ({ words: ['cat', 'garden', 'strawberry'], locked, typed, kind: 'serve' });
 const chase = (typed: number): ActiveWords => ({ words: ['moon'], locked: 0, typed, kind: 'chase' });
 
 /** Debug hooks over a fake view model: only the fields pageSnapshot reads. */
-function hooks(o: { status: string; viewer: 0 | 1 | 'spectator'; pubOwner: 0 | 1 | null; liveOwner?: 0 | 1; over?: boolean; words?: ActiveWords | null; early?: { player: 0 | 1; word: string; typed: number } }): DebugHooks {
+function hooks(o: { status: string; viewer: 0 | 1 | 'spectator'; pubOwner: 0 | 1 | null; liveOwner?: 0 | 1; over?: boolean; words?: ActiveWords | null }): DebugHooks {
   const turn = (owner: 0 | 1 | null) => (owner === null ? null : { data: { owner } });
   const vm = {
     viewer: o.viewer,
     liveTurn: o.liveOwner === undefined ? null : turn(o.liveOwner),
-    early: o.early === undefined ? null : { player: o.early.player, prompt: { options: [{ word: o.early.word }], typed: o.early.typed } },
     pub: { status: o.over === true ? 'over' : 'playing', turn: turn(o.pubOwner), stats: [{ pointsWon: 3 }, { pointsWon: 2 }] },
     overlay: { coach: 'PRESS SPACE TO TOSS THE BALL' },
   };
@@ -27,7 +26,7 @@ function hooks(o: { status: string; viewer: 0 | 1 | 'spectator'; pubOwner: 0 | 1
 
 describe('pageSnapshot', () => {
   it('reads nothing on a page without the debug hooks or a match', () => {
-    const empty = { status: 'none', me: null, owner: null, words: null, points: 0, coach: null, early: null };
+    const empty = { status: 'none', me: null, owner: null, words: null, points: 0, coach: null };
     expect(pageSnapshot({})).toEqual(empty);
     expect(pageSnapshot({ __bbt: { ...hooks({ status: 'none', viewer: 0, pubOwner: null }), view: () => null } })).toEqual(empty);
   });
@@ -41,15 +40,7 @@ describe('pageSnapshot', () => {
       words,
       points: 5,
       coach: 'PRESS SPACE TO TOSS THE BALL',
-      early: null,
     });
-  });
-
-  it("reads the viewer's early chase (early-typing spec §2): its word and the letters typed, and not the opponent's", () => {
-    const mine = hooks({ status: 'choice', viewer: 0, pubOwner: 1, early: { player: 0, word: 'drop', typed: 2 } });
-    expect(pageSnapshot({ __bbt: mine }).early).toEqual({ word: 'drop', typed: 2 });
-    const theirs = hooks({ status: 'choice', viewer: 0, pubOwner: 0, early: { player: 1, word: 'drop', typed: 2 } });
-    expect(pageSnapshot({ __bbt: theirs }).early).toBeNull();
   });
 
   it("takes the owner from the viewer's live turn, the turn the status and words come from, over the displayed one", () => {
@@ -143,16 +134,5 @@ describe('momentOf', () => {
     expect(momentOf({ ...own('chase', chase(1)), owner: 1 })).toBeNull();
     expect(momentOf(own('leadIn:intro'))).toBeNull();
     expect(momentOf(own('queued', serve(0, 3)))).toBeNull();
-  });
-});
-
-describe('nextKey — early typing (early-typing spec §2)', () => {
-  const snap = (early: { word: string; typed: number } | null) =>
-    ({ status: 'choice', me: 0, owner: 1, words: null, points: 0, coach: null, early }) satisfies Snapshot;
-
-  it("types the viewer's early chase in the opponent's turn, and nothing once it is done", () => {
-    expect(nextKey(snap({ word: 'drop', typed: 1 }))).toBe('r');
-    expect(nextKey(snap({ word: 'drop', typed: 4 }))).toBeNull();
-    expect(nextKey(snap(null))).toBeNull();
   });
 });

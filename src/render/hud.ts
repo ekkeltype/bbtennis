@@ -210,8 +210,7 @@ export interface MeterRect { x: number; y: number; w: number; h: number; color: 
 
 /**
  * Both players' meter levels as shown this frame: the committed `pub.power`, with the turn owner's
- * live level at the displayed τ (a slip empties it at once), and the early typist's level 0 once their
- * early chase has a wrong key; or null in training (meter off).
+ * live level at the displayed τ (a slip empties it at once), or null in training (meter off).
  */
 export function meterLevels(f: WorldFrame): [number, number] | null {
   if (f.pub.config.training !== null) return null;
@@ -219,9 +218,6 @@ export function meterLevels(f: WorldFrame): [number, number] | null {
   const owner = f.turn?.data.owner;
   const live = f.view?.power ?? null;
   if (owner !== undefined && live !== null) levels[owner] = live;
-  // The early typist's meter empties with their first wrong key, before their turn starts (early-typing spec §2).
-  const early = f.vm.early;
-  if (early !== null && early.prompt.wrongKeys > 0) levels[early.player] = 0;
   return levels;
 }
 

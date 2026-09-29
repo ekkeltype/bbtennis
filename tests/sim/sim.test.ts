@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { aggressionAt, cpuProfile, typistProfile } from '../../src/core/cpu';
+import { CpuBrain, cpuProfile } from '../../src/core/cpu';
+import { Engine } from '../../src/core/engine';
 import {
-  simTypist,
+  HUMAN_CHASE_REACTION_MS,
+  humanProfile,
+  humanTypist,
   simulateMatch,
   simulatePoints,
   summarize,
   type PointRecord,
   type SimTypist,
 } from '../../src/core/sim';
-import type { MatchConfig, PlayerId } from '../../src/core/types';
+import { nextDeadline } from '../../src/core/turn';
+import type { Look, MatchConfig, PlayerId, PlayerInfo, ServeTurnData } from '../../src/core/types';
 
 const CONFIG: MatchConfig = {
   format: 'short',
@@ -21,14 +25,52 @@ const CONFIG: MatchConfig = {
 
 const config = (over: Partial<MatchConfig> = {}): MatchConfig => ({ ...CONFIG, ...over });
 
-const HUMAN_50 = simTypist(50);
+const HUMAN_50 = humanTypist(50);
+
+const LOOK: Look = { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 };
+const PLAYERS: [PlayerInfo, PlayerInfo] = [
+  { name: 'A', look: LOOK, kind: 'cpu', cpuLevel: null },
+  { name: 'B', look: LOOK, kind: 'cpu', cpuLevel: null },
+];
+
+/**
+ * The serve word option (0 easy, 1 medium, 2 hard) that a human-model server at `wpm` locks on
+ * the first point's serve number `serveNo` of match `seed` at Relaxed pace. For a second serve the
+ * first one is left to run out the serve clock (a time-violation fault).
+ */
+function humanServeLock(seed: number, wpm: number, serveNo: 1 | 2): number {
+  const engine = new Engine({ config: config({ pace: 'relaxed' }), players: PLAYERS, seed });
+  const server = engine.owner();
+  if (server === null) throw new Error('no server');
+  const brain = new CpuBrain(server, humanProfile(wpm), seed);
+  engine.start(server);
+  if (serveNo === 2) {
+    const first = engine.state.turn?.data.turnId;
+    for (let t = engine.state.turn; t !== null && t.data.turnId === first; t = engine.state.turn) {
+      const deadline = nextDeadline(t);
+      if (deadline === null) throw new Error('first serve stalled');
+      engine.clock(server, deadline);
+    }
+    engine.start(server);
+  }
+  const data = engine.state.turn?.data as ServeTurnData;
+  expect([data.kind, data.serveNo]).toEqual(['serve', serveNo]);
+  for (let calls = 0; calls < 10; calls++) {
+    const t = engine.state.turn;
+    if (t === null) break;
+    const prompt = t.active === null ? undefined : t.prompts[t.active];
+    if (prompt?.kind === 'serve' && prompt.locked !== null) return prompt.locked;
+    const key = brain.plan(t)[0];
+    const deadline = nextDeadline(t);
+    if (key !== undefined && (deadline === null || key.τ <= deadline)) engine.input(server, key.key, key.τ);
+    else if (deadline !== null) engine.clock(server, deadline);
+  }
+  throw new Error('the server never locked a serve word');
+}
 
 /** A record with defaults for the fields a summarize test does not care about. */
 function rec(over: Partial<PointRecord> = {}): PointRecord {
-  return {
-    shots: 3, ms: 10000, reason: 'winner', serverWon: true, winner: 0, insaneClean: 0, insaneReturned: 0, insaneOffered: false,
-    rallyTiers: { easy: 0, medium: 0, hard: 0, insane: 0 }, rallyReturns: 0, earlyStarts: 0, earlyDone: 0, ...over,
-  };
+  return { shots: 3, ms: 10000, reason: 'winner', serverWon: true, winner: 0, insaneClean: 0, insaneReturned: 0, insaneOffered: false, ...over };
 }
 
 /**
@@ -61,10 +103,59 @@ function expectConsistent(p: PointRecord): void {
   }
 }
 
-describe('simTypist (early-typing spec §4, §5)', () => {
-  it("is the typist model at that speed with the ladder's aggression and the adaptive policy by default", () => {
-    expect(simTypist(70)).toEqual({ profile: typistProfile(70, aggressionAt(70)), policy: 'adaptive' });
-    expect(simTypist(70, 'neverHard').policy).toBe('neverHard');
+describe('humanProfile (spec §6 human model)', () => {
+  it('uses the end points of the model at 25 and 120 WPM, with aggression 2.5 (1 even after the second-serve × 0.4)', () => {
+    expect(humanProfile(25)).toEqual({ wpm: 25, err: 0.07, reactionMs: 900, aggression: 2.5 });
+    const fast = humanProfile(120);
+    expect(fast.wpm).toBe(120);
+    expect(fast.err).toBeCloseTo(0.015, 12);
+    expect(fast.reactionMs).toBeCloseTo(400, 9);
+    expect(fast.aggression).toBe(2.5);
+  });
+
+  it('interpolates error rate and reaction linearly in WPM between 25 and 120', () => {
+    const mid = humanProfile(72.5);
+    expect(mid.err).toBeCloseTo(0.0425, 12);
+    expect(mid.reactionMs).toBeCloseTo(650, 9);
+    const p50 = humanProfile(50);
+    expect(p50.err).toBeCloseTo(0.07 - (25 / 95) * 0.055, 12);
+    expect(p50.reactionMs).toBeCloseTo(900 - (25 / 95) * 500, 9);
+  });
+
+  it('holds error rate and reaction at the end points outside 25–120 WPM but keeps the speed', () => {
+    expect(humanProfile(15)).toEqual({ wpm: 15, err: 0.07, reactionMs: 900, aggression: 2.5 });
+    const expert = humanProfile(160);
+    expect(expert.wpm).toBe(160);
+    expect(expert.err).toBeCloseTo(0.015, 12);
+    expect(expert.reactionMs).toBeCloseTo(400, 9);
+  });
+
+  it('rejects a speed that is not a finite positive number', () => {
+    for (const wpm of [0, -10, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => humanProfile(wpm)).toThrow(RangeError);
+    }
+  });
+});
+
+describe('the human model\'s serve choice (spec §6: the hardest option that fits)', () => {
+  // A 120 WPM typist at Relaxed pace fits even a 14-letter serve word (about 1.9 s) in the toss
+  // window, so the hardest option that fits is always the hard one.
+  const locks = (serveNo: 1 | 2): number[] => Array.from({ length: 40 }, (_, seed) => humanServeLock(seed, 120, serveNo));
+
+  it('takes the hard word on every first serve when every word fits', () => {
+    expect(locks(1)).toEqual(Array<number>(40).fill(2));
+  });
+
+  it('takes the hard word on every second serve too (the CPU\'s second-serve caution of spec §3.8 does not apply)', () => {
+    expect(locks(2)).toEqual(Array<number>(40).fill(2));
+  });
+});
+
+describe('humanTypist', () => {
+  it('is the human profile with the 250 ms chase reaction and the adaptive policy by default', () => {
+    expect(HUMAN_CHASE_REACTION_MS).toBe(250);
+    expect(humanTypist(70)).toEqual({ profile: humanProfile(70), chaseReactionMs: 250, policy: 'adaptive' });
+    expect(humanTypist(70, 'neverHard').policy).toBe('neverHard');
   });
 });
 
@@ -101,17 +192,6 @@ describe('summarize', () => {
     expect(s.medianSecPerPoint).toBe(12.5);
   });
 
-  it('gives the rally tier mix over all rally strikes and the early-typing shares of rally returns', () => {
-    const s = summarize([
-      rec({ rallyTiers: { easy: 3, medium: 1, hard: 0, insane: 0 }, rallyReturns: 4, earlyStarts: 3, earlyDone: 1 }),
-      rec({ rallyTiers: { easy: 1, medium: 1, hard: 1, insane: 1 }, rallyReturns: 4, earlyStarts: 1, earlyDone: 1 }),
-    ]);
-    expect([s.rallyEasy, s.rallyMedium, s.rallyHard, s.rallyInsane]).toEqual([0.5, 0.25, 0.125, 0.125]);
-    expect([s.earlyStartShare, s.earlyDoneShare]).toEqual([0.5, 0.25]);
-    const none = summarize([rec()]);
-    expect([none.rallyEasy, none.earlyStartShare, none.earlyDoneShare]).toEqual([0, 0, 0]);
-  });
-
   it('rejects an empty list instead of returning NaN', () => {
     expect(() => summarize([])).toThrow(RangeError);
   });
@@ -136,15 +216,8 @@ describe('simulatePoints', () => {
     expect(run(3)).not.toEqual(run(4));
   });
 
-  it('plays early typing: most rally returns get chase keys before the strike', () => {
-    const s = summarize(simulatePoints({ config: CONFIG, typists: [HUMAN_50, HUMAN_50], seed: 13, points: 200 }));
-    expect(s.earlyStartShare).toBeGreaterThan(0.5);
-    expect(s.earlyDoneShare).toBeGreaterThan(0);
-    expect(s.rallyEasy + s.rallyMedium + s.rallyHard + s.rallyInsane).toBeCloseTo(1, 9);
-  });
-
   it('never stalls or produces NaN with extreme typists (15 and 160 WPM)', () => {
-    const points = simulatePoints({ config: CONFIG, typists: [simTypist(15), simTypist(160)], seed: 5, points: 80 });
+    const points = simulatePoints({ config: CONFIG, typists: [humanTypist(15), humanTypist(160)], seed: 5, points: 80 });
     expect(points).toHaveLength(80);
     points.forEach(expectConsistent);
   });
@@ -157,8 +230,8 @@ describe('simulatePoints', () => {
     for (const p of served) expect(p.reason).toBe('doubleFault');
   });
 
-  it("passes each typist's profile to its brain: a receiver who pauses a minute before a serve's chase word is aced by every serve that lands", () => {
-    const asleep: SimTypist = { profile: { ...typistProfile(50, 0.5), serveChasePauseMs: 60000 } };
+  it("passes each typist's chase reaction to its brain: a receiver who waits a minute is aced by every serve that lands", () => {
+    const asleep: SimTypist = { profile: humanProfile(50), chaseReactionMs: 60000 };
     const points = simulatePoints({ config: CONFIG, typists: [HUMAN_50, asleep], seed: 9, points: 60 });
     const received = points.filter((p) => serverOf(p) === 0);
     expect(received.length).toBeGreaterThan(10);
@@ -179,11 +252,6 @@ describe('simulateMatch', () => {
     points.forEach(expectConsistent);
   });
 
-  it("returns both players' match stats", () => {
-    const { stats } = simulateMatch({ config: config({ format: 'tiebreak' }), typists: [HUMAN_50, HUMAN_50], seed: 21 });
-    expect(stats[0].wordsCompleted + stats[1].wordsCompleted).toBeGreaterThan(0);
-  });
-
   it('is won by a black belt 3rd dan against a white belt', () => {
     const typists: [SimTypist, SimTypist] = [{ profile: cpuProfile(0) }, { profile: cpuProfile(14) }];
     expect(simulateMatch({ config: CONFIG, typists, seed: 1 }).winner).toBe(1);
@@ -197,10 +265,7 @@ function serverOf(p: PointRecord): PlayerId {
 
 describe('insane metrics (power-meter spec §7)', () => {
   it('summarize: clean insane shots, the share returned, and the share of points offering insane', () => {
-    const base = {
-      shots: 3, ms: 1000, reason: 'winner' as const, serverWon: true, winner: 0 as const,
-      rallyTiers: { easy: 0, medium: 0, hard: 0, insane: 0 }, rallyReturns: 0, earlyStarts: 0, earlyDone: 0,
-    };
+    const base = { shots: 3, ms: 1000, reason: 'winner' as const, serverWon: true, winner: 0 as const };
     const s = summarize([
       { ...base, insaneClean: 2, insaneReturned: 1, insaneOffered: true },
       { ...base, insaneClean: 1, insaneReturned: 0, insaneOffered: true },
@@ -215,7 +280,7 @@ describe('insane metrics (power-meter spec §7)', () => {
 
   it('fast, accurate equal players reach full meters and hit clean insane shots', { timeout: 30000 }, () => {
     const CONFIG_NORMAL: MatchConfig = { format: 'full', pace: 'normal', surface: 'hard', wordPack: 'everyday', deuceRule: 'advantage', training: null };
-    const points = simulatePoints({ config: CONFIG_NORMAL, typists: [simTypist(140), simTypist(140)], seed: 7, points: 400 });
+    const points = simulatePoints({ config: CONFIG_NORMAL, typists: [humanTypist(120), humanTypist(120)], seed: 7, points: 400 });
     const s = summarize(points);
     expect(s.fullMeterRate).toBeGreaterThan(0);
     expect(s.insaneShotsClean).toBeGreaterThan(0);

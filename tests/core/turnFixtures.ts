@@ -110,7 +110,6 @@ export function returnData(over: Partial<ReturnTurnData> = {}): ReturnTurnData {
     randoms: HALF,
     freezeFirst: false,
     power: 0,
-    earlyFrom: null,
     ...over,
   };
 }

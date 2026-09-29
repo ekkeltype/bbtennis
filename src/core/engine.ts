@@ -7,7 +7,6 @@ import { PACE_MULT, TUNING } from './tuning';
 import {
   other,
   TIERS,
-  type EarlyKey,
   type EventBody,
   type GameEvent,
   type LeadIn,
@@ -118,13 +117,13 @@ export class Engine {
     return status === 'playing' && turn !== null ? turn.data.owner : null;
   }
 
-  /** Starts the current turn's clock (owner's τ = 0) with its owner's early keys, if any (early-typing spec §2); the match's first start also emits the coin toss. */
-  start(player: PlayerId, early: readonly EarlyKey[] = []): GameEvent[] {
+  /** Starts the current turn's clock (owner's τ = 0); the match's first start also emits the coin toss. */
+  start(player: PlayerId): GameEvent[] {
     const t = this.turnOwnedBy(player);
     if (t === null || t.started) return [];
     const opening = t.data.kind === 'serve' && t.data.leadIn.kind === 'intro';
     return this.run(t, () => {
-      const events = startTurn(t, early);
+      const events = startTurn(t);
       return opening ? [stamp(t, 0, { type: 'coinToss', winner: t.data.owner }), ...events] : events;
     });
   }
@@ -350,7 +349,6 @@ export class Engine {
       incoming: strike.flight,
       chase: strike.word,
       isServeReturn: strike.isServe,
-      earlyFrom: earlyFromOf(prev, strike),
       n: strike.isServe ? 0 : returnData(prev).n + 1,
       choice: { options, targets, m },
       pace: PACE_MULT[config.pace],
@@ -493,13 +491,6 @@ function isTierTriple(triple: readonly string[]): boolean {
     triple.every((w, i) => /^[a-z]+$/.test(w) && tierOfLength(w.length) === TIERS[i]) &&
     initialsOk(triple)
   );
-}
-
-/** Receiver-clock τ at which early typing opened for the turn after `strike` (early-typing spec §2): the striker's choice lock minus the strike; null after a serve. */
-function earlyFromOf(prev: TurnState, strike: StrikeInfo): number | null {
-  if (strike.isServe) return null;
-  const lock = prev.log.find((e) => e.k === 'lock');
-  return lock === undefined ? null : lock.τ - strike.τ;
 }
 
 function serveData(t: TurnState | null): ServeTurnData {

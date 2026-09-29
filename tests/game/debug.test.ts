@@ -96,14 +96,3 @@ describe('installDebugHooks', () => {
     expect(hooks.activeWords()).toBeNull();
   });
 });
-
-describe('installDebugHooks: early typing (early-typing spec §2)', () => {
-  it("reports the viewer's open early chase as the active words, kind 'early'", () => {
-    const view = { viewer: 0, liveTurn: null, pub: { turn: null, status: 'playing' }, early: { player: 0, prompt: { options: [{ word: 'drop' }], typed: 2 } } };
-    const session = { view } as unknown as Session;
-    const hooks = installDebugHooks(() => session, host('?e2e=1'), false)!;
-    expect(hooks.activeWords()).toEqual({ words: ['drop'], locked: 0, typed: 2, kind: 'early' });
-    const theirs = { view: { ...view, early: { ...view.early, player: 1 } } } as unknown as Session;
-    expect(installDebugHooks(() => theirs, host('?e2e=1'), false)!.activeWords()).toBeNull();
-  });
-});

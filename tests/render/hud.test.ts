@@ -6,13 +6,11 @@ import { createTurn, startTurn, turnClock, turnInput } from '../../src/core/turn
 import { TUNING } from '../../src/core/tuning';
 import type {
   DisplayPrefs,
-  EarlyView,
   GameEvent,
   Look,
   MatchState,
   PlayerId,
   PlayerStats,
-  PromptState,
   ScoreState,
   TurnState,
   ViewModel,
@@ -79,7 +77,6 @@ function view(pub: MatchState, turnτ: number, viewer: PlayerId | 'spectator' = 
     viewer,
     turnτ,
     liveTurn: null,
-    early: null,
     events,
     overlay: {
       paused: false, countdown: null, coach: null, wait: false, unstable: false,
@@ -653,9 +650,8 @@ describe('Hud readouts', () => {
 });
 
 describe('power meter (power-meter spec §6)', () => {
-  const frame = (over: { training?: boolean; power?: [number, number]; owner?: 0 | 1; live?: number | null; early?: EarlyView | null }): WorldFrame =>
+  const frame = (over: { training?: boolean; power?: [number, number]; owner?: 0 | 1; live?: number | null }): WorldFrame =>
     ({
-      vm: { early: over.early ?? null },
       pub: { config: { training: over.training ? {} : null }, power: over.power ?? [0, 0] },
       turn: over.owner === undefined ? null : { data: { owner: over.owner } },
       view: over.owner === undefined ? null : { power: over.live ?? null },
@@ -666,12 +662,6 @@ describe('power meter (power-meter spec §6)', () => {
     expect(meterLevels(frame({ power: [4, 1], owner: 0, live: 0 }))).toEqual([0, 1]);
     expect(meterLevels(frame({ power: [3, 1], owner: 1, live: 2 }))).toEqual([3, 2]);
     expect(meterLevels(frame({ training: true, power: [0, 0] }))).toBeNull();
-  });
-
-  it("empties the early typist's meter as soon as their early chase has a wrong key (early-typing spec §2)", () => {
-    const prompt = (wrongKeys: number): PromptState => ({ wrongKeys }) as PromptState;
-    expect(meterLevels(frame({ power: [4, 2], early: { player: 0, prompt: prompt(0) } }))).toEqual([4, 2]);
-    expect(meterLevels(frame({ power: [4, 2], early: { player: 0, prompt: prompt(1) } }))).toEqual([0, 2]);
   });
 
   it('paints a backing strip and four 3×5 segments per row inside the HUD band, x ≤ 170', () => {

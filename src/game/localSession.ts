@@ -1,11 +1,9 @@
 import { CpuBrain, cpuProfile } from '../core/cpu';
-import { byTurnTime, EarlyChase, withoutEarlyEvents } from '../core/early';
 import { Engine } from '../core/engine';
 import { redact, redactEvents } from '../core/redact';
 import { TUNING } from '../core/tuning';
 import type { KeyClass } from '../core/typing';
-import { other, type EarlyKey, type GameEvent, type MatchConfig, type MatchState, type PlayerId, type PlayerInfo, type TurnState, type ViewModel } from '../core/types';
-import { jsonCopy } from '../core/util';
+import type { GameEvent, MatchConfig, MatchState, PlayerId, PlayerInfo, TurnState, ViewModel } from '../core/types';
 import type { Scheduler } from './clock';
 import { WaitTag } from './onlineLink';
 import type { Session } from './session';
@@ -41,10 +39,8 @@ export interface LocalSessionOptions {
  * A match on this machine (spec §5.2): vs CPU, training or attract. The engine runs every turn on the
  * local clock: a turn's τ is `now − turnStartLocal`, and the next turn starts at the previous one's
  * start + its endτ. Every frame feeds the CPUs' planned keys whose τ has come and confirms the owner's
- * clock. Human keys go to the engine at once at `timeStamp − turnStartLocal`. While the striker's
- * return turn runs after its choice lock, the receiver's letters (a human's keys, a CPU's planned early
- * keys) type the chase early, and the next turn starts with them (early-typing spec §2). Pausing freezes
- * game time (and hides prompts); resuming runs a 1.5 s 3-2-1 countdown, then time goes on where it stopped.
+ * clock. Human keys go to the engine at once at `timeStamp − turnStartLocal`. Pausing freezes game
+ * time (and hides prompts); resuming runs a 1.5 s 3-2-1 countdown, then time goes on where it stopped.
  */
 export class LocalSession implements Session {
   private readonly engine: Engine;
@@ -64,10 +60,6 @@ export class LocalSession implements Session {
   /** Events not yet handed to a view. */
   private pending: GameEvent[] = [];
   private readonly wait = new WaitTag();
-  /** The receiver's early chase while the striker's return turn runs (early-typing spec §2), or null. */
-  private early: EarlyChase | null = null;
-  /** How many of a CPU receiver's planned early keys have been pressed into `early`. */
-  private earlyFed = 0;
   /** The human's first choice prompt of the current point (for the first-letter hint). */
   private firstChoice: { point: number; prompt: number } | null = null;
   private lessonIndex = 0;
@@ -190,7 +182,6 @@ export class LocalSession implements Session {
     const τ = t - this.turnStartLocal;
     if (k.kind === 'letter') {
       if (owner === human) this.absorb(this.engine.input(human, k.letter, τ));
-      else if (this.early?.player === human) this.pending.push(...this.early.press(k.letter, τ));
       else if (owner !== null) this.wait.show(now);
     } else if (k.kind === 'toss' && owner === human && this.engine.state.turn?.data.kind === 'serve') {
       this.absorb(this.engine.input(human, 'toss', τ));
@@ -219,10 +210,7 @@ export class LocalSession implements Session {
       const brain = this.brains[owner];
       if (brain !== null) this.feedCpu(brain, owner, turn, τ);
       if (this.engine.state.turn === turn && (brain !== null || confirmHuman)) this.absorb(this.engine.clock(owner, τ));
-      if (this.engine.state.turn === turn) {
-        this.runEarly(turn, τ);
-        return;
-      }
+      if (this.engine.state.turn === turn) return;
     }
   }
 
@@ -237,51 +225,7 @@ export class LocalSession implements Session {
     }
   }
 
-  /** Opens the receiver's early chase once the running return turn's choice word is locked, and feeds a CPU receiver's planned early keys up to τ. */
-  private runEarly(turn: TurnState, τ: number): void {
-    if (this.early !== null && this.early.turnId !== turn.data.turnId) this.early = null;
-    if (this.early === null) {
-      const opened = EarlyChase.open(turn, τ, this.meterOf(other(turn.data.owner)));
-      if (opened === null) return;
-      this.early = opened.chase;
-      this.earlyFed = 0;
-      this.pending.push(...opened.events);
-    }
-    this.feedEarly(this.early, turn, τ);
-  }
-
-  /** Presses a CPU receiver's planned early keys with τ up to `τ` (none for a human receiver). */
-  private feedEarly(early: EarlyChase, turn: TurnState, τ: number): void {
-    const brain = this.brains[early.player];
-    if (brain === null) return;
-    const planned = brain.planEarly(turn);
-    for (let k = planned[this.earlyFed]; k !== undefined && k.τ <= τ; k = planned[this.earlyFed]) {
-      this.pending.push(...early.press(k.key, k.τ));
-      this.earlyFed++;
-    }
-  }
-
-  /**
-   * The early keys for the turn about to start after `ended` ended at endτ (early-typing spec §2): the
-   * chase typed while it ran, re-based to its strike; none unless it ended with a strike. The early
-   * chase is first brought up to endτ (opened, and a CPU receiver's planned keys pressed), so a frame gap
-   * never skips it, then closed either way.
-   */
-  private takeEarly(ended: TurnState | null, endτ: number): EarlyKey[] {
-    if (ended !== null) this.runEarly(ended, endτ);
-    const early = this.early;
-    this.early = null;
-    if (early === null || ended === null || early.turnId !== ended.data.turnId || ended.outcome?.kind !== 'strike') return [];
-    return early.keysAt(endτ);
-  }
-
-  /** A player's meter level for early feedback, or null in training (meter off). */
-  private meterOf(p: PlayerId): number | null {
-    const s = this.engine.state;
-    return s.config.training !== null ? null : s.power[p];
-  }
-
-  /** Queues engine events for the next view; a turn's end starts the next turn at start + endτ, with the receiver's early keys. */
+  /** Queues engine events for the next view; a turn's end starts the next turn at start + endτ. */
   private absorb(events: GameEvent[]): void {
     let endτ: number | null = null;
     for (const e of events) {
@@ -290,12 +234,9 @@ export class LocalSession implements Session {
       else if (e.type === 'promptShown' && e.kind === 'choice' && e.player === this.human) this.noteChoice(e.prompt);
     }
     if (endτ === null) return;
-    const ended = this.engine.state.lastTurn;
     this.turnStartLocal += endτ;
-    // Taken even when the match is over, so the early chase is brought up to the end at any frame rate.
-    const early = this.takeEarly(ended, endτ);
     const next = this.engine.owner();
-    if (next !== null) this.absorb(this.engine.start(next, early));
+    if (next !== null) this.absorb(this.engine.start(next));
   }
 
   private noteChoice(prompt: number): void {
@@ -305,8 +246,7 @@ export class LocalSession implements Session {
 
   private buildView(now: number): ViewModel {
     const state = this.engine.state;
-    // In (turn, τ) order: an early chase's keys, pressed as frames reach them, interleave with the striker's own events.
-    const events = redactEvents(withoutEarlyEvents(this.pending).sort(byTurnTime), state, this.viewer);
+    const events = redactEvents(this.pending, state, this.viewer);
     this.pending = [];
     const counting = this.countdownFrom !== null;
     const hints = this.hints && !this.paused;
@@ -315,7 +255,6 @@ export class LocalSession implements Session {
       viewer: this.viewer,
       turnτ: this.gameTime - this.turnStartLocal,
       liveTurn: null,
-      early: this.early === null ? null : { player: this.early.player, prompt: jsonCopy(this.early.prompt) },
       events,
       overlay: {
         paused: this.paused && !counting,
@@ -361,4 +300,3 @@ export class LocalSession implements Session {
     return script.lessons[this.lessonIndex]?.coach(vm) ?? null;
   }
 }
-

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { CpuBrain, cpuProfile } from '../../src/core/cpu';
-import { EARLY_PROMPT } from '../../src/core/early';
 import { Engine } from '../../src/core/engine';
 import { redact } from '../../src/core/redact';
 import { TUNING } from '../../src/core/tuning';
@@ -101,9 +100,7 @@ function nextKey(x: Side, now: number): { at: number; key: string } | null {
   const t = vm === null ? null : vm.liveTurn ?? vm.pub.turn;
   if (vm === null || t === null || t.data.owner !== x.me || !t.started || t.ended) return null;
   const k = x.typist.plan(t)[0];
-  // A late-stamped key pressed at the turn's very start would be stamped before it and dropped (spec §5.2);
-  // a rally chase can start at τ 0 now (its early keys, never pressed here, lie before the strike).
-  return k === undefined ? null : { at: now - vm.turnτ + Math.max(k.τ, x.lateMs ?? 0), key: k.key };
+  return k === undefined ? null : { at: now - vm.turnτ + k.τ, key: k.key };
 }
 
 /** Frames both sides every FRAME ms, pressing each typist's keys at their planned times, until both are over. */
@@ -204,14 +201,8 @@ describe('online sessions: a full match over a lossy-latency loopback', () => {
       expect(seen[side].filter((e) => e.type === 'match')).toHaveLength(1);
       expect(seen[side].filter((e) => e.type === 'coinToss')).toHaveLength(1);
     }
-    // Both players see the same game events, each once: the guest's own turns from its runner, the rest from the host.
-    // Each also sees its own early chase (early-typing spec §6.2), which the other side never gets.
-    const isEarly = (e: GameEvent): boolean => 'prompt' in e && e.prompt === EARLY_PROMPT;
-    for (const side of ['host', 'guest'] as const) {
-      const me = side === 'host' ? 0 : 1;
-      expect(seen[side].filter(isEarly).every((e) => 'player' in e && e.player === me)).toBe(true);
-    }
-    const sorted = (events: GameEvent[]): string[] => events.filter((e) => !isEarly(e)).map((e) => JSON.stringify(e)).sort();
+    // Both players see the same events, each once: the guest's own turns from its runner, the rest from the host.
+    const sorted = (events: GameEvent[]): string[] => events.map((e) => JSON.stringify(e)).sort();
     expect(sorted(seen.guest)).toEqual(sorted(seen.host));
 
     const frames = o.hostNet.sent.filter((m) => m.type === 'frame');
@@ -769,8 +760,7 @@ describe('online sessions: confirmation-only frames (spec §5.3)', () => {
 
   it('the host sends s only when the state changed since the last s it sent (always with events); every other frame is a bare {type, turn, τ} confirmation', () => {
     const o = online({ seed: seedWhere(0) });
-    // 30 s: rally balls fly longer since early typing (early-typing spec §3), so events come more slowly.
-    play(o.s, sides(o), 30000);
+    play(o.s, sides(o), 20000);
     const frames = o.hostNet.sent.filter((m): m is FrameMsg => m.type === 'frame');
     let last: string | null = null;
     let confirmations = 0;

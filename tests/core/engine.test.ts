@@ -9,14 +9,12 @@ import {
   ALL_TIERS,
   other,
   type GameEvent,
-  type PlayerStats,
   type MatchConfig,
   type MatchState,
   type PlayerId,
   type PlayerInfo,
   type PromptKind,
   type PromptState,
-  type ReturnTurnData,
   type ServeTurnData,
   type TrainingFlags,
   type TurnState,
@@ -746,8 +744,8 @@ describe('Engine: training flags', () => {
 });
 
 describe('Engine: extreme typists (Review Focus 2)', () => {
-  const FAST: CpuProfile = { wpm: 160, nominalWpm: 160, err: 0.01, wordPauseMs: 200, serveChasePauseMs: 200, earlyPauseMs: 100, aggression: 0.95 };
-  const SLOW: CpuProfile = { wpm: 15, nominalWpm: 15, err: 0.08, wordPauseMs: 1000, serveChasePauseMs: 1000, earlyPauseMs: 500, aggression: 0.1 };
+  const FAST: CpuProfile = { wpm: 160, err: 0.01, reactionMs: 200, aggression: 0.95 };
+  const SLOW: CpuProfile = { wpm: 15, err: 0.08, reactionMs: 1000, aggression: 0.1 };
 
   /** Plays a match, checking every strike's flight and every event. */
   function checkedMatch(seed: number, typists: [Typist, Typist]): Driver {
@@ -762,8 +760,7 @@ describe('Engine: extreme typists (Review Focus 2)', () => {
       expect(flight.T).toBeGreaterThan(0);
       expect(flight.grace).toBeGreaterThan(0);
     }
-    // Every event is at τ ≥ 0 but a rally chase, shown at the striker's lock before the strike (early-typing spec §2).
-    for (const ev of d.events) expect(Number.isFinite(ev.τ) && (ev.τ >= 0 || (ev.type === 'promptShown' && ev.kind === 'chase'))).toBe(true);
+    for (const ev of d.events) expect(Number.isFinite(ev.τ) && ev.τ >= 0).toBe(true);
     for (const st of e.state.stats) {
       expect(Number.isFinite(averageWpm(st))).toBe(true);
       expect(Number.isFinite(accuracy(st))).toBe(true);
@@ -889,106 +886,5 @@ describe('power meter in the engine (power-meter spec §4)', () => {
     }
     expect(engine.state.power).toEqual([0, 0]);
     expect(driver.events.filter((e) => e.type === 'power')).toEqual([]);
-  });
-});
-
-describe('Engine: early typing (early-typing spec §2)', () => {
-  const returnDataOf = (t: TurnState | null): ReturnTurnData => {
-    if (t?.data.kind !== 'return') throw new Error('expected a return turn');
-    return t.data;
-  };
-
-  /** Plays the serve and the receiver's return (easy choice); the server's rally chase turn is next. */
-  function toServersChase(seed = 17) {
-    const e = newEngine(seed);
-    const server = e.owner() as PlayerId;
-    const d = new Driver(e, byRole(server, scripted({ choice: null }), scripted({ choice: 0 })));
-    d.playTurn();
-    const serveReturn = e.state.turn as TurnState;
-    d.playTurn();
-    return { e, server, serveReturn };
-  }
-
-  it("a serve return has no early window; the next rally turn's opens at the striker's lock", () => {
-    const { e, server, serveReturn } = toServersChase();
-    expect(returnDataOf(serveReturn).earlyFrom).toBeNull();
-    const striker = e.state.lastTurn as TurnState;
-    const lock = striker.log.find((x) => x.k === 'lock');
-    const next = returnDataOf(e.state.turn);
-    expect(next.owner).toBe(server);
-    expect(next.earlyFrom).toBe((lock?.τ ?? Number.NaN) - strikeOf(striker).τ);
-    expect(next.earlyFrom).toBeLessThan(0);
-  });
-
-  it('start takes early keys: the chase is typed before τ 0 and the choice waits for τ 0', () => {
-    const { e, server } = toServersChase();
-    const d = returnDataOf(e.state.turn);
-    const from = d.earlyFrom as number;
-    const step = -from / (d.chase.len + 1);
-    const events = e.start(server, [...d.chase.word].map((key, i) => ({ key, τ: from + step * (i + 1) })));
-    const [chase, choice] = (e.state.turn as TurnState).prompts;
-    expect(chase?.completedAt).toBeLessThan(0);
-    expect(choice?.shownAt).toBe(0);
-    expect(events.filter((x) => x.type === 'keyOk').every((x) => x.τ < 0)).toBe(true);
-  });
-
-  it('start on a started turn does nothing, early keys or not', () => {
-    const { e, server } = toServersChase();
-    e.start(server);
-    const before = JSON.stringify(e.state);
-    expect(e.start(server, [{ key: 'z', τ: -1 }])).toEqual([]);
-    expect(JSON.stringify(e.state)).toBe(before);
-  });
-
-  /** The first seed whose server's rally chase has an early window and a ball that is in (`inBounds`) or out or in the net; the receiver types option `choice` with `slips` slips. */
-  function chaseWhere(inBounds: boolean, choice: number, slips: number) {
-    for (let seed = 1; seed <= 300; seed++) {
-      const e = newEngine(seed);
-      const server = e.owner() as PlayerId;
-      const d = new Driver(e, byRole(server, scripted({ choice: null }), scripted({ choice, slips })));
-      d.playTurn();
-      d.playTurn();
-      const t = e.state.turn;
-      const prev = e.state.lastTurn;
-      if (t?.data.kind !== 'return' || t.data.owner !== server || t.data.earlyFrom === null || prev === null) continue;
-      if ((strikeOf(prev).shot.outcome === 'in') === inBounds) return { e, server, d: t.data };
-    }
-    throw new Error('chaseWhere: no seed');
-  }
-
-  /** An OUT or NET call on the ball coming to the returner, among `events`. */
-  const outOrNet = (events: GameEvent[]): boolean => events.some((x) => x.type === 'call' && (x.call === 'out' || x.call === 'net'));
-  /** A player's typing stats: the fields a turn's typing adds to. */
-  const typing = ({ correctKeys, wrongKeys, wordsCompleted, intervalSum, typingMs, topWpm }: PlayerStats) => ({ correctKeys, wrongKeys, wordsCompleted, intervalSum, typingMs, topWpm });
-
-  /** Starts the server's chase with its whole word typed early, spread evenly from the lock to the strike. */
-  function startEarly(e: Engine, server: PlayerId, d: ReturnTurnData): void {
-    const from = d.earlyFrom as number;
-    const step = -from / (d.chase.len + 1);
-    e.start(server, [...d.chase.word].map((key, i) => ({ key, τ: from + step * (i + 1) })));
-  }
-
-  it("early keys count in the returner's stats: every key, and the chase word's time from its first early key (early-typing spec §7)", () => {
-    const { e, server, d } = chaseWhere(true, 0, 0);
-    const before = { ...e.state.stats[server] };
-    startEarly(e, server, d);
-    const { tFirst, tLast } = (e.state.turn as TurnState).prompts[0]!;
-    expect(tFirst).toBeLessThan(0);
-    const events = e.clock(server, 60_000); // no shot is picked: the ball passes
-    expect(outOrNet(events)).toBe(false);
-    const after = e.state.stats[server];
-    expect(after.correctKeys - before.correctKeys).toBe(d.chase.len);
-    expect(after.wordsCompleted - before.wordsCompleted).toBe(1);
-    expect(after.typingMs - before.typingMs).toBeCloseTo((tLast as number) - (tFirst as number), 6);
-  });
-
-  it("an OUT or NET call discards the early keys with the rest of the returner's typing (early-typing spec §7)", () => {
-    const { e, server, d } = chaseWhere(false, 2, 3);
-    const before = typing(e.state.stats[server]);
-    startEarly(e, server, d);
-    expect((e.state.turn as TurnState).prompts[0]!.correctKeys).toBe(d.chase.len);
-    const events = e.clock(server, 60_000);
-    expect(outOrNet(events)).toBe(true);
-    expect(typing(e.state.stats[server])).toEqual(before);
   });
 });

@@ -1,13 +1,16 @@
-import { aggressionAt, CpuBrain, typistProfile, type CpuPolicy, type CpuProfile } from './cpu';
+import { CpuBrain, type CpuPolicy, type CpuProfile } from './cpu';
 import { Engine } from './engine';
 import { forkSeed } from './rng';
 import { nextDeadline } from './turn';
-import type { EarlyKey, GameEvent, Look, MatchConfig, PlayerId, PlayerInfo, PlayerStats, PointReason, Tier } from './types';
-import { ALL_TIERS, TIERS } from './types';
-import { jsonCopy } from './util';
+import type { GameEvent, Look, MatchConfig, PlayerId, PlayerInfo, PointReason } from './types';
+import { TIERS } from './types';
+import { clamp, lerp } from './util';
 
-/** A simulated typist: a CpuBrain with this profile and choice policy (default 'adaptive'). */
-export interface SimTypist { profile: CpuProfile; policy?: CpuPolicy }
+/**
+ * A simulated typist: a CpuBrain with this profile, choice policy (default 'adaptive') and chase
+ * reaction (ms; default: the CPU's own rule of spec §3.8).
+ */
+export interface SimTypist { profile: CpuProfile; policy?: CpuPolicy; chaseReactionMs?: number }
 
 /**
  * One simulated point: in-play strikes (serve included, as the engine counts a rally), duration in
@@ -25,21 +28,9 @@ export interface PointRecord {
   insaneReturned: number;
   /** Whether any serve or choice prompt of the point offered the insane word. */
   insaneOffered: boolean;
-  /** Rally strikes (every strike but a serve) of the point, by tier. */
-  rallyTiers: Record<Tier, number>;
-  /** Rally return turns (not serve returns) of the point. */
-  rallyReturns: number;
-  /** Of those, the ones whose chase got a key before the strike (early-typing spec §2). */
-  earlyStarts: number;
-  /** Of those, the ones whose chase was done by the strike. */
-  earlyDone: number;
 }
 
-/**
- * Balance figures of a run of points (spec §6); rates are shares of all points. insaneReturnRate = returned / clean
- * (0 with none); fullMeterRate = share of points offering insane; rallyEasy…rallyInsane = shares of all rally strikes;
- * earlyStartShare / earlyDoneShare = shares of rally returns (0 with none) (early-typing spec §4).
- */
+/** Balance figures of a run of points (spec §6); rates are shares of all points. insaneReturnRate = returned / clean (0 with none); fullMeterRate = share of points offering insane. */
 export interface SimSummary {
   medianShots: number;
   p90Shots: number;
@@ -51,13 +42,24 @@ export interface SimSummary {
   insaneShotsClean: number;
   insaneReturnRate: number;
   fullMeterRate: number;
-  rallyEasy: number;
-  rallyMedium: number;
-  rallyHard: number;
-  rallyInsane: number;
-  earlyStartShare: number;
-  earlyDoneShare: number;
 }
+
+/** Spec §6 human model: error rate and reaction interpolate linearly in WPM between these rows. */
+const HUMAN = {
+  slow: { wpm: 25, err: 0.07, reactionMs: 900 },
+  fast: { wpm: 120, err: 0.015, reactionMs: 400 },
+} as const;
+
+/**
+ * Aggression of the spec §6 human model, whose policy is "hardest option that fits" on every serve
+ * and choice. CpuBrain takes the hardest fitting option with probability `aggression`, scaled by 0.4
+ * on a second serve (the CPU's caution of spec §3.8, not part of the human model); 1 / 0.4 keeps
+ * that probability at 1 on second serves too. tests/sim/sim.test.ts checks this against CpuBrain.
+ */
+const HUMAN_AGGRESSION = 2.5;
+
+/** Reaction before a chase word's first key in the spec §6 human model (ms). */
+export const HUMAN_CHASE_REACTION_MS = 250;
 
 /** Guards against a turn or match that never ends (the engine should make both impossible). */
 const MAX_CALLS_PER_TURN = 10_000;
@@ -70,11 +72,33 @@ const PLAYERS: [PlayerInfo, PlayerInfo] = [
 ];
 
 /**
- * A balance-simulation player at `wpm` (early-typing spec §4, §5): the typist model's pauses and errors
- * at that speed, the calibrated nominal speed, and the aggression the belt ladder gives that speed.
+ * The spec §6 human model's CpuBrain profile at `wpm`: per-key error 7 % at 25 WPM → 1.5 % at
+ * 120 WPM and reaction 900 → 400 ms, linear in WPM and held at the end rows outside that range;
+ * aggression HUMAN_AGGRESSION, so the adaptive policy always takes the hardest option that fits,
+ * second serves included. The full model adds the 250 ms chase reaction: use humanTypist.
+ *
+ * Recorded deviation from spec §6: typing runs on CpuBrain, so each word's interval factor is the
+ * CPU's 1 + 0.15·z (clamped 0.7–1.4), not the 12 % per-word variation §6 gives the human model. The
+ * balance figures in tests/sim/balance.test.ts (and rulings R35/R36) were measured with 15 %.
  */
-export function simTypist(wpm: number, policy: CpuPolicy = 'adaptive'): SimTypist {
-  return { profile: typistProfile(wpm, aggressionAt(wpm)), policy };
+export function humanProfile(wpm: number): CpuProfile {
+  if (!Number.isFinite(wpm) || wpm <= 0) throw new RangeError(`humanProfile: WPM must be finite and positive, got ${wpm}`);
+  const { slow, fast } = HUMAN;
+  const f = clamp((wpm - slow.wpm) / (fast.wpm - slow.wpm), 0, 1);
+  return {
+    wpm,
+    err: lerp(slow.err, fast.err, f),
+    reactionMs: lerp(slow.reactionMs, fast.reactionMs, f),
+    aggression: HUMAN_AGGRESSION,
+  };
+}
+
+/**
+ * The spec §6 human model at `wpm`: humanProfile with the 250 ms chase reaction (and CpuBrain's 15 %
+ * per-word variation in place of §6's 12 %; see humanProfile).
+ */
+export function humanTypist(wpm: number, policy: CpuPolicy = 'adaptive'): SimTypist {
+  return { profile: humanProfile(wpm), chaseReactionMs: HUMAN_CHASE_REACTION_MS, policy };
 }
 
 /**
@@ -100,16 +124,16 @@ export function simulatePoints(a: {
   return out;
 }
 
-/** Plays one whole match with the match seed `seed` (engine and both brains); returns its winner, its points and both players' match stats. */
+/** Plays one whole match with the match seed `seed` (engine and both brains). */
 export function simulateMatch(a: {
   config: MatchConfig;
   typists: [SimTypist, SimTypist];
   seed: number;
-}): { winner: PlayerId; points: PointRecord[]; stats: [PlayerStats, PlayerStats] } {
+}): { winner: PlayerId; points: PointRecord[] } {
   const points: PointRecord[] = [];
   const match = matchPoints(a.config, a.typists, a.seed);
   for (let r = match.next(); ; r = match.next()) {
-    if (r.done === true) return { winner: r.value.winner, points, stats: r.value.stats };
+    if (r.done === true) return { winner: r.value, points };
     points.push(r.value);
   }
 }
@@ -126,12 +150,6 @@ export function summarize(points: readonly PointRecord[]): SimSummary {
   const share = (pred: (p: PointRecord) => boolean): number => points.filter(pred).length / n;
   const clean = points.reduce((sum, p) => sum + p.insaneClean, 0);
   const returned = points.reduce((sum, p) => sum + p.insaneReturned, 0);
-  const tiers: Record<Tier, number> = { easy: 0, medium: 0, hard: 0, insane: 0 };
-  for (const p of points) for (const k of ALL_TIERS) tiers[k] += p.rallyTiers[k];
-  const strikes = ALL_TIERS.reduce((sum, k) => sum + tiers[k], 0);
-  const tierShare = (k: Tier): number => (strikes === 0 ? 0 : tiers[k] / strikes);
-  const returns = points.reduce((sum, p) => sum + p.rallyReturns, 0);
-  const returnShare = (count: number): number => (returns === 0 ? 0 : count / returns);
   return {
     medianShots: median(shots),
     p90Shots: item(shots, Math.ceil((9 * n) / 10) - 1),
@@ -143,30 +161,19 @@ export function summarize(points: readonly PointRecord[]): SimSummary {
     insaneShotsClean: clean,
     insaneReturnRate: clean === 0 ? 0 : returned / clean,
     fullMeterRate: share((p) => p.insaneOffered),
-    rallyEasy: tierShare('easy'),
-    rallyMedium: tierShare('medium'),
-    rallyHard: tierShare('hard'),
-    rallyInsane: tierShare('insane'),
-    earlyStartShare: returnShare(points.reduce((sum, p) => sum + p.earlyStarts, 0)),
-    earlyDoneShare: returnShare(points.reduce((sum, p) => sum + p.earlyDone, 0)),
   };
 }
 
 /**
  * Plays one match on virtual time with a CpuBrain per typist, yielding each point as it is scored
- * and returning the match winner and both players' match stats.
+ * and returning the match winner.
  */
-function* matchPoints(
-  config: MatchConfig,
-  typists: [SimTypist, SimTypist],
-  seed: number,
-): Generator<PointRecord, { winner: PlayerId; stats: [PlayerStats, PlayerStats] }, void> {
+function* matchPoints(config: MatchConfig, typists: [SimTypist, SimTypist], seed: number): Generator<PointRecord, PlayerId, void> {
   const engine = new Engine({ config, players: PLAYERS, seed });
   const brains: [CpuBrain, CpuBrain] = [brainFor(0, typists[0], seed), brainFor(1, typists[1], seed)];
   let server: PlayerId | null = null;
   let ms = 0;
   let insane = { clean: 0, returned: 0, offered: false, pending: false };
-  let rally = freshRally();
   for (let turns = 0; ; turns++) {
     const owner = engine.owner();
     if (owner === null) break;
@@ -187,40 +194,26 @@ function* matchPoints(
         insane.clean++;
         insane.pending = true;
       }
-      if (o?.kind === 'strike' && !o.strike.isServe) rally.tiers[o.strike.word.tier]++;
-      if (ended.data.kind === 'return' && !ended.data.isServeReturn) {
-        rally.returns++;
-        if (ended.log.some((e) => (e.k === 'ok' || e.k === 'bad') && e.τ < 0)) rally.early++;
-        const done = ended.prompts[0]?.completedAt ?? null;
-        if (done !== null && done <= 0) rally.done++;
-      }
     }
     for (const e of events) {
       if (e.type === 'turnEnd') {
         ms += e.endτ;
       } else if (e.type === 'point') {
         yield { shots, ms, reason: e.reason, serverWon: e.winner === server, winner: e.winner,
-          insaneClean: insane.clean, insaneReturned: insane.returned, insaneOffered: insane.offered,
-          rallyTiers: { ...rally.tiers }, rallyReturns: rally.returns, earlyStarts: rally.early, earlyDone: rally.done };
+          insaneClean: insane.clean, insaneReturned: insane.returned, insaneOffered: insane.offered };
         server = null;
         ms = 0;
         insane = { clean: 0, returned: 0, offered: false, pending: false };
-        rally = freshRally();
       }
     }
   }
   const winner = engine.state.winner;
   if (winner === null) throw new Error('simulation: the match ended without a winner');
-  return { winner, stats: jsonCopy(engine.state.stats) };
-}
-
-/** A point's rally tally: strikes by tier, rally returns, and those that started or finished the chase early. */
-function freshRally(): { tiers: Record<Tier, number>; returns: number; early: number; done: number } {
-  return { tiers: { easy: 0, medium: 0, hard: 0, insane: 0 }, returns: 0, early: 0, done: 0 };
+  return winner;
 }
 
 function brainFor(player: PlayerId, t: SimTypist, seed: number): CpuBrain {
-  return new CpuBrain(player, t.profile, seed, { policy: t.policy });
+  return new CpuBrain(player, t.profile, seed, { policy: t.policy, chaseReactionMs: t.chaseReactionMs });
 }
 
 /**
@@ -230,7 +223,7 @@ function brainFor(player: PlayerId, t: SimTypist, seed: number): CpuBrain {
  */
 function playTurn(engine: Engine, brain: CpuBrain, owner: PlayerId): GameEvent[] {
   const id = engine.state.turn?.data.turnId;
-  let events = engine.start(owner, earlyKeys(engine, brain));
+  let events = engine.start(owner);
   for (let calls = 0; calls < MAX_CALLS_PER_TURN; calls++) {
     const t = engine.state.turn;
     if (t === null || t.data.turnId !== id) return events;
@@ -241,19 +234,6 @@ function playTurn(engine: Engine, brain: CpuBrain, owner: PlayerId): GameEvent[]
     else throw new Error(`simulation: turn ${id} stalled with no planned key and no deadline`);
   }
   throw new Error(`simulation: turn ${id} did not end within ${MAX_CALLS_PER_TURN} calls`);
-}
-
-/**
- * The keys `brain` typed early (early-typing spec §2) for the rally return turn it now owns: its early
- * plan for the striker's turn (engine.state.lastTurn) up to the strike, re-based to the strike.
- */
-function earlyKeys(engine: Engine, brain: CpuBrain): EarlyKey[] {
-  const t = engine.state.turn;
-  const striker = engine.state.lastTurn;
-  const o = striker?.outcome;
-  if (t?.data.kind !== 'return' || t.data.earlyFrom === null || striker === null || o?.kind !== 'strike') return [];
-  const strikeτ = o.strike.τ;
-  return brain.planEarly(striker).filter((k) => k.τ <= strikeτ).map((k) => ({ key: k.key, τ: k.τ - strikeτ }));
 }
 
 function ascending(a: number, b: number): number {

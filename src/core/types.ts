@@ -162,9 +162,6 @@ export interface ServeTurnData {
   power: number | null;    // owner's meter level when the turn was created; null = meter off (training)
 }
 
-/** A key the receiver typed before the strike (early-typing spec §2): a letter at receiver-clock τ ≤ 0. */
-export interface EarlyKey { key: string; τ: number }
-
 /** Start data of a return turn, owned by the receiver: incoming ball, chase word and choice prompt (spec §3.3). */
 export interface ReturnTurnData {
   kind: 'return';
@@ -175,7 +172,6 @@ export interface ReturnTurnData {
   incoming: BallFlight;
   chase: WordOption;        // the striker's exact word
   isServeReturn: boolean;
-  earlyFrom: number | null; // receiver-clock τ (≤ 0) at which early typing opened: the striker's lock − the strike; null on a serve return (early-typing spec §2)
   n: number;                // rally depth used for incoming T (spec §3.4)
   choice: { options: WordOption[]; targets: Vec2[]; m: 1 | -1 }; // 3 options, or 4 (insane last) at a full meter
   pace: number;
@@ -369,16 +365,12 @@ export interface Overlay {
   rttMs: number | null;       // online round-trip time, for the HUD corner
 }
 
-/** An early chase a view shows (early-typing spec §6.4): its typist and chase prompt, times on the striker's turn clock. */
-export interface EarlyView { player: PlayerId; prompt: PromptState }
-
 /** Everything the renderer needs for one frame (spec §5.2 passive playback). */
 export interface ViewModel {
   pub: PublicState;                    // redacted for `viewer`
   viewer: PlayerId | 'spectator';
   turnτ: number;                       // τ at which to render the current turn
   liveTurn: TurnState | null;          // viewer-owned live turn state (e.g. guest runner), else null
-  early: EarlyView | null;             // the open early chase the viewer may see (its own, or a local CPU's)
   events: GameEvent[];                 // events that became visible since the previous frame
   overlay: Overlay;
 }

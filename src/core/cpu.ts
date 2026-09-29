@@ -1,26 +1,13 @@
 import { insaneOffered, levelFromKeys } from './power';
 import { chance, forkSeed, intBelow, normalIH, seedRng, uniform } from './rng';
-import { CPU_LEVEL_WPM, CPU_MILESTONES, CPU_NOMINAL_WPM, TUNING } from './tuning';
+import { CPU_LEVEL_WPM, CPU_MILESTONES } from './tuning';
 import { isComplete } from './typing';
 import type { PlayerId, PromptState, ReturnTurnData, RngState, ServeTurnData, TurnState, WordOption } from './types';
 import { TIERS } from './types';
 import { clamp, lerp } from './util';
 
-/** A typist's parameters (early-typing spec §5): label and nominal speed, per-key error rate, pauses before a prompt's first key, aggression. */
-export interface CpuProfile {
-  /** Label WPM: the average its Results screen shows. */
-  wpm: number;
-  /** The speed it types at underneath: mean key interval 12/nominalWpm s. */
-  nominalWpm: number;
-  err: number;
-  /** Before a serve word (after the toss) and before choice words. */
-  wordPauseMs: number;
-  /** Before the chase word of a serve return. */
-  serveChasePauseMs: number;
-  /** Before a rally chase word, from when it is shown: the striker's lock (early typing). */
-  earlyPauseMs: number;
-  aggression: number;
-}
+/** A CPU typist's parameters (spec §3.8): speed, per-key error rate, reaction before a prompt's first key, aggression. */
+export interface CpuProfile { wpm: number; err: number; reactionMs: number; aggression: number }
 
 /** One of the 15 CPU levels as shown to the player: belt with 0–2 stripes (or dan grade), WPM and label. */
 export interface CpuLevelInfo {
@@ -76,78 +63,45 @@ export function isMilestone(level: number): boolean {
   return CPU_LEVELS[level]?.stripes === 0;
 }
 
-/** Share of the way from the model's slowest row (25 WPM) to its fastest (140 WPM), held at the ends. */
-function modelShare(wpm: number): number {
-  const [lo, hi] = TUNING.typist.wpmRange;
-  return clamp((wpm - lo) / (hi - lo), 0, 1);
-}
-
-/**
- * The typist model at label speed `wpm` (early-typing spec §5): error rate and pauses linear in WPM from
- * 25 to 140 and held outside; `nominalWpm` defaults to the calibrated speed for that label. Throws a
- * RangeError for a speed that is not finite and positive.
- */
-export function typistProfile(wpm: number, aggression: number, nominalWpm: number = nominalWpmFor(wpm)): CpuProfile {
-  if (!Number.isFinite(wpm) || wpm <= 0) throw new RangeError(`typistProfile: WPM must be finite and positive, got ${wpm}`);
-  const m = TUNING.typist;
-  const f = modelShare(wpm);
-  return {
-    wpm,
-    nominalWpm,
-    err: lerp(m.err[0], m.err[1], f),
-    wordPauseMs: lerp(m.wordPauseMs[0], m.wordPauseMs[1], f),
-    serveChasePauseMs: lerp(m.serveChasePauseMs[0], m.serveChasePauseMs[1], f),
-    earlyPauseMs: lerp(m.earlyPauseMs[0], m.earlyPauseMs[1], f),
-    aggression,
-  };
-}
-
-/** Nominal speed for label `wpm`: CPU_NOMINAL_WPM, linear in label WPM between levels, and the end levels' ratio beyond them. */
-export function nominalWpmFor(wpm: number): number {
-  const labels: readonly number[] = CPU_LEVEL_WPM;
-  const nominal: readonly number[] = CPU_NOMINAL_WPM;
-  const last = labels.length - 1;
-  if (wpm <= labels[0]!) return (wpm * nominal[0]!) / labels[0]!;
-  if (wpm >= labels[last]!) return (wpm * nominal[last]!) / labels[last]!;
-  const hi = labels.findIndex((l) => l >= wpm);
-  return lerp(nominal[hi - 1]!, nominal[hi]!, (wpm - labels[hi - 1]!) / (labels[hi]! - labels[hi - 1]!));
-}
-
-/** Aggression at label `wpm` (early-typing spec §5): the milestone rows' values, linear in WPM between rows, held beyond them. */
-export function aggressionAt(wpm: number): number {
-  const rows = CPU_MILESTONES;
-  const first = rows[0];
-  const last = rows[rows.length - 1]!;
-  if (wpm <= first.wpm) return first.aggression;
-  if (wpm >= last.wpm) return last.aggression;
-  const hi = rows.findIndex((r) => r.wpm >= wpm);
-  const lo = rows[hi - 1]!;
-  const top = rows[hi]!;
-  return lerp(lo.aggression, top.aggression, (wpm - lo.wpm) / (top.wpm - lo.wpm));
-}
-
-/** Profile of a level: the typist model at its label WPM, with its calibrated nominal speed and its belt's aggression. */
+/** Profile of a level: its milestone row, or a linear interpolation in WPM between the two milestone rows around it. */
 export function cpuProfile(level: number): CpuProfile {
   const wpm = levelWpm(level);
-  return typistProfile(wpm, aggressionAt(wpm), CPU_NOMINAL_WPM[level]!);
+  const hiIndex = CPU_MILESTONES.findIndex((m) => m.wpm >= wpm);
+  const hi = CPU_MILESTONES[hiIndex];
+  const lo = CPU_MILESTONES[hiIndex - 1];
+  if (hi === undefined) throw new RangeError(`CPU level ${level} (${wpm} WPM) is above the fastest milestone row`);
+  if (lo === undefined || hi.wpm === wpm) return { wpm, err: hi.err, reactionMs: hi.reactionMs, aggression: hi.aggression };
+  const f = (wpm - lo.wpm) / (hi.wpm - lo.wpm);
+  return {
+    wpm,
+    err: lerp(lo.err, hi.err, f),
+    reactionMs: lerp(lo.reactionMs, hi.reactionMs, f),
+    aggression: lerp(lo.aggression, hi.aggression, f),
+  };
 }
 
 /** How the CPU picks a serve/choice word: spec §3.8's adaptive rule, or a fixed strategy for balance checks. neverHard never picks hard or insane; neverInsane never picks insane. */
 export type CpuPolicy = 'adaptive' | 'alwaysEasy' | 'alwaysHard' | 'neverHard' | 'neverInsane';
 
-/** Optional CpuBrain settings: `policy` defaults to 'adaptive'. */
-export interface CpuBrainOptions { policy?: CpuPolicy }
+/**
+ * Optional CpuBrain settings: `policy` defaults to 'adaptive'; `chaseReactionMs` (ms, finite, ≥ 0)
+ * replaces the reaction before a chase word's first key, for rally and serve-return chases alike.
+ */
+export interface CpuBrainOptions { policy?: CpuPolicy; chaseReactionMs?: number }
 
 /** One input the CPU will make: a letter or 'toss', at turn-clock τ (ms). */
 export interface PlannedKey { key: string; τ: number }
 
-/** CPU typing constants of spec §3.8 (times in ms); the model's pauses and error rates are in TUNING.typist. */
+/** CPU typing constants of spec §3.8 (times in ms). */
 const CPU = {
   tossDelay: { min: 600, max: 1200 },
+  rallyChaseReaction: 0.5,
   secondServeAggression: 0.4,
   wordFactor: { perZ: 0.15, min: 0.7, max: 1.4 },
   intervalSpread: 0.35,
   hesitation: { chance: 0.1, min: 250, max: 500 },
+  errorPause: { min: 150, max: 300 },
+  errorEstimateMs: 225,
   safetyMs: 250,
 } as const;
 
@@ -164,25 +118,26 @@ export class CpuBrain {
   private readonly player: PlayerId;
   private readonly profile: CpuProfile;
   private readonly policy: CpuPolicy;
+  private readonly chaseReactionMs: number | undefined;
   private readonly rng: RngState;
-  /** Seed of the early-typing streams: each striker turn's early plan has its own, so it never depends on when (or whether) it was asked for. */
-  private readonly earlySeed: number;
   /** Turn the plans below belong to; they are dropped when another turn id is seen. */
   private turnId: number | null = null;
   /** Plan per prompt, keyed `turnId:promptId`; fixed once made unless a planned key is skipped. */
   private readonly promptPlans = new Map<string, PromptPlan>();
   /** Planned toss τ per PRE_SERVE, keyed `turnId:setIndex`, before clamping to the turn clock. */
   private readonly tossPlans = new Map<string, number>();
-  /** The early chase plan: the striker's turn and lock it was made for, the word, and its keys as offsets from the lock. */
-  private early: { turnId: number; lockτ: number; word: string; offsets: PlannedKey[] } | null = null;
 
   constructor(player: PlayerId, profile: CpuProfile, seed: number, opts: CpuBrainOptions = {}) {
     if (!isValidProfile(profile)) throw new RangeError(`CpuBrain: invalid profile ${JSON.stringify(profile)}`);
+    const { chaseReactionMs } = opts;
+    if (chaseReactionMs !== undefined && !isDelayMs(chaseReactionMs)) {
+      throw new RangeError(`CpuBrain: invalid chaseReactionMs ${chaseReactionMs}`);
+    }
     this.player = player;
     this.profile = { ...profile };
     this.policy = opts.policy ?? 'adaptive';
+    this.chaseReactionMs = chaseReactionMs;
     this.rng = seedRng(forkSeed(seed, player + 1));
-    this.earlySeed = forkSeed(seed, player + 101);
   }
 
   /** Inputs the CPU will make for the current turn state, in τ order, from its current position on. Stable across calls for the same prompt. */
@@ -193,27 +148,6 @@ export class CpuBrain {
     return keys.map((k) => ({ ...k }));
   }
 
-  /**
-   * The early chase (early-typing spec §2, §5) for the opponent's return turn `t` once its choice word
-   * is locked: the locked word, typed from the lock + the early pause, on t's clock. Drawn once per lock
-   * and then stable; the return turn that follows the strike carries on this same key stream. Empty for
-   * this brain's own turn, a serve turn, or before a lock.
-   */
-  planEarly(t: TurnState): PlannedKey[] {
-    if (t.data.kind !== 'return' || t.data.owner === this.player) return [];
-    const lock = t.log.find((e) => e.k === 'lock');
-    if (lock?.k !== 'lock') return [];
-    const word = t.prompts.find((p) => p.id === lock.prompt)?.options[lock.option];
-    if (word === undefined) return [];
-    let e = this.early;
-    if (e?.turnId !== t.data.turnId || e.lockτ !== lock.τ) {
-      e = { turnId: t.data.turnId, lockτ: lock.τ, word: word.word, offsets: this.earlyOffsets(t.data.turnId, word) };
-      this.early = e;
-    }
-    const from = e.lockτ;
-    return e.offsets.map((k) => ({ key: k.key, τ: from + k.τ }));
-  }
-
   /** Drops the plans of earlier turns when a new turn id is seen (ids restart when the brain plays another match). */
   private enterTurn(turnId: number): void {
     if (turnId === this.turnId) return;
@@ -222,7 +156,7 @@ export class CpuBrain {
     this.tossPlans.clear();
   }
 
-  /** PRE_SERVE: the toss. TOSS: a word pause + keys of the chosen serve word, judged against tossAt + 2a from now. */
+  /** PRE_SERVE: the toss. TOSS: reaction + keys of the chosen serve word, judged against tossAt + 2a from now. */
   private planServe(t: TurnState, d: ServeTurnData): PlannedKey[] {
     if (t.phase === 'preServe') {
       return d.wordSets[t.setIndex] === undefined ? [] : [{ key: 'toss', τ: Math.max(this.tossPlan(t, d), t.τ) }];
@@ -233,27 +167,23 @@ export class CpuBrain {
       const deadline = (t.tossAt ?? prompt.shownAt) + 2 * d.tossApexMs * d.pace;
       const aggression = this.profile.aggression * (d.serveNo === 2 ? CPU.secondServeAggression : 1);
       const option = this.choose(prompt.options, deadline - Math.max(prompt.shownAt, t.τ), aggression);
-      return this.newPlan(prompt.options, option, prompt.shownAt, this.profile.wordPauseMs, t.τ);
+      return this.newPlan(prompt.options, option, prompt.shownAt, this.profile.reactionMs, t.τ);
     });
     return this.rest(plan, prompt, t.τ);
   }
 
   /**
-   * Chase keys a serve-return pause (serve return) or an early pause (rally) after the chase is shown,
-   * then the choice keys a word pause after the chase completes, judged against T from now.
+   * Chase keys after the chase reaction (default: half a reaction for a rally ball, a full one for a
+   * serve return), then the choice keys a full reaction after the chase completes, judged against T from now.
    */
   private planReturn(t: TurnState, d: ReturnTurnData): PlannedKey[] {
     const chase = t.prompts.find((p) => p.kind === 'chase');
     const choice = t.prompts.find((p) => p.kind === 'choice');
     const chaseShownAt = chase?.shownAt ?? 0;
-    const chasePause = d.isServeReturn ? this.profile.serveChasePauseMs : this.profile.earlyPauseMs;
-    const chasePlan = this.promptPlan(t, chase?.id ?? d.promptBase, chaseShownAt, 1, () => {
-      const early = d.earlyFrom === null ? null : this.takeEarly(d);
-      // A rally chase is shown at the striker's lock (earlyFrom): the early stream's offsets count from there.
-      return early === null
-        ? this.newPlan([d.chase], 0, chaseShownAt, chasePause, t.τ)
-        : { shownAt: chaseShownAt, option: 0, from: 0, keys: early.map((k) => ({ key: k.key, τ: chaseShownAt + k.τ })) };
-    });
+    const chaseReactionMs = this.chaseReactionMs ?? this.profile.reactionMs * (d.isServeReturn ? 1 : CPU.rallyChaseReaction);
+    const chasePlan = this.promptPlan(t, chase?.id ?? d.promptBase, chaseShownAt, 1, () =>
+      this.newPlan([d.chase], 0, chaseShownAt, chaseReactionMs, t.τ),
+    );
     const chaseKeys = this.rest(chasePlan, chase, t.τ);
     const choiceShownAt = choice?.shownAt ?? chaseKeys[chaseKeys.length - 1]?.τ;
     if (choiceShownAt === undefined) return chaseKeys;
@@ -263,24 +193,9 @@ export class CpuBrain {
     const options = choice?.options ?? (insaneOffered(level) ? d.choice.options : d.choice.options.slice(0, TIERS.length));
     const choicePlan = this.promptPlan(t, choice?.id ?? d.promptBase + 1, choiceShownAt, options.length, () => {
       const option = this.choose(options, d.incoming.T - Math.max(choiceShownAt, t.τ), this.profile.aggression);
-      return this.newPlan(options, option, choiceShownAt, this.profile.wordPauseMs, t.τ);
+      return this.newPlan(options, option, choiceShownAt, this.profile.reactionMs, t.τ);
     });
     return [...chaseKeys, ...this.rest(choicePlan, choice, t.τ)];
-  }
-
-  /**
-   * The early plan's offsets for return turn `d` (consumed), or the same plan drawn now when none was asked for:
-   * the striker's turn is the one just before `d` (the engine numbers turns one by one).
-   */
-  private takeEarly(d: ReturnTurnData): PlannedKey[] {
-    const e = this.early;
-    this.early = null;
-    return e?.word === d.chase.word && e.turnId === d.turnId - 1 ? e.offsets : this.earlyOffsets(d.turnId - 1, d.chase);
-  }
-
-  /** The early chase of striker turn `turnId` as offsets from its lock: `word` from the early pause on, drawn from that turn's own stream. */
-  private earlyOffsets(turnId: number, word: WordOption): PlannedKey[] {
-    return this.typeWord(word, 0, this.profile.earlyPauseMs, seedRng(forkSeed(this.earlySeed, turnId)));
   }
 
   /** Planned toss τ for the current PRE_SERVE: its start + U(600, 1200), drawn once. */
@@ -307,9 +222,9 @@ export class CpuBrain {
     return plan;
   }
 
-  /** A plan to type `options[option]` in full, its first key `pauseMs` after `shownAt` and never before τ. */
-  private newPlan(options: readonly WordOption[], option: number, shownAt: number, pauseMs: number, τ: number): PromptPlan {
-    return { shownAt, option, from: 0, keys: this.typeWord(options[option], 0, Math.max(shownAt + pauseMs, τ)) };
+  /** A plan to type `options[option]` in full, its first key a reaction after `shownAt` and never before τ. */
+  private newPlan(options: readonly WordOption[], option: number, shownAt: number, reactionMs: number, τ: number): PromptPlan {
+    return { shownAt, option, from: 0, keys: this.typeWord(options[option], 0, Math.max(shownAt + reactionMs, τ)) };
   }
 
   /**
@@ -347,25 +262,25 @@ export class CpuBrain {
     return others[intBelow(this.rng, others.length)] ?? hardest;
   }
 
-  /** est = word pause + len·I·(1 + err/(1 − err)) + err·len·mean wrong-key pause (early-typing spec §5). */
+  /** Spec §3.8: est = reaction + len·I·(1 + err/(1 − err)) + err·len·225 ms. */
   private estimateMs(len: number): number {
-    const { err, wordPauseMs } = this.profile;
-    const { min, max } = TUNING.typist.wrongPauseRangeMs;
-    return wordPauseMs + len * this.intervalMs() * (1 + err / (1 - err)) + err * len * ((min + max) / 2);
+    const { err, reactionMs } = this.profile;
+    return reactionMs + len * this.intervalMs() * (1 + err / (1 - err)) + err * len * CPU.errorEstimateMs;
   }
 
-  /** Mean key interval I = 12/nominal WPM s, in ms. */
+  /** Mean key interval I = 12/WPM s, in ms. */
   private intervalMs(): number {
-    return 12000 / this.profile.nominalWpm;
+    return 12000 / this.profile.wpm;
   }
 
   /**
    * Keys of `word` from letter `from` on, the first at `start`: per-word factor f, jittered intervals,
    * hesitations on hard words, and errors (never on a prompt's first key) followed by the right letter
-   * 200–400 ms later.
+   * 150–300 ms later.
    */
-  private typeWord(word: WordOption | undefined, from: number, start: number, rng: RngState = this.rng): PlannedKey[] {
+  private typeWord(word: WordOption | undefined, from: number, start: number): PlannedKey[] {
     if (word === undefined) return [];
+    const { rng } = this;
     const f = clamp(1 + CPU.wordFactor.perZ * normalIH(rng), CPU.wordFactor.min, CPU.wordFactor.max);
     const keys: PlannedKey[] = [];
     let τ = start;
@@ -377,7 +292,7 @@ export class CpuBrain {
       }
       if (i > 0 && chance(rng, this.profile.err)) {
         keys.push({ key: wrongLetter(rng, letter), τ });
-        τ += uniformIn(rng, TUNING.typist.wrongPauseRangeMs.min, TUNING.typist.wrongPauseRangeMs.max);
+        τ += uniformIn(rng, CPU.errorPause.min, CPU.errorPause.max);
       }
       keys.push({ key: letter, τ });
     }
@@ -385,14 +300,13 @@ export class CpuBrain {
   }
 }
 
-/** Finite positive speeds, 0 ≤ err < 1, finite non-negative pauses, finite aggression: no NaN or negative times. */
-function isValidProfile(p: CpuProfile): boolean {
+/** Finite positive WPM, 0 ≤ err < 1, finite non-negative reaction, finite aggression: no NaN or negative times. */
+function isValidProfile({ wpm, err, reactionMs, aggression }: CpuProfile): boolean {
   return (
-    Number.isFinite(p.wpm) && p.wpm > 0 &&
-    Number.isFinite(p.nominalWpm) && p.nominalWpm > 0 &&
-    p.err >= 0 && p.err < 1 &&
-    isDelayMs(p.wordPauseMs) && isDelayMs(p.serveChasePauseMs) && isDelayMs(p.earlyPauseMs) &&
-    Number.isFinite(p.aggression)
+    Number.isFinite(wpm) && wpm > 0 &&
+    err >= 0 && err < 1 &&
+    isDelayMs(reactionMs) &&
+    Number.isFinite(aggression)
   );
 }
 

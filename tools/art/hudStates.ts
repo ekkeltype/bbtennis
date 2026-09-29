@@ -86,7 +86,7 @@ function servingState(
 
 /** Player 0's frame of `state` at τ (`overMs` once the match is over), with `events`. */
 function frameOf(state: MatchState, τ: number, events: GameEvent[] = [], overMs = 0): WorldFrame {
-  const vm = { pub: redact(state, LIVE_VIEWER), viewer: LIVE_VIEWER, turnτ: τ, liveTurn: null, early: null, events, overlay: NO_OVERLAY };
+  const vm = { pub: redact(state, LIVE_VIEWER), viewer: LIVE_VIEWER, turnτ: τ, liveTurn: null, events, overlay: NO_OVERLAY };
   return worldFrame(vm, overMs);
 }
 

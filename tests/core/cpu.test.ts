@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { aggressionAt, CPU_LEVELS, CpuBrain, cpuProfile, isMilestone, nominalWpmFor, typistProfile } from '../../src/core/cpu';
+import { CPU_LEVELS, CpuBrain, cpuProfile, isMilestone } from '../../src/core/cpu';
 import type { CpuPolicy, CpuProfile, PlannedKey } from '../../src/core/cpu';
 import { forkSeed, seedRng, uniform } from '../../src/core/rng';
-import { CPU_LEVEL_WPM, CPU_MILESTONES, CPU_NOMINAL_WPM, TUNING } from '../../src/core/tuning';
+import { CPU_LEVEL_WPM, CPU_MILESTONES } from '../../src/core/tuning';
 import { createTurn, startTurn, turnInput } from '../../src/core/turn';
 import { applyLetter, createPrompt, lockedWord } from '../../src/core/typing';
 import type { KeyResult } from '../../src/core/typing';
@@ -34,9 +34,9 @@ const SERVE_WORDS = ['lob', 'fencing', 'tournament'];
 const SPARE_SERVE_WORDS = ['ace', 'volley', 'basketball'];
 const CHOICE_WORDS = ['drop', 'topspin', 'interesting'];
 /** A mid-table typist used where the exact profile does not matter. */
-const PROFILE: CpuProfile = { wpm: 60, nominalWpm: 60, err: 0.03, wordPauseMs: 600, serveChasePauseMs: 500, earlyPauseMs: 300, aggression: 0.5 };
+const PROFILE: CpuProfile = { wpm: 60, err: 0.03, reactionMs: 600, aggression: 0.5 };
 /** No typing errors, so choice estimates are exact: est(len) = 500 + 200·len ms. */
-const CLEAN: CpuProfile = { wpm: 60, nominalWpm: 60, err: 0, wordPauseMs: 500, serveChasePauseMs: 500, earlyPauseMs: 500, aggression: 1 };
+const CLEAN: CpuProfile = { wpm: 60, err: 0, reactionMs: 500, aggression: 1 };
 
 function newTurn(data: TurnData, phase: TurnPhase, τ: number): TurnState {
   return {
@@ -90,9 +90,9 @@ function serveTurn(o: ServeOpts = {}): TurnState {
   return newTurn(data, 'preServe', leadInMs);
 }
 
-interface ReturnOpts { turnId?: number; owner?: PlayerId; chase?: string; choice?: string[]; T?: number; isServeReturn?: boolean; earlyFrom?: number | null }
+interface ReturnOpts { turnId?: number; owner?: PlayerId; chase?: string; choice?: string[]; T?: number; isServeReturn?: boolean }
 
-/** A started return turn: chase prompt (id promptBase) shown and locked at earlyFrom (0 by default for a rally, and for a serve return). */
+/** A started return turn: chase prompt (id promptBase) shown and locked at τ = 0. */
 function returnTurn(o: ReturnOpts = {}): TurnState {
   const owner = o.owner ?? 0;
   const turnId = o.turnId ?? 1;
@@ -123,7 +123,6 @@ function returnTurn(o: ReturnOpts = {}): TurnState {
     incoming,
     chase,
     isServeReturn,
-    earlyFrom: o.earlyFrom === undefined ? (isServeReturn ? null : 0) : o.earlyFrom,
     n: 0,
     choice: { options: (o.choice ?? CHOICE_WORDS).map(toOption), targets: [0, 1, 2].map(() => ({ x: 0, y: 0 })), m: 1 },
     pace: 1,
@@ -132,10 +131,9 @@ function returnTurn(o: ReturnOpts = {}): TurnState {
     power: 0,
   };
   const t = newTurn(data, 'chase', 0);
-  const shownAt = data.earlyFrom ?? 0;
-  t.prompts.push(createPrompt(data.promptBase, 'chase', [chase], shownAt));
+  t.prompts.push(createPrompt(data.promptBase, 'chase', [chase], 0));
   t.active = 0;
-  t.log.push({ τ: shownAt, k: 'show', prompt: data.promptBase });
+  t.log.push({ τ: 0, k: 'show', prompt: data.promptBase });
   return t;
 }
 
@@ -250,7 +248,6 @@ describe('CPU_LEVELS', () => {
     expect(CPU_LEVELS.length).toBe(15);
     expect(CPU_LEVELS.map((l) => l.level)).toEqual([...Array(15).keys()]);
     expect(CPU_LEVELS.map((l) => l.wpm)).toEqual([...CPU_LEVEL_WPM]);
-    expect([...CPU_LEVEL_WPM]).toEqual([25, 28, 32, 36, 41, 46, 52, 59, 67, 76, 86, 97, 110, 124, 140]);
   });
 
   it('climbs white → brown with 0–2 stripes, then black and the 2nd and 3rd dan', () => {
@@ -285,83 +282,40 @@ describe('isMilestone', () => {
   });
 });
 
-describe('typistProfile (early-typing spec §5)', () => {
-  it('uses the model end points at 25 and 140 WPM', () => {
-    expect(typistProfile(25, 0.2, 27)).toEqual({ wpm: 25, nominalWpm: 27, err: 0.07, wordPauseMs: 950, serveChasePauseMs: 600, earlyPauseMs: 500, aggression: 0.2 });
-    const top = typistProfile(140, 0.9, 198);
-    expect(top.err).toBeCloseTo(0.04, 12);
-    expect([top.wordPauseMs, top.serveChasePauseMs, top.earlyPauseMs]).toEqual([600, 400, 300]);
-  });
-
-  it('interpolates linearly in WPM between 25 and 140 (98 WPM: about 5 % errors and a 0.73 s word pause)', () => {
-    const p = typistProfile(98, 0.5, 120);
-    const f = (98 - 25) / 115;
-    expect(p.err).toBeCloseTo(0.07 - 0.03 * f, 12);
-    expect(p.wordPauseMs).toBeCloseTo(950 - 350 * f, 9);
-    expect(p.serveChasePauseMs).toBeCloseTo(600 - 200 * f, 9);
-    expect(p.earlyPauseMs).toBeCloseTo(500 - 200 * f, 9);
-    expect(p.err).toBeCloseTo(0.051, 3);
-    expect(p.wordPauseMs).toBeCloseTo(728, 0);
-  });
-
-  it('holds the rates and pauses outside 25–140 WPM but keeps the speeds', () => {
-    expect(typistProfile(15, 0.2, 16)).toMatchObject({ wpm: 15, nominalWpm: 16, err: 0.07, wordPauseMs: 950 });
-    expect(typistProfile(170, 0.9, 240)).toMatchObject({ wpm: 170, nominalWpm: 240, wordPauseMs: 600, earlyPauseMs: 300 });
-  });
-
-  it('defaults the nominal speed to the calibrated table', () => {
-    expect(typistProfile(CPU_LEVEL_WPM[6], 0.5).nominalWpm).toBe(CPU_NOMINAL_WPM[6]);
-  });
-
-  it('rejects a speed that is not finite and positive', () => {
-    for (const wpm of [0, -10, Number.NaN, Number.POSITIVE_INFINITY]) expect(() => typistProfile(wpm, 0.5)).toThrow(RangeError);
-  });
-});
-
-describe('nominalWpmFor', () => {
-  it('is the table at each level, linear between levels, and the end ratio beyond the ladder', () => {
-    CPU_LEVEL_WPM.forEach((wpm, level) => expect(nominalWpmFor(wpm)).toBe(CPU_NOMINAL_WPM[level]));
-    const mid = (CPU_LEVEL_WPM[6] + CPU_LEVEL_WPM[7]) / 2;
-    expect(nominalWpmFor(mid)).toBeCloseTo((CPU_NOMINAL_WPM[6] + CPU_NOMINAL_WPM[7]) / 2, 9);
-    expect(nominalWpmFor(12.5)).toBeCloseTo((12.5 * CPU_NOMINAL_WPM[0]) / 25, 9);
-    expect(nominalWpmFor(280)).toBeCloseTo((280 * CPU_NOMINAL_WPM[14]) / 140, 9);
-  });
-
-  it('always types faster underneath than the label', () => {
-    CPU_LEVEL_WPM.forEach((wpm, level) => expect(CPU_NOMINAL_WPM[level]).toBeGreaterThan(wpm));
-  });
-});
-
-describe('aggressionAt', () => {
-  it("is each milestone row's value at its WPM, linear between rows, held beyond them", () => {
-    for (const row of CPU_MILESTONES) expect(aggressionAt(row.wpm)).toBeCloseTo(row.aggression, 12);
-    expect(aggressionAt(30.5)).toBeCloseTo(0.2 + 0.15 * (5.5 / 11), 12);
-    expect(aggressionAt(10)).toBe(0.2);
-    expect(aggressionAt(200)).toBe(0.9);
-  });
-});
-
 describe('cpuProfile', () => {
-  it("is the typist model at the level's WPM, with its calibrated nominal speed and its belt aggression", () => {
-    CPU_LEVELS.forEach(({ level, wpm }) => {
-      expect(cpuProfile(level)).toEqual(typistProfile(wpm, aggressionAt(wpm), CPU_NOMINAL_WPM[level]));
-    });
+  it('uses the milestone rows exactly at milestone levels', () => {
+    const rows = MILESTONE_LEVELS.map((level) => cpuProfile(level));
+    expect(rows).toEqual(CPU_MILESTONES.map(({ wpm, err, reactionMs, aggression }) => ({ wpm, err, reactionMs, aggression })));
   });
 
-  it('uses the milestone aggression exactly at milestone levels', () => {
-    expect(MILESTONE_LEVELS.map((level) => cpuProfile(level).aggression)).toEqual(CPU_MILESTONES.map((m) => m.aggression));
+  it('interpolates linearly in WPM between white and yellow at level 1 (28 WPM)', () => {
+    const p = cpuProfile(1);
+    expect(p.wpm).toBe(28);
+    expect(p.err).toBeLessThan(0.07);
+    expect(p.err).toBeGreaterThan(0.055);
+    // 28 WPM is 30 % of the way from 25 to 35.
+    expect(p.err).toBeCloseTo(0.0655, 10);
+    expect(p.reactionMs).toBeCloseTo(870, 10);
+    expect(p.aggression).toBeCloseTo(0.245, 10);
   });
 
-  it('gets strictly faster, more accurate, quicker and more aggressive with every level', () => {
+  it('interpolates between brown and black at level 11 (81 WPM)', () => {
+    const p = cpuProfile(11);
+    const f = (81 - 65) / (90 - 65);
+    expect(p.wpm).toBe(81);
+    expect(p.err).toBeCloseTo(0.03 + (0.02 - 0.03) * f, 10);
+    expect(p.reactionMs).toBeCloseTo(550 + (450 - 550) * f, 10);
+    expect(p.aggression).toBeCloseTo(0.65 + (0.8 - 0.65) * f, 10);
+  });
+
+  it('gets strictly faster, more accurate, quicker to react and more aggressive with every level', () => {
     const profiles = CPU_LEVELS.map((l) => cpuProfile(l.level));
     for (let i = 1; i < profiles.length; i++) {
-      const [prev, cur] = [profiles[i - 1]!, profiles[i]!];
-      expect(cur.wpm).toBeGreaterThan(prev.wpm);
-      expect(cur.nominalWpm).toBeGreaterThan(prev.nominalWpm);
-      expect(cur.err).toBeLessThan(prev.err);
-      expect(cur.wordPauseMs).toBeLessThan(prev.wordPauseMs);
-      expect(cur.earlyPauseMs).toBeLessThan(prev.earlyPauseMs);
-      expect(cur.aggression).toBeGreaterThan(prev.aggression);
+      const [prev, cur] = [profiles[i - 1], profiles[i]];
+      expect(cur?.wpm).toBeGreaterThan(prev?.wpm ?? Infinity);
+      expect(cur?.err).toBeLessThan(prev?.err ?? -Infinity);
+      expect(cur?.reactionMs).toBeLessThan(prev?.reactionMs ?? -Infinity);
+      expect(cur?.aggression).toBeGreaterThan(prev?.aggression ?? Infinity);
     }
   });
 
@@ -427,13 +381,13 @@ describe('CpuBrain — serve turns', () => {
     expect(brain.plan(tossed).some((k) => k.key === 'toss')).toBe(false);
   });
 
-  it('types the serve word a word pause after the toss, then plans nothing more', () => {
+  it('types the serve word from a full reaction after the toss, then plans nothing more', () => {
     const brain = new CpuBrain(0, PROFILE, 3);
     const t = serveTurn();
     const fed = drive(brain, t);
     const [toss, first] = fed;
     expect(toss?.key).toBe('toss');
-    expect(first?.τ).toBe((toss?.τ ?? 0) + PROFILE.wordPauseMs);
+    expect(first?.τ).toBe((toss?.τ ?? 0) + PROFILE.reactionMs);
     const prompt = t.prompts[0];
     expect(prompt?.completedAt).not.toBeNull();
     const letters = fed.filter((k) => k.result !== 'wrong' && k.result !== 'toss').map((k) => k.key);
@@ -476,7 +430,7 @@ describe('CpuBrain — serve turns', () => {
   });
 
   it('counts expected error time in the estimate', () => {
-    // err 0.1: est(medium 7) = 500 + 7·200·(1 + 0.1/0.9) + 0.1·7·300 ≈ 2266 ms > 2400 − 250.
+    // err 0.1: est(medium 7) = 500 + 7·200·(1 + 0.1/0.9) + 0.1·7·225 ≈ 2213 ms > 2400 − 250.
     const sloppy: CpuProfile = { ...CLEAN, err: 0.1 };
     expect(serveTier(new CpuBrain(0, CLEAN, 5), serveTurn({ tossApexMs: 1200 }))).toBe('medium');
     expect(serveTier(new CpuBrain(0, sloppy, 5), serveTurn({ tossApexMs: 1200 }))).toBe('easy');
@@ -519,12 +473,12 @@ describe('CpuBrain — serve turns', () => {
 });
 
 describe('CpuBrain — return turns', () => {
-  it('starts a rally chase earlyPauseMs after it is shown and a serve-return chase serveChasePauseMs after', () => {
-    expect(new CpuBrain(0, PROFILE, 1).plan(returnTurn())[0]?.τ).toBe(PROFILE.earlyPauseMs);
-    expect(new CpuBrain(0, PROFILE, 1).plan(returnTurn({ isServeReturn: true }))[0]?.τ).toBe(PROFILE.serveChasePauseMs);
+  it('starts a rally chase after half a reaction and a serve-return chase after a full one', () => {
+    expect(new CpuBrain(0, PROFILE, 1).plan(returnTurn())[0]?.τ).toBe(PROFILE.reactionMs * 0.5);
+    expect(new CpuBrain(0, PROFILE, 1).plan(returnTurn({ isServeReturn: true }))[0]?.τ).toBe(PROFILE.reactionMs);
   });
 
-  it('plans the choice with the chase: its first key comes a word pause after the chase completes', () => {
+  it('plans the choice with the chase: its first key comes a full reaction after the chase completes', () => {
     const brain = new CpuBrain(0, PROFILE, 4);
     const t = returnTurn();
     const planned = brain.plan(t);
@@ -533,7 +487,7 @@ describe('CpuBrain — return turns', () => {
     const [chase, choice] = t.prompts;
     expect(chase?.completedAt).not.toBeNull();
     expect(choice?.completedAt).not.toBeNull();
-    expect(choice?.tFirst).toBe((chase?.completedAt ?? 0) + PROFILE.wordPauseMs);
+    expect(choice?.tFirst).toBe((chase?.completedAt ?? 0) + PROFILE.reactionMs);
     expect(t.phase).toBe('choice');
     expect(brain.plan(t)).toEqual([]);
   });
@@ -573,6 +527,31 @@ describe('CpuBrain — return turns', () => {
   });
 });
 
+describe('CpuBrain — chase reaction override (opts.chaseReactionMs)', () => {
+  it('replaces the reaction before rally and serve-return chase words', () => {
+    const opts = { chaseReactionMs: 250 };
+    expect(new CpuBrain(0, PROFILE, 1, opts).plan(returnTurn())[0]?.τ).toBe(250);
+    expect(new CpuBrain(0, PROFILE, 1, opts).plan(returnTurn({ isServeReturn: true }))[0]?.τ).toBe(250);
+    expect(new CpuBrain(0, PROFILE, 1, { chaseReactionMs: 0 }).plan(returnTurn())[0]?.τ).toBe(0);
+  });
+
+  it('leaves the full profile reaction before choice and serve words', () => {
+    const opts = { chaseReactionMs: 250 };
+    const t = returnTurn();
+    drive(new CpuBrain(0, PROFILE, 4, opts), t);
+    const [chase, choice] = t.prompts;
+    expect(choice?.tFirst).toBe((chase?.completedAt ?? Number.NaN) + PROFILE.reactionMs);
+    const [toss, first] = drive(new CpuBrain(0, PROFILE, 3, opts), serveTurn());
+    expect(first?.τ).toBe((toss?.τ ?? Number.NaN) + PROFILE.reactionMs);
+  });
+
+  it('rejects a chase reaction that would produce NaN or negative times', () => {
+    for (const chaseReactionMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => new CpuBrain(0, PROFILE, 1, { chaseReactionMs })).toThrow(RangeError);
+    }
+  });
+});
+
 describe('CpuBrain — skipped keys', () => {
   const SLOPPY: CpuProfile = { ...PROFILE, err: 0.2 };
 
@@ -602,7 +581,7 @@ describe('CpuBrain — skipped keys', () => {
     expect(skipped.right).toBeGreaterThan(0);
   });
 
-  it('completes a chase with a skipped key, then starts the choice a word pause after the chase really completes', () => {
+  it('completes a chase with a skipped key, then starts the choice a full reaction after the chase really completes', () => {
     for (let seed = 0; seed < 20; seed++) {
       const brain = new CpuBrain(0, SLOPPY, seed);
       const t = returnTurn();
@@ -614,7 +593,7 @@ describe('CpuBrain — skipped keys', () => {
       const [chase, choice] = t.prompts;
       expect(chase?.completedAt).not.toBeNull();
       expect(choice?.completedAt).not.toBeNull();
-      expect(choice?.tFirst).toBe((chase?.completedAt ?? Number.NaN) + SLOPPY.wordPauseMs);
+      expect(choice?.tFirst).toBe((chase?.completedAt ?? Number.NaN) + SLOPPY.reactionMs);
     }
   });
 });
@@ -627,7 +606,7 @@ describe('CpuBrain — turn ids', () => {
 
     const ret = returnTurn({ turnId: 1, chase: 'bench' });
     const fed = drive(brain, ret);
-    expect(fed[0]).toMatchObject({ key: 'b', τ: PROFILE.earlyPauseMs });
+    expect(fed[0]).toMatchObject({ key: 'b', τ: PROFILE.reactionMs * 0.5 });
     expect(ret.prompts.map((p) => p.completedAt !== null)).toEqual([true, true]);
 
     const serve = serveTurn({ turnId: 2, leadInMs: 4000 });
@@ -671,15 +650,13 @@ describe('CpuBrain — policies', () => {
 describe('CpuBrain — key timing', () => {
   const EASY_MEDIUM = wordsOf(['easy', 'medium'], 1000);
 
-  it.each([0, 6, 9, 12, 14])("types 1,000 easy/medium words within ±10 %% of level %i's nominal speed slowed by its error pauses", (level) => {
+  it.each([0, 6, 9, 12, 14])('types 1,000 easy/medium words within ±10 %% of the level %i WPM, errors included', (level) => {
     const profile = cpuProfile(level);
-    const { min, max } = TUNING.typist.wrongPauseRangeMs;
-    const expected = 12000 / (12000 / profile.nominalWpm + profile.err * ((min + max) / 2));
     const words = typeWords(profile, 100 + level, EASY_MEDIUM).filter((w) => w.word.tier !== 'hard');
     expect(words.length).toBeGreaterThanOrEqual(1000);
     expect(words.some((w) => w.prompt.wrongKeys > 0)).toBe(true);
-    expect(averageWpm(words) / expected).toBeGreaterThan(0.9);
-    expect(averageWpm(words) / expected).toBeLessThan(1.1);
+    expect(averageWpm(words) / profile.wpm).toBeGreaterThan(0.9);
+    expect(averageWpm(words) / profile.wpm).toBeLessThan(1.1);
   });
 
   it.each([0, 6, 12])('never errs on a first key; level %i wrong-key rate is within ±25 %% of err', (level) => {
@@ -692,7 +669,7 @@ describe('CpuBrain — key timing', () => {
     expect(wrong / slots / profile.err).toBeLessThan(1.25);
   });
 
-  it('follows each wrong key with the right letter 200–400 ms later', () => {
+  it('follows each wrong key with the right letter 150–300 ms later', () => {
     const words = typeWords({ ...PROFILE, err: 0.3 }, 5, wordsOf(['easy', 'medium', 'hard'], 200));
     let errors = 0;
     for (const w of words) {
@@ -704,16 +681,16 @@ describe('CpuBrain — key timing', () => {
         expect(k.key).not.toBe(expected);
         expect(next?.key).toBe(expected);
         expect(next?.result === 'correct' || next?.result === 'completed').toBe(true);
-        expect((next?.τ ?? 0) - k.τ).toBeGreaterThanOrEqual(200);
-        expect((next?.τ ?? 0) - k.τ).toBeLessThan(400);
+        expect((next?.τ ?? 0) - k.τ).toBeGreaterThanOrEqual(150);
+        expect((next?.τ ?? 0) - k.τ).toBeLessThan(300);
       });
     }
     expect(errors).toBeGreaterThan(300);
   });
 
   it('spaces keys by I·f·(1 + 0.35·(u1 + u2 − 1)) with f clamped to 0.7–1.4', () => {
-    const profile: CpuProfile = { ...PROFILE, wpm: 120, nominalWpm: 120, err: 0 };
-    const interval = 12000 / profile.nominalWpm;
+    const profile: CpuProfile = { ...PROFILE, wpm: 120, err: 0 };
+    const interval = 12000 / profile.wpm;
     const words = typeWords(profile, 8, EASY_MEDIUM.slice(0, 400)).filter((w) => w.word.tier !== 'hard');
     const gaps = words.flatMap(correctGaps);
     expect(Math.min(...gaps)).toBeGreaterThanOrEqual(interval * 0.7 * 0.65);
@@ -724,8 +701,8 @@ describe('CpuBrain — key timing', () => {
   });
 
   it('hesitates 250–500 ms before about 10 % of the keys after the first of a hard word', () => {
-    const profile: CpuProfile = { ...PROFILE, wpm: 120, nominalWpm: 120, err: 0 };
-    const maxPlain = (12000 / profile.nominalWpm) * 1.4 * 1.35;
+    const profile: CpuProfile = { ...PROFILE, wpm: 120, err: 0 };
+    const maxPlain = (12000 / profile.wpm) * 1.4 * 1.35;
     const hard = typeWords(profile, 9, wordsOf(['hard'], 500), 'alwaysEasy').filter((w) => w.word.tier === 'hard');
     const gaps = hard.flatMap(correctGaps);
     const hesitations = gaps.filter((g) => g >= maxPlain);
@@ -828,13 +805,10 @@ describe('CpuBrain — plan contract', () => {
       { ...PROFILE, wpm: 0 },
       { ...PROFILE, wpm: -30 },
       { ...PROFILE, wpm: Number.NaN },
-      { ...PROFILE, nominalWpm: 0 },
-      { ...PROFILE, nominalWpm: Number.POSITIVE_INFINITY },
       { ...PROFILE, err: 1 },
       { ...PROFILE, err: -0.1 },
-      { ...PROFILE, wordPauseMs: -1 },
-      { ...PROFILE, serveChasePauseMs: Number.POSITIVE_INFINITY },
-      { ...PROFILE, earlyPauseMs: Number.NaN },
+      { ...PROFILE, reactionMs: -1 },
+      { ...PROFILE, reactionMs: Number.POSITIVE_INFINITY },
       { ...PROFILE, aggression: Number.NaN },
     ];
     for (const profile of bad) expect(() => new CpuBrain(0, profile, 1)).toThrow(RangeError);
@@ -842,7 +816,7 @@ describe('CpuBrain — plan contract', () => {
 });
 
 describe('CPU and the insane option (power-meter spec §5)', () => {
-  const EXACT: CpuProfile = { wpm: 120, nominalWpm: 120, err: 0, wordPauseMs: 300, serveChasePauseMs: 300, earlyPauseMs: 150, aggression: 1 };
+  const EXACT = { wpm: 120, err: 0, reactionMs: 300, aggression: 1 };
 
   /** The first key the plan types after the chase word's last correct letter: the chosen option's initial. */
   function choiceInitial(keys: { key: string }[], chase: string): string | undefined {
@@ -879,67 +853,5 @@ describe('CPU and the insane option (power-meter spec §5)', () => {
       const initial = choiceInitial(new CpuBrain(1, EXACT, 1, { policy }).plan(t), 'ball');
       expect(banned, policy).not.toContain(initial);
     }
-  });
-});
-
-describe('CpuBrain — early typing (early-typing spec §2, §5)', () => {
-  /** Player 1's return turn 5 (the striker): chase 'rally' fed at 100..500, then 'drop' locked at 900. */
-  function striker(): TurnState {
-    const t = returnTurn({ owner: 1, turnId: 5 });
-    [...'rally'].forEach((key, i) => feed(t, { key, τ: 100 * (i + 1) }));
-    feed(t, { key: 'd', τ: 900 });
-    t.log.push({ τ: 900, k: 'lock', prompt: t.prompts[1]!.id, option: 0, ch: 'd' });
-    return t;
-  }
-
-  it('plans the locked word from the lock + earlyPauseMs, the same on every call', () => {
-    const brain = new CpuBrain(0, CLEAN, 3);
-    const t = striker();
-    const keys = brain.planEarly(t);
-    expect(keys.map((k) => k.key).join('')).toBe('drop');
-    expect(keys[0]?.τ).toBe(900 + CLEAN.earlyPauseMs);
-    expect(brain.planEarly(t)).toEqual(keys);
-  });
-
-  it('plans nothing for its own turn, a serve turn, or before a lock', () => {
-    expect(new CpuBrain(1, CLEAN, 3).planEarly(striker())).toEqual([]);
-    expect(new CpuBrain(0, CLEAN, 3).planEarly(serveTurn())).toEqual([]);
-    expect(new CpuBrain(0, CLEAN, 3).planEarly(returnTurn({ owner: 1 }))).toEqual([]);
-  });
-
-  it('carries on the same key stream in the return turn that starts with the early keys', () => {
-    const brain = new CpuBrain(0, CLEAN, 4);
-    const early = brain.planEarly(striker());
-    const strikeτ = early[1]!.τ + 1; // two keys come before the strike
-    const t = returnTurn({ owner: 0, turnId: 6, chase: 'drop', earlyFrom: 900 - strikeτ });
-    const chase = t.prompts[0]!;
-    for (const k of early.slice(0, 2)) applyLetter(chase, k.key, k.τ - strikeτ);
-    const rest = brain.plan(t);
-    const expected = early.slice(2).map((k) => ({ key: k.key, τ: k.τ - strikeτ }));
-    // (lock + dt) − strike on the striker's side, (lock − strike) + dt on the receiver's: equal up to rounding.
-    expect(rest.slice(0, 2).map((k) => k.key)).toEqual(expected.map((k) => k.key));
-    rest.slice(0, 2).forEach((k, i) => expect(k.τ).toBeCloseTo(expected[i]!.τ, 6));
-  });
-
-  it('draws each early plan from its own stream: asking for it, or not, never changes the brain\'s other plans', () => {
-    const asked = new CpuBrain(0, PROFILE, 7);
-    asked.planEarly(striker());
-    const skipped = new CpuBrain(0, PROFILE, 7);
-    expect(asked.plan(returnTurn({ turnId: 9 }))).toEqual(skipped.plan(returnTurn({ turnId: 9 })));
-  });
-
-  it('plans the same chase keys whether the early plan was asked for before the strike or only in the return turn', () => {
-    const asked = new CpuBrain(0, PROFILE, 7);
-    const early = asked.planEarly(striker());
-    const strikeτ = early.at(-1)!.τ + 500;
-    const ret = (): TurnState => returnTurn({ owner: 0, turnId: 6, chase: 'drop', earlyFrom: 900 - strikeτ });
-    expect(new CpuBrain(0, PROFILE, 7).plan(ret())).toEqual(asked.plan(ret()));
-  });
-
-  it('a pause that ends after the strike starts the chase in the turn, with no second pause', () => {
-    const brain = new CpuBrain(0, PROFILE, 4);
-    const lockToStrike = 100;
-    const t = returnTurn({ owner: 0, turnId: 6, chase: 'drop', earlyFrom: -lockToStrike });
-    expect(brain.plan(t)[0]?.τ).toBe(PROFILE.earlyPauseMs - lockToStrike);
   });
 });

@@ -384,36 +384,6 @@ function returnPrompts(c: Ctx, d: ReturnTurnData): void {
   if (choice && (v.phase === 'choice' || v.phase === 'queued')) choicePlates(c, d, choice, style);
 }
 
-/**
- * The receiver's early chase (early-typing spec §6.4): the chase plate above their head while the
- * striker's return turn is shown, typed so far, with no timing bar (the ball is not struck yet). At the
- * strike the turn's own chase plate takes over in the same place with the same progress.
- */
-function earlyPlate(c: Ctx): void {
-  const early = c.f.vm.early;
-  const opt = early?.prompt.options[0];
-  if (early === null || opt === undefined) return;
-  const p = early.player;
-  const style: PlateStyle = c.f.local === p ? 'localActive' : 'remote';
-  const head = headAt(c, p, c.poses[p].feet);
-  const scale = c.o.prefs.largeWords ? 2 : 1;
-  const box = layoutSingle(opt.len, head.x, head.y, scale);
-  const chip = chipOf(c, p, style);
-  const { prompt } = early;
-  c.s.plates.push(
-    plate(c, box, opt, style, {
-      typed: prompt.typed,
-      locked: true,
-      lastWrongAgeMs: prompt.lastWrongAt === null ? null : c.f.τ - prompt.lastWrongAt,
-      isNextCursor: style === 'localActive' && prompt.completedAt === null,
-      nameChip: chip?.name ?? null,
-      oppColor: chip?.color ?? null,
-      scale,
-    }),
-  );
-  if (c.o.pop && style === 'localActive') c.s.pops.push(box);
-}
-
 /** WAIT tag and SPACE keycap above the viewer's own player. */
 function playerTags(c: Ctx): void {
   const me = c.f.local;
@@ -434,8 +404,8 @@ function playerTags(c: Ctx): void {
  * What the prompt layer shows this frame (spec §4.2), or nothing while paused or counting down:
  * serve words (local-active stack, the opponent's hidden plates, spectators' remote plates) with
  * their box markers; the chase plate above the owner's turn-start head (fading out once complete);
- * the choice stack beside its typist with rings and leaders; the receiver's early chase plate; the
- * local timing bar; the serve reveal flip; the border pop; the WAIT tag, SPACE keycap and first-letter hint.
+ * the choice stack beside its typist with rings and leaders; the local timing bar; the serve reveal
+ * flip; the border pop; the WAIT tag, SPACE keycap and first-letter hint.
  */
 export function promptScene(f: WorldFrame, poses: readonly [PlayerPose, PlayerPose], o: PromptOptions): PromptScene {
   const s: PromptScene = { plates: [], rings: [], leaders: [], bar: null, flip: null, pops: [], tags: [] };
@@ -444,7 +414,6 @@ export function promptScene(f: WorldFrame, poses: readonly [PlayerPose, PlayerPo
   const c: Ctx = { f, t: f.turn, v: f.view, poses, o, s };
   if (f.turn.data.kind === 'serve') servePrompts(c, f.turn.data);
   else returnPrompts(c, f.turn.data);
-  earlyPlate(c);
   playerTags(c);
   return s;
 }

@@ -4,7 +4,6 @@ import { ballAt, stanceFor } from '../../src/core/trajectory';
 import {
   appendWordSet,
   createTurn,
-  MAX_EARLY_KEYS,
   nextDeadline,
   simTime,
   startTurn,
@@ -135,8 +134,8 @@ describe('serve turn', () => {
     expect(s.shot.landing.x).toBeCloseTo(s.target.x, 12);
     expect(s.shot.landing.y).toBeCloseTo(s.target.y, 12);
     expect(s.kmh).toBe(Math.round(95 * v * 1.0 * 1.25));
-    // Serve T: pace·(2.2 s + 0.1 s·len)/v · place 1 + the reading allowance (0.5 s + 0.35 s·pace, early-typing tuning).
-    expect(s.flight.T).toBeCloseTo((2200 + 100 * 4) / v + 850, 6);
+    // Serve T: pace·(2.2 s + 0.1 s·len)/v · place 1 · 0.85⁰ + (0.5 s + 0.5 s·pace).
+    expect(s.flight.T).toBeCloseTo((2200 + 100 * 4) / v + 1000, 6);
     expect(s.flight.grace).toBe(400);
     expect(s.flight.isServe).toBe(true);
     expect(s.flight.destEnd).toBe(1);
@@ -339,8 +338,8 @@ describe('return turn', () => {
     expect(s.flight.p0).toEqual({ x: RALLY_IN.contact.x, y: RALLY_IN.contact.y, z: 1 });
     expect(s.flight.destEnd).toBe(0);
     expect(s.flight.isServe).toBe(false);
-    // Rally T at n = data.n + 1 = 2: pace·rallyBase/v · place(easy) · P(2) (early-typing spec §3).
-    expect(s.flight.T).toBeCloseTo((TUNING.flight.rallyBaseMs / v) * TUNING.flight.place.easy * TUNING.flight.pressure, 6);
+    // Rally T at n = data.n + 1 = 2: pace·(2.2 s + 0.1 s·len)/v · place(easy) 1.0 · P(2).
+    expect(s.flight.T).toBeCloseTo(((2200 + 100 * 4) / v) * 1.0 * TUNING.flight.pressure, 6);
     expect(s.kmh).toBe(Math.round((95 * v * 1.0) / TUNING.flight.pressure));
     expect(s.forehand).toBe(stanceFor(RALLY_IN.contact, 1, restSpot(1)).forehand);
     expect(end[0]).toEqual({
@@ -356,7 +355,7 @@ describe('return turn', () => {
     expect(s.option).toBe(2);
     expect(s.word.tier).toBe('hard');
     expect(s.target).toEqual(rallyTargets(0, 1)[2]);
-    expect(s.flight.T).toBeCloseTo((TUNING.flight.rallyBaseMs / s.v) * TUNING.flight.place.hard * TUNING.flight.pressure, 6);
+    expect(s.flight.T).toBeCloseTo(((2200 + 100 * 10) / s.v) * 0.7 * TUNING.flight.pressure, 6);
   });
 
   it('stretch: completion in (T, T + grace] strikes at completion with v × 0.9 and σ + 0.5', () => {
@@ -942,68 +941,5 @@ describe('power meter in the turn runner (power-meter spec §4)', () => {
     const events = [...typeAt(t, 'bzall', 100), ...typeAt(t, 'drop', 700), ...turnClock(t, 3000)];
     expect(powerEvents(events)).toEqual([]);
     expect(t.prompts[1]!.options).toHaveLength(3);
-  });
-});
-
-describe('early typing (early-typing spec §2)', () => {
-  const EARLY = (): ReturnTurnData => returnData({ earlyFrom: -1000 }); // chase 'ball', choice drop / volley / crosscourt
-
-  it('shows the chase at earlyFrom and applies early keys at their own τ before τ 0', () => {
-    const t = createTurn(EARLY());
-    const events = startTurn(t, [{ key: 'b', τ: -600 }, { key: 'a', τ: -500 }]);
-    const chase = t.prompts[0]!;
-    expect(chase.shownAt).toBe(-1000);
-    expect([chase.typed, chase.tFirst, chase.tLast]).toEqual([2, -600, -500]);
-    expect(tags(events)).toEqual(['turnStart@0', 'promptShown@-1000', 'keyOk@-600', 'keyOk@-500']);
-    expect(t.phase).toBe('chase');
-    type(t, 'll', 100);
-    expect(chase.completedAt).toBe(200);
-    expect(t.prompts[1]?.shownAt).toBe(200);
-  });
-
-  it('a chase finished before the strike shows the choice at τ 0, and later early keys never reach it', () => {
-    const t = createTurn(EARLY());
-    startTurn(t, [...'balldr'].map((key, i) => ({ key, τ: -900 + 100 * i })));
-    const [chase, choice] = t.prompts;
-    expect(chase?.completedAt).toBe(-600);
-    expect(choice?.shownAt).toBe(0);
-    expect([choice?.locked, choice?.typed]).toEqual([null, 0]);
-    expect(t.phase).toBe('choice');
-  });
-
-  it('an early wrong key is a slip that empties the meter at its τ', () => {
-    const t = createTurn(returnData({ earlyFrom: -1000, power: 3 }));
-    const events = startTurn(t, [{ key: 'b', τ: -800 }, { key: 'x', τ: -700 }, { key: 'a', τ: -600 }]);
-    expect(t.prompts[0]).toMatchObject({ slips: 1, wrongKeys: 1, typed: 2 });
-    expect(events).toContainEqual(expect.objectContaining({ type: 'power', from: 3, to: 0, τ: -700 }));
-  });
-
-  it.each([
-    ['a key before earlyFrom', [{ key: 'b', τ: -1001 }]],
-    ['a key after the strike', [{ key: 'b', τ: 1 }]],
-    ['keys out of order', [{ key: 'b', τ: -500 }, { key: 'a', τ: -600 }]],
-    ['a non-letter', [{ key: 'toss', τ: -500 }]],
-    ['a non-finite τ', [{ key: 'b', τ: Number.NaN }]],
-    ['more than MAX_EARLY_KEYS keys', Array.from({ length: MAX_EARLY_KEYS + 1 }, (_, i) => ({ key: 'z', τ: -900 + i }))],
-  ])('ignores the whole list with %s', (_name, early) => {
-    const t = createTurn(EARLY());
-    startTurn(t, early);
-    expect(t.prompts[0]).toMatchObject({ typed: 0, wrongKeys: 0, shownAt: -1000 });
-  });
-
-  it('takes no early keys on a serve return', () => {
-    const t = createTurn(returnData({ isServeReturn: true, earlyFrom: null, n: 0 }));
-    startTurn(t, [{ key: 'b', τ: -100 }]);
-    expect(t.prompts[0]).toMatchObject({ typed: 0, shownAt: 0 });
-  });
-
-  it('training: a chase shown early freezes from τ 0, and not at all once early keys came', () => {
-    const frozen = createTurn(returnData({ earlyFrom: -1000, freezeFirst: true }));
-    startTurn(frozen);
-    expect(frozen.freezeSince).toBe(0);
-    const typed = createTurn(returnData({ earlyFrom: -1000, freezeFirst: true }));
-    startTurn(typed, [{ key: 'b', τ: -500 }]);
-    expect(typed.freezeSince).toBeNull();
-    expect(typed.seenKinds).toContain('chase');
   });
 });
