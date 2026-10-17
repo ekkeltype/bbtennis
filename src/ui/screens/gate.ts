@@ -22,9 +22,10 @@ function isStartKey(e: KeyboardEvent): boolean {
 /**
  * The start gate (spec §4.6): "Click to start" (on a top-level page also "or press any key", a fresh
  * press: auto-repeats of a held key are ignored). The gesture focuses the window, creates the
- * AudioContext and unlocks speech through `openGate`.
+ * AudioContext and unlocks speech through `openGate`. `logo` builds the logo for each showing
+ * (default: the game's logo canvas).
  */
-export function gateScreen(ctx: Pick<UiContext, 'openGate'>): ScreenFactory {
+export function gateScreen(ctx: Pick<UiContext, 'openGate'>, logo: () => HTMLElement = logoCanvas): ScreenFactory {
   return () => {
     const anyKey = isTopLevel();
     let opened = false;
@@ -41,7 +42,7 @@ export function gateScreen(ctx: Pick<UiContext, 'openGate'>): ScreenFactory {
     const el = h(
       'div',
       { class: 'screen gate', onclick: open },
-      h('div', { class: 'logo-wrap' }, logoCanvas()),
+      h('div', { class: 'logo-wrap' }, logo()),
       h('p', { class: 'start blink' }, 'CLICK TO START'),
       anyKey ? h('p', { class: 'sub' }, 'OR PRESS ANY KEY') : null,
     );

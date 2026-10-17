@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Engine } from '../../src/core/engine';
 import type { MatchState } from '../../src/core/types';
 import type { UiContext } from '../../src/ui/context';
+import { h } from '../../src/ui/dom';
 import { Router } from '../../src/ui/router';
 import { cpuSetupScreen } from '../../src/ui/screens/cpuSetup';
 import { gateScreen } from '../../src/ui/screens/gate';
@@ -118,6 +119,21 @@ describe('start gate', () => {
     router.go('gate');
     press('Escape', document.body);
     expect(ctx.openGate).not.toHaveBeenCalled();
+  });
+
+  it('shows the logo it is given instead of the default one', () => {
+    const ctx = fakeContext();
+    router.register('gate', gateScreen(ctx, () => h('p', { class: 'custom-logo' }, 'ARCADE')));
+    router.go('gate');
+    expect(root.querySelector('.gate .logo-wrap .custom-logo')).not.toBeNull();
+    expect(root.querySelector('.gate canvas')).toBeNull();
+  });
+
+  it('shows the typing logo by default', () => {
+    const ctx = fakeContext();
+    router.register('gate', gateScreen(ctx));
+    router.go('gate');
+    expect(root.querySelector('.gate .logo-wrap canvas')).not.toBeNull();
   });
 
   it('a click opens it, once', () => {
