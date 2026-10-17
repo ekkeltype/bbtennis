@@ -21,6 +21,8 @@ const buttonNamed = (text: string): HTMLButtonElement => {
   if (!b) throw new Error(`no button ${text}`);
   return b;
 };
+/** The game root, focused during a match: keys typed in a match start here and bubble to the Router's document listener. */
+const gameRoot = (): HTMLElement => document.getElementById('app')!;
 const key = (target: EventTarget, code: string, k = code): void => {
   target.dispatchEvent(new KeyboardEvent('keydown', { code, key: k, bubbles: true, cancelable: true }));
 };
@@ -60,9 +62,12 @@ describe('pausing a vs-CPU match', () => {
     expect(keysOn()).toBe(true);
   });
 
-  it('Esc pauses the session, turns the keys off and opens the pause menu', () => {
+  it('Esc pauses the session, turns the keys off and opens the pause menu (and does not resume at once)', () => {
     pause.mockClear();
-    key(window, 'Escape');
+    resume.mockClear();
+    expect(document.activeElement).toBe(gameRoot());
+    key(gameRoot(), 'Escape');
+    expect(resume).not.toHaveBeenCalled();
     expect(pause).toHaveBeenCalledOnce();
     expect(app.router.current).toBe('pause');
     expect(keysOn()).toBe(false);
@@ -82,9 +87,9 @@ describe('pausing a vs-CPU match', () => {
     expect(resume).not.toHaveBeenCalled();
   });
 
-  it('Tab, the pause icon, window blur and a hidden tab pause too; Esc on the menu resumes', () => {
+  it('Tab, the pause icon, window blur, a hidden tab and leaving fullscreen pause too; Esc on the menu resumes', () => {
     const opens: (() => void)[] = [
-      () => key(window, 'Tab'),
+      () => key(gameRoot(), 'Tab'),
       () => document.querySelector<HTMLButtonElement>('#ui .pause-hit')!.click(),
       () => window.dispatchEvent(new Event('blur')),
       () => {
@@ -92,6 +97,8 @@ describe('pausing a vs-CPU match', () => {
         document.dispatchEvent(new Event('visibilitychange'));
         Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
       },
+      // In fullscreen the browser takes Esc to leave it, and the page never sees the keydown.
+      () => document.dispatchEvent(new Event('fullscreenchange')),
     ];
     for (const open of opens) {
       pause.mockClear();
@@ -105,8 +112,17 @@ describe('pausing a vs-CPU match', () => {
     }
   });
 
+  it('entering fullscreen does not pause', () => {
+    pause.mockClear();
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => document.documentElement });
+    document.dispatchEvent(new Event('fullscreenchange'));
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => null });
+    expect(pause).not.toHaveBeenCalled();
+    expect(app.router.current).toBe('match');
+  });
+
   it('Quit leaves the match for the main menu with the keys off', () => {
-    key(window, 'Escape');
+    key(gameRoot(), 'Escape');
     buttonNamed('QUIT').click();
     expect(app.router.current).toBe('mainMenu');
     expect(keysOn()).toBe(false);

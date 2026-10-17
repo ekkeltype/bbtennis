@@ -92,6 +92,10 @@ export class ArcadeApp implements ArcadeContext {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.pauseMatch();
     });
+    // In fullscreen the browser takes Esc to leave it, so the page never sees that keydown.
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) this.pauseMatch();
+    });
   }
 
   /** Registers the screens, waits for the fonts, starts the loop and shows the gate. */
@@ -170,7 +174,7 @@ export class ArcadeApp implements ArcadeContext {
     this.restartMatch();
   }
 
-  /** Pauses the match and opens the pause menu: from the match screen only, and not once the match is decided. */
+  /** Pauses the match and opens the pause menu (Esc/Tab, the pause icon, blur, a hidden tab, leaving fullscreen): from the match screen only, and not once the match is decided. */
   pauseMatch(): void {
     const m = this.match;
     if (!m || this.router.current !== 'match' || m.session.view?.state.status === 'over') return;

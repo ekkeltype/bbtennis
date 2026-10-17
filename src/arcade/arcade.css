@@ -87,6 +87,13 @@
   margin-left: calc(2 * var(--u));
 }
 
+#ui .arcade-how-to .controls .or {
+  font-family: var(--body);
+  font-size: calc(9 * var(--u));
+  color: var(--grey);
+  white-space: pre;
+}
+
 #ui .arcade-how-to .rule {
   font-family: var(--body);
   font-size: calc(10 * var(--u));

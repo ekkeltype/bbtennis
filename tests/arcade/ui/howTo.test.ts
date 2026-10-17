@@ -34,7 +34,12 @@ describe('How to Play', () => {
     const rows = [...root.querySelectorAll('table.controls tbody tr')].map((tr) => [...tr.querySelectorAll('kbd')].map((k) => k.textContent).join(' '));
     const actions = [...root.querySelectorAll('table.controls tbody th')].map((th) => th.textContent);
     expect(actions).toEqual(['MOVE', 'TOPSPIN', 'SLICE', 'LOB', 'PAUSE']);
-    expect(rows).toEqual(['W A S D ARROWS', 'J Z', 'K X', 'L C', 'ESC TAB']);
+    expect(rows).toEqual(['W A S D ARROWS', 'J Z', 'K X', 'L C', 'ESC TAB ESC TAB']);
+  });
+
+  it('shows Esc and Tab as pause keys in both layouts', () => {
+    const pause = [...root.querySelectorAll('table.controls tbody tr')].find((tr) => tr.querySelector('th')?.textContent === 'PAUSE')!;
+    expect([...pause.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['ESC / TAB', 'ESC / TAB']);
   });
 
   it('explains the swing timing, aim, serve and shot types', () => {

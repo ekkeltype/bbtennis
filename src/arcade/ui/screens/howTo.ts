@@ -3,13 +3,16 @@ import { h } from '../../../ui/dom';
 import type { ScreenFactory } from '../../../ui/router';
 import type { ArcadeContext } from '../context';
 
-/** The controls of spec §4.1 (and Tab, which also pauses, §6.3): each action's keys in the two layouts. */
-const CONTROLS: readonly { action: string; keys: readonly [readonly string[], readonly string[]] }[] = [
+/**
+ * The controls of spec §4.1 (and Tab, which also pauses, §6.3): each action's keys in the two
+ * layouts. `either`: the keys are alternatives (shown "ESC / TAB"), not a set like W A S D.
+ */
+const CONTROLS: readonly { action: string; keys: readonly [readonly string[], readonly string[]]; either?: true }[] = [
   { action: 'MOVE', keys: [['W', 'A', 'S', 'D'], ['ARROWS']] },
   { action: 'TOPSPIN', keys: [['J'], ['Z']] },
   { action: 'SLICE', keys: [['K'], ['X']] },
   { action: 'LOB', keys: [['L'], ['C']] },
-  { action: 'PAUSE', keys: [['ESC'], ['TAB']] },
+  { action: 'PAUSE', keys: [['ESC', 'TAB'], ['ESC', 'TAB']], either: true },
 ];
 
 /** The rules in short paragraphs (spec §4.3–§4.8): heading and text. */
@@ -38,14 +41,17 @@ const RULES: Readonly<Record<'swing' | 'aim' | 'serve' | 'shots', { title: strin
   },
 };
 
-const caps = (keys: readonly string[]): HTMLElement => h('td', {}, ...keys.map((k) => h('kbd', {}, k)));
+/** A cell of keycaps; alternatives get a " / " between them. */
+function caps(keys: readonly string[], either = false): HTMLElement {
+  return h('td', {}, ...keys.flatMap((k, i) => (either && i > 0 ? [h('span', { class: 'or' }, ' / '), h('kbd', {}, k)] : [h('kbd', {}, k)])));
+}
 
 function controlsTable(): HTMLElement {
   return h(
     'table',
     { class: 'controls' },
     h('thead', {}, h('tr', {}, h('th', {}), h('th', {}, 'LEFT + RIGHT HAND'), h('th', {}, 'ARROWS + LETTERS'))),
-    h('tbody', {}, ...CONTROLS.map((c) => h('tr', {}, h('th', {}, c.action), caps(c.keys[0]), caps(c.keys[1])))),
+    h('tbody', {}, ...CONTROLS.map((c) => h('tr', {}, h('th', {}, c.action), caps(c.keys[0], c.either), caps(c.keys[1], c.either)))),
   );
 }
 
