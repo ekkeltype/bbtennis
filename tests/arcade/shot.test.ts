@@ -40,15 +40,17 @@ const aim = (o: Partial<Parameters<typeof aimTarget>[0]>) =>
   aimTarget({ hitter: 0, type: 'topspin', grade: 'perfect', mx: 0, my: 0, serveSide: null, ...o });
 
 describe('aimTarget rally', () => {
+  // The perfect grade's margin from ARCADE (0.5 m at the spec's starting values).
+  const pm = ARCADE.grade.perfect.margin;
   it('player 0, mx +1, perfect: deep to the right', () => {
     const t = aim({ mx: 1, my: 1 });
-    expect(t.x).toBeCloseTo(3.615, 9);
-    expect(t.y).toBeCloseTo(11.385, 9);
+    expect(t.x).toBeCloseTo(COURT.singlesHalfWidth - pm, 9);
+    expect(t.y).toBeCloseTo(COURT.halfLength - pm, 9);
   });
   it('player 1 mirrors', () => {
     const t = aim({ hitter: 1, mx: 1, my: 1 });
-    expect(t.x).toBeCloseTo(-3.615, 9);
-    expect(t.y).toBeCloseTo(-11.385, 9);
+    expect(t.x).toBeCloseTo(-(COURT.singlesHalfWidth - pm), 9);
+    expect(t.y).toBeCloseTo(-(COURT.halfLength - pm), 9);
   });
   it('neutral and short', () => {
     expect(aim({}).y).toBeCloseTo(9.385, 9);
@@ -57,7 +59,7 @@ describe('aimTarget rally', () => {
   });
   it('lob with my -1 is deep, not short', () => {
     const t = aim({ type: 'lob', my: -1 });
-    expect(t.y).toBeCloseTo(COURT.halfLength - 0.5 - ARCADE.aim.lobExtraMargin, 9);
+    expect(t.y).toBeCloseTo(COURT.halfLength - pm - ARCADE.aim.lobExtraMargin, 9);
   });
   it('smash uses smashMargin', () => {
     expect(aim({ type: 'smash', my: 1 }).y).toBeCloseTo(COURT.halfLength - ARCADE.aim.smashMargin, 9);
@@ -70,23 +72,28 @@ describe('aimTarget rally', () => {
 });
 
 describe('aimTarget serve', () => {
+  // The flat serve's margin from ARCADE (0.25 m at the spec's starting values): wide = singlesHalfWidth − margin.
+  const m = ARCADE.serveMargin.serveFlat;
+  const wide = COURT.singlesHalfWidth - m;
+  const depth = COURT.serviceLine - m;
   it('player 0 deuce: box at x < 0; mx -1 wide, +1 T, 0 body', () => {
     const w = aim({ type: 'serveFlat', mx: -1, serveSide: 'deuce' });
-    expect(w.x).toBeCloseTo(-3.865, 9);
-    expect(w.y).toBeCloseTo(6.4 - 0.25, 9);
-    expect(aim({ type: 'serveFlat', mx: 1, serveSide: 'deuce' }).x).toBeCloseTo(-0.25, 9);
-    expect(aim({ type: 'serveFlat', mx: 0, serveSide: 'deuce' }).x).toBeCloseTo(-2.0575, 9);
+    expect(w.x).toBeCloseTo(-wide, 9);
+    expect(w.y).toBeCloseTo(depth, 9);
+    expect(aim({ type: 'serveFlat', mx: 1, serveSide: 'deuce' }).x).toBeCloseTo(-m, 9);
+    expect(aim({ type: 'serveFlat', mx: 0, serveSide: 'deuce' }).x).toBeCloseTo(-COURT.singlesHalfWidth / 2, 9);
   });
   it('mirrors for the ad side and for player 1', () => {
-    expect(aim({ type: 'serveFlat', mx: 1, serveSide: 'ad' }).x).toBeCloseTo(3.865, 9);
+    expect(aim({ type: 'serveFlat', mx: 1, serveSide: 'ad' }).x).toBeCloseTo(wide, 9);
     const p1 = aim({ hitter: 1, type: 'serveFlat', mx: -1, serveSide: 'deuce' });
-    expect(p1.x).toBeCloseTo(3.865, 9);
-    expect(p1.y).toBeCloseTo(-(6.4 - 0.25), 9);
+    expect(p1.x).toBeCloseTo(wide, 9);
+    expect(p1.y).toBeCloseTo(-depth, 9);
   });
   it('rushed serves lerp toward the box centre', () => {
+    const pull = ARCADE.serveGrade.rushed.pull;
     const t = aim({ type: 'serveFlat', grade: 'rushed', mx: -1, serveSide: 'deuce' });
-    expect(t.x).toBeCloseTo(-(0.5 * 3.865 + 0.5 * COURT.singlesHalfWidth / 2), 9);
-    expect(t.y).toBeCloseTo(0.5 * 6.15 + 0.5 * 3.2, 9);
+    expect(t.x).toBeCloseTo(-((1 - pull) * wide + pull * COURT.singlesHalfWidth / 2), 9);
+    expect(t.y).toBeCloseTo((1 - pull) * depth + pull * COURT.serviceLine / 2, 9);
   });
 });
 
@@ -109,25 +116,27 @@ describe('resolveHit', () => {
   it('is deterministic', () => {
     expect(resolveHit(base(), seedRng(3))).toEqual(resolveHit(base(), seedRng(3)));
   });
-  it('powers: perfect 1.1, clean 0.8+0.2c, rushed 0.75, stretch x0.85, serve from serve grade', () => {
-    expect(resolveHit(base({ grade: 'perfect' }), seedRng(1)).power).toBeCloseTo(1.1, 9);
-    expect(resolveHit(base({ charge: 0.5 }), seedRng(1)).power).toBeCloseTo(0.9, 9);
-    expect(resolveHit(base({ grade: 'rushed' }), seedRng(1)).power).toBeCloseTo(0.75, 9);
-    expect(resolveHit(base({ grade: 'perfect', stretch: true }), seedRng(1)).power).toBeCloseTo(1.1 * 0.85, 9);
+  it('powers: perfect, clean base + per charge, rushed, stretch factor, serve from serve grade (ARCADE.grade, .stretch, .serveGrade)', () => {
+    const g = ARCADE.grade;
+    expect(resolveHit(base({ grade: 'perfect' }), seedRng(1)).power).toBeCloseTo(g.perfect.power, 9);
+    expect(resolveHit(base({ charge: 0.5 }), seedRng(1)).power).toBeCloseTo(g.clean.powerBase + 0.5 * g.clean.powerPerCharge, 9);
+    expect(resolveHit(base({ grade: 'rushed' }), seedRng(1)).power).toBeCloseTo(g.rushed.power, 9);
+    expect(resolveHit(base({ grade: 'perfect', stretch: true }), seedRng(1)).power).toBeCloseTo(g.perfect.power * ARCADE.stretch.power, 9);
     const s = base({ type: 'serveFlat', grade: 'clean', charge: 0, serveSide: 'deuce' });
-    expect(resolveHit(s, seedRng(1)).power).toBeCloseTo(0.95, 9);
+    expect(resolveHit(s, seedRng(1)).power).toBeCloseTo(ARCADE.serveGrade.clean.power, 9);
   });
   it('T follows the drawn scatter normals', () => {
     const a = base({ grade: 'perfect' });
     const h = resolveHit(a, seedRng(11));
     const r = seedRng(11);
     const n1 = normalIH(r), n2 = normalIH(r), n3 = normalIH(r);
-    const sg = ARCADE.scatter.sigma * 0.6;
-    const tx = sg * n1, ty = 9.385 + sg * n2;
+    const gs = ARCADE.grade.perfect.scatter;
+    const sg = ARCADE.scatter.sigma * gs;
+    const tx = sg * n1, ty = COURT.halfLength - ARCADE.aim.neutralFromBaseline + sg * n2;
     expect(h.target.x).toBeCloseTo(tx, 9);
     expect(h.target.y).toBeCloseTo(ty, 9);
     const dist = Math.sqrt(tx * tx + (ty + 12) * (ty + 12));
-    const T = (dist / (22 * 1.1)) * (1 + ARCADE.scatter.tSigma * 0.6 * n3);
+    const T = (dist / (ARCADE.shots.topspin.speed * ARCADE.grade.perfect.power)) * (1 + ARCADE.scatter.tSigma * gs * n3);
     expect(h.T).toBeCloseTo(T, 9);
   });
   it('lob T has a floor scaled by pace', () => {
@@ -164,8 +173,10 @@ describe('scatter statistics', () => {
     expect(sd).toBeGreaterThan(expected * 0.9);
     expect(sd).toBeLessThan(expected * 1.1);
   };
-  it('clean neutral topspin SD is 0.35', () => sdX({}, 0.35));
-  it('rushed + stretch SD is 0.35 x 1.8 x 1.4', () => sdX({ grade: 'rushed' as Grade, stretch: true }, 0.35 * 1.8 * 1.4));
+  const { sigma } = ARCADE.scatter;
+  it('clean neutral topspin SD is scatter.sigma × the clean factor', () => sdX({}, sigma * ARCADE.grade.clean.scatter));
+  it('rushed + stretch SD is scatter.sigma × the rushed and stretch factors', () =>
+    sdX({ grade: 'rushed' as Grade, stretch: true }, sigma * ARCADE.grade.rushed.scatter * ARCADE.stretch.scatter));
 });
 
 describe('kmhOf', () => {

@@ -3,11 +3,11 @@ import { ArcadeCpu, arcadeCpuHome, arcadeCpuProfile } from '../../src/arcade/cor
 import type { ArcadeCpuProfile } from '../../src/arcade/core/cpu';
 import { buildFlight, clampTForApex, inCourtFor } from '../../src/arcade/core/flight';
 import { createMatch, step } from '../../src/arcade/core/match';
-import { tossZ } from '../../src/arcade/core/shot';
+import { rallyGrade, tossZ } from '../../src/arcade/core/shot';
 import { ARCADE, ARCADE_CPU_MILESTONES, TICK_HZ } from '../../src/arcade/core/tuning';
 import { NO_INPUT } from '../../src/arcade/core/types';
 import type { ArcadeEvent, ArcadeState, Grade, HitEvent, PlayerId, PlayerInfo, PlayerInput, ShotType } from '../../src/arcade/core/types';
-import { seedRng, uniform } from '../../src/core/rng';
+import { normalIH, seedRng, uniform } from '../../src/core/rng';
 import { currentServer } from '../../src/core/scoring';
 import { CONFIG, IDLE, PLAYERS, matchInSetup, ofType, runUntil } from './matchHelpers';
 
@@ -75,6 +75,23 @@ const JITTER: number[] = (() => {
 
 interface ReturnStats { landed: number; crossed: number; hits: number; perfect: number }
 
+/**
+ * Share of commit leads that put a contact on its predicted tick in the perfect window (spec §5
+ * Commit): round((chargeTime + perfectWindow/2 + n·σ)·60) ticks with n ~ normalIH, graded by
+ * rallyGrade. The press noise σ alone allows no more perfect hits than this.
+ */
+function perfectLeadShare(pressSigma: number): number {
+  const r = seedRng(4242);
+  const { chargeTime, perfectWindow } = ARCADE.swing;
+  const n = 20_000;
+  let perfect = 0;
+  for (let i = 0; i < n; i++) {
+    const lead = Math.max(0, Math.round((chargeTime + perfectWindow / 2 + normalIH(r) * pressSigma) * TICK_HZ));
+    if (rallyGrade(0, lead) === 'perfect') perfect++;
+  }
+  return perfect / n;
+}
+
 /** Plays the 200 launcher balls against a CPU of `level` (player 0 idle) until its hit or the point. */
 function returnStats(level: number): ReturnStats {
   const out: ReturnStats = { landed: 0, crossed: 0, hits: 0, perfect: 0 };
@@ -137,8 +154,8 @@ describe('returns from the fixed launcher (200 neutral topspin balls, lateral ji
     expect(white.landed).toBeLessThanOrEqual(black.landed);
   });
 
-  it('commits so that contact falls in the perfect window: Black belt mostly perfect (≥ 70 % of hits), White less often', () => {
-    expect(black.perfect / black.hits).toBeGreaterThanOrEqual(0.7);
+  it('commits so that contact falls in the perfect window: Black belt perfect on ≥ 85 % of the share its press σ allows, White less often', () => {
+    expect(black.perfect / black.hits).toBeGreaterThanOrEqual(0.85 * perfectLeadShare(arcadeCpuProfile(12).pressSigma));
     expect(white.perfect / white.hits).toBeLessThan(black.perfect / black.hits);
   });
 

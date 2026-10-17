@@ -38,6 +38,11 @@ const CPU = {
   reachMargin: 0.2,
   lob: { oppNetDist: 4.0, base: 0.3, perAggression: 0.5 },
   corner: { base: 0.25, perAggression: 0.6 },
+  /**
+   * Corner chance on a serve return (Task 9 balance, ruling R10): returns go mostly deep through
+   * the middle, so the server keeps an edge (spec §7: the server wins 55–70 %).
+   */
+  returnCorner: { base: 0, perAggression: 0.3 },
   deepChance: 0.5,
   netShort: { dist: 4.0, chance: 0.3 },
   /** Home: behind the centre of the baseline, shifted toward the side of the CPU's own shot. */
@@ -364,12 +369,13 @@ export class ArcadeCpu implements Controller {
     return 'topspin';
   }
 
-  /** Rally aim: corner away from the opponent (by aggression), deep or neutral, short from near the net. */
+  /** Rally aim: corner away from the opponent (by aggression; less often on a serve return), deep or neutral, short from near the net. */
   private aim(s: Readonly<ArcadeState>, plan: ShotPlan, pos: Vec2): Dir {
     const me = this.player;
     const opp = s.p[other(me)].pos;
     let mx: Axis = 0;
-    if (plan.u.corner < CPU.corner.base + CPU.corner.perAggression * this.profile.aggression) {
+    const corner = s.point.hits === 1 ? CPU.returnCorner : CPU.corner; // hits 1: the ball is the serve
+    if (plan.u.corner < corner.base + corner.perAggression * this.profile.aggression) {
       const away = opp.x > 0 ? -1 : opp.x < 0 ? 1 : plan.u.cornerSide < 0.5 ? -1 : 1; // world x sign
       mx = away * endSign(me) > 0 ? 1 : -1; // target world x = mx·endSign(me)·…
     }
