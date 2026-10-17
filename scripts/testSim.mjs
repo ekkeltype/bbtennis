@@ -1,12 +1,13 @@
-// Runs the full balance simulation (spec §6): `npx vitest run tests/sim` with BBT_SIM=1.
-// Without BBT_SIM, tests/sim runs only its smoke subset (as part of `npm test`).
+// Runs the full balance simulations with BBT_SIM=1: the typing game's (spec §6, tests/sim) and the
+// Arcade's (Arcade spec §7, tests/arcade/balance.test.ts), as `npx vitest run tests/sim
+// tests/arcade/balance.test.ts`. Without BBT_SIM, both run only their smoke subsets (as part of `npm test`).
 import { spawn } from 'node:child_process';
 
 process.env.BBT_SIM = '1';
 
 // One command string (no args array) so the shell finds npx on every platform without Node's
 // warning about unescaped shell arguments.
-const child = spawn('npx vitest run tests/sim', { stdio: 'inherit', shell: true, env: process.env });
+const child = spawn('npx vitest run tests/sim tests/arcade/balance.test.ts', { stdio: 'inherit', shell: true, env: process.env });
 
 child.on('error', (err) => {
   console.error(`test:sim could not start vitest: ${err.message}`);
