@@ -10,7 +10,7 @@ import { startLoop } from './game/loop';
 import type { Session } from './game/session';
 import { Renderer } from './render/renderer';
 import { Screen } from './render/screen';
-import { Attract, randomSeed } from './ui/attract';
+import { Attract } from './ui/attract';
 import { fontsReady } from './ui/boot';
 import type { ResultsParams, UiContext } from './ui/context';
 import { showDevScreen, testable } from './ui/devScreen';
@@ -34,6 +34,7 @@ import { registerScreens } from './ui/registerScreens';
 import { Router } from './ui/router';
 import type { OnlineControls } from './ui/screens/online';
 import { createTrainingSession } from './ui/screens/training';
+import { randomSeed } from './ui/seed';
 import type { Career, Profile, Settings } from './ui/settings';
 import { storageOk } from './ui/storage';
 

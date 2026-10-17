@@ -24,7 +24,7 @@ function isStartKey(e: KeyboardEvent): boolean {
  * press: auto-repeats of a held key are ignored). The gesture focuses the window, creates the
  * AudioContext and unlocks speech through `openGate`.
  */
-export function gateScreen(ctx: UiContext): ScreenFactory {
+export function gateScreen(ctx: Pick<UiContext, 'openGate'>): ScreenFactory {
   return () => {
     const anyKey = isTopLevel();
     let opened = false;

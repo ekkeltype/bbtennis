@@ -7,7 +7,9 @@ import type { ScreenFactory } from '../router';
  * The in-match menu (spec §4.6): a local match (vs CPU, Training) is paused behind it and offers
  * Resume / Restart / Quit; online play does not pause and offers Resume / Forfeit. Esc resumes.
  */
-export function pauseScreen(ctx: UiContext): ScreenFactory {
+export function pauseScreen(
+  ctx: Pick<UiContext, 'resumeMatch' | 'restartMatch' | 'quitMatch' | 'forfeitMatch' | 'toggleFullscreen'>,
+): ScreenFactory {
   return (params) => {
     const { kind } = params as PauseParams;
     const actions =

@@ -1,4 +1,4 @@
-import { PAUSE_ICON_RECT } from '../../render/renderer';
+import { PAUSE_ICON_RECT } from '../../render/hudParts';
 import type { MatchKind, UiContext } from '../context';
 import { h } from '../dom';
 import type { ScreenFactory } from '../router';
@@ -8,7 +8,7 @@ import type { ScreenFactory } from '../router';
  * game pixels, so it follows `--u`). Any other click puts the keyboard focus back on the game (and
  * clears the online "click to focus" overlay). Keys go to the match's keyboard capture, not here.
  */
-export function playScreen(ctx: UiContext, kind: MatchKind): ScreenFactory {
+export function playScreen(ctx: Pick<UiContext, 'pauseMatch' | 'focusGame'>, kind: MatchKind): ScreenFactory {
   return () => {
     const r = PAUSE_ICON_RECT;
     const pause = h('button', {

@@ -3,19 +3,11 @@ import type { Scheduler } from '../game/clock';
 import { LocalSession } from '../game/localSession';
 import { SURFACE_CHOICES, valuesOf } from './options';
 import { attractPlayers } from './players';
+import { randomSeed } from './seed';
 
 /** The demo restarts this long after its MATCH_OVER (spec §4.6). */
 const RESTART_AFTER_MS = 2000;
 const SURFACES = valuesOf(SURFACE_CHOICES);
-
-/** A fresh 32-bit match seed from the platform's crypto RNG (Math.random if that is missing). */
-export function randomSeed(): number {
-  try {
-    return crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
-  } catch {
-    return Math.floor(Math.random() * 2 ** 32);
-  }
-}
 
 /**
  * The attract-mode demo behind Title and Main menu (spec §4.6): CPU vs CPU seen as a spectator, two
