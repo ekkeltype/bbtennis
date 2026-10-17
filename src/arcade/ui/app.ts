@@ -15,6 +15,7 @@ import { ArcadeDirector } from '../audio/director';
 import { ArcadeCpu } from '../core/cpu';
 import { DT } from '../core/tuning';
 import type { ArcadeConfig, ArcadeState } from '../core/types';
+import { installArcadeDebug, type ArcadeDebug } from '../game/debug';
 import { HeldKeys, KeyboardController } from '../game/keys';
 import { ArcadeSession, type ArcadeView } from '../game/session';
 import { ArcadeRenderer } from '../render/renderer';
@@ -35,17 +36,18 @@ import { ArcadeStore, type ArcadeSettings, type CpuSetup } from './store';
 const ATTRACT_SCREENS: ReadonlySet<string> = new Set(['title', 'mainMenu']);
 /** Screens without the title music (spec §6.2: it plays on the title and menu screens). */
 const QUIET_SCREENS: ReadonlySet<string> = new Set(['gate', 'match', 'pause']);
-/** DEV ONLY (temporary, until Task 14's debug hooks): screens `?screen=` may jump to, past the gate. */
-const DEV_SCREENS: ReadonlySet<string> = new Set(['title', 'mainMenu', 'cpuSetup', 'customize', 'options', 'howTo', 'match', 'pause']);
-/** Frames drawn in a dev build before the page reports `__shotReady` (so the canvas has drawn). */
-const SHOT_READY_FRAMES = 45;
+/** The belt of the CPU playing the near side of the debug demo match (Black belt). */
+const DEMO_LEVEL = 12;
 const NOTICE_STORAGE = "Progress can't be saved in this browser mode";
 
 /** The page's elements: the focusable game root, the game canvas and the DOM overlay. */
 export interface ArcadeElements { root: HTMLElement; canvas: HTMLCanvasElement; ui: HTMLElement }
 
-/** The match against the CPU: its session, the setup a restart or rematch replays, and whether Results were shown. */
-interface Match { session: ArcadeSession; level: number; config: ArcadeConfig; finished: boolean }
+/** What a restart or rematch replays: the CPU's belt, the options, and whether a CPU plays the near side too (the debug demo). */
+interface MatchSetup { level: number; config: ArcadeConfig; demo: boolean }
+
+/** The match against the CPU: its session, its setup, and whether Results were shown. */
+interface Match { session: ArcadeSession; setup: MatchSetup; finished: boolean }
 
 /**
  * The Arcade app (spec §6.3): owns the canvas Screen and ArcadeRenderer, audio (engine, umpire,
@@ -70,7 +72,8 @@ export class ArcadeApp implements ArcadeContext {
   private readonly attract = new ArcadeAttract();
   private match: Match | null = null;
   private gateOpen = false;
-  private readyIn: number | null = null;
+  /** The debug hooks (dev builds and `?debug` pages), else null. */
+  private debug: ArcadeDebug | null = null;
   private storageNoticeShown = false;
 
   constructor(el: ArcadeElements) {
@@ -79,7 +82,7 @@ export class ArcadeApp implements ArcadeContext {
     this.renderer = new ArcadeRenderer(this.screen);
     this.umpire = new Umpire(() => this.settings.volumes.master * this.settings.volumes.sfx);
     this.umpire.enabled = false;
-    this.director = new ArcadeDirector(this.audio, this.umpire, { surface: () => this.match?.config.surface ?? 'hard', viewer: () => 0 });
+    this.director = new ArcadeDirector(this.audio, this.umpire, { surface: () => this.match?.setup.config.surface ?? 'hard', viewer: () => 0 });
     this.audio.setVolumes(this.settings.volumes);
 
     this.overlay = new Overlay(el.ui);
@@ -113,11 +116,9 @@ export class ArcadeApp implements ArcadeContext {
     r.register('results', resultsScreen(this));
     await fontsReady();
     startLoop((dt) => this.frame(dt));
-    const dev = import.meta.env.DEV ? new URLSearchParams(location.search).get('screen') : null;
-    if (dev !== null && DEV_SCREENS.has(dev)) this.devJump(dev);
-    else r.go('gate');
+    this.debug = installArcadeDebug(this);
+    if (!this.debug?.showStartScreen()) r.go('gate');
     if (!this.store.storageOk()) this.storageNotice();
-    if (import.meta.env.DEV) this.readyIn = SHOT_READY_FRAMES;
   }
 
   // ArcadeContext ---------------------------------------------------------------------------
@@ -156,18 +157,19 @@ export class ArcadeApp implements ArcadeContext {
     this.router.go('title');
   }
 
-  startCpuMatch(level: number, config: ArcadeConfig): void {
-    this.endMatch();
-    const seed = randomSeed();
-    const session = new ArcadeSession({
-      config: { ...config },
-      players: [humanPlayer(this.profile), arcadeCpuPlayer(level)],
-      seed,
-      controllers: [new KeyboardController(this.keys), new ArcadeCpu(1, level, seed)],
-      viewer: 0,
-    });
-    this.match = { session, level, config: { ...config }, finished: false };
-    this.router.go('match');
+  startCpuMatch(level: number, config: ArcadeConfig, seed: number = randomSeed()): void {
+    this.beginMatch({ level, config: { ...config }, demo: false }, seed);
+  }
+
+  /** Debug (`__arcade.demo()`): the saved CPU setup's match with a Black-belt CPU playing the near side. */
+  startDemoMatch(): void {
+    const { level, ...config } = this.cpuSetup;
+    this.beginMatch({ level, config, demo: true }, randomSeed());
+  }
+
+  /** The current match's live state (also behind Pause and Results), or null without a match. */
+  matchState(): Readonly<ArcadeState> | null {
+    return this.match?.session.view?.state ?? null;
   }
 
   rematch(): void {
@@ -192,7 +194,7 @@ export class ArcadeApp implements ArcadeContext {
 
   restartMatch(): void {
     const m = this.match;
-    if (m) this.startCpuMatch(m.level, m.config);
+    if (m) this.beginMatch(m.setup, randomSeed());
   }
 
   quitMatch(): void {
@@ -216,10 +218,7 @@ export class ArcadeApp implements ArcadeContext {
     const m = this.match;
     if (m) this.playFrame(m, dt);
     else if (ATTRACT_SCREENS.has(this.router.current)) this.draw(this.attract.frame(dt), dt);
-    if (this.readyIn !== null && --this.readyIn <= 0) {
-      this.readyIn = null;
-      (window as unknown as { __shotReady: boolean }).__shotReady = true;
-    }
+    this.debug?.frame();
   }
 
   /** One frame of the match (drawn behind the pause menu and Results too); Results once it is over. */
@@ -255,6 +254,23 @@ export class ArcadeApp implements ArcadeContext {
     this.audio.music(this.gateOpen && !QUIET_SCREENS.has(name));
   }
 
+  /** Ends any match and starts `setup` with `seed` on the match screen: the keyboard (or the demo's CPU) near, the CPU far. */
+  private beginMatch(setup: MatchSetup, seed: number): void {
+    this.endMatch();
+    const near = setup.demo
+      ? { player: arcadeCpuPlayer(DEMO_LEVEL), controller: new ArcadeCpu(0, DEMO_LEVEL, seed) }
+      : { player: humanPlayer(this.profile), controller: new KeyboardController(this.keys) };
+    const session = new ArcadeSession({
+      config: { ...setup.config },
+      players: [near.player, arcadeCpuPlayer(setup.level)],
+      seed,
+      controllers: [near.controller, new ArcadeCpu(1, setup.level, seed)],
+      viewer: 0,
+    });
+    this.match = { session, setup, finished: false };
+    this.router.go('match');
+  }
+
   private endMatch(): void {
     this.match?.session.dispose();
     this.match = null;
@@ -265,19 +281,5 @@ export class ArcadeApp implements ArcadeContext {
     if (this.storageNoticeShown) return;
     this.storageNoticeShown = true;
     this.overlay.notice(NOTICE_STORAGE);
-  }
-
-  /** DEV ONLY (temporary, Task 14 may replace it): `?screen=` shows a screen as if reached from the main menu. */
-  private devJump(name: string): void {
-    this.router.go('title');
-    if (name === 'title') return;
-    this.router.go('mainMenu');
-    if (name === 'match' || name === 'pause') {
-      const { level, ...config } = this.cpuSetup;
-      this.startCpuMatch(level, config);
-      if (name === 'pause') this.pauseMatch();
-    } else if (name !== 'mainMenu') {
-      this.router.go(name);
-    }
   }
 }

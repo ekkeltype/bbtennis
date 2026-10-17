@@ -120,6 +120,57 @@ Settings, profile and career are stored in `localStorage` under `bbtennis:v1:`. 
 that blocks storage, or once a save fails (a full quota), the game says once that progress can't be
 saved and plays on.
 
+## Black Belt Tennis Arcade
+
+A second game in this repository: the same pixel-art tennis, played with arcade controls instead of
+typing. You run around your half and press a shot key as the ball comes, and your player swings by
+itself when the ball arrives. It is singles against the CPU, in a desktop browser with a physical
+keyboard.
+
+It lives at `/arcade/`, as the second page of the same Vite project (`arcade/index.html`, code in
+`src/arcade/`). `npm run dev` serves it at <http://localhost:5173/arcade/>, and `npm run build`
+writes it to `dist/arcade/`, so the Pages deploy publishes it at `<site>/arcade/`.
+
+| Action | Left and right hand | Arrows and letters |
+|---|---|---|
+| Move | <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> | Arrow keys |
+| Topspin | <kbd>J</kbd> | <kbd>Z</kbd> |
+| Slice | <kbd>K</kbd> | <kbd>X</kbd> |
+| Lob | <kbd>L</kbd> | <kbd>C</kbd> |
+| Pause | <kbd>Esc</kbd> or <kbd>Tab</kbd> | <kbd>Esc</kbd> or <kbd>Tab</kbd> |
+
+Both layouts always work, and keys are read by position, so WASD works on any keyboard layout.
+
+- **Swing.** Press a shot key early, as the ball comes toward you. That commits you to the shot, and
+  you swing when the ball reaches you. The charge bar fills in 0.5 s, and contact just after it is
+  full is PERFECT: harder and more accurate. A late press rushes the shot.
+- **Aim.** Hold a direction as you hit: left or right aims for that sideline, up aims deep, down aims
+  short (a short slice is a drop shot). Hold none to play safe, through the middle.
+- **Serve.** Press a shot key to toss and again to serve, best just after the top of the toss. The
+  topspin key serves flat, the slice key slices and the lob key kicks. Left or right aims wide or
+  down the T.
+
+How it differs from the typing game: nothing is typed, and points are won by where you stand and when
+you press. It keeps the karate belts (all 15 open from the start), the formats, deuce rules, courts
+and pace presets, and its own saved name, look, settings and last CPU setup (under
+`bbtennis-arcade:v1:`). It has a How to Play screen instead of Training, and no online play or career
+record yet. The design spec is `docs/superpowers/specs/2026-10-17-arcade-design.md`.
+
+### Scripted run (`node scripts/arcadeRun.mjs`)
+
+[`scripts/arcadeRun.mjs`](scripts/arcadeRun.mjs) starts a Vite dev server and plays the Arcade by
+keyboard in your local Google Chrome, which takes about 20 seconds. It goes through the gate, title,
+main menu and CPU setup to a match against the White belt (seed 1), serves, and plays about 10 s of
+rallies. It saves `title`, `menu`, `setup`, `serve` and `rally` PNGs to `artifacts/arcade/`, which
+each run clears first, then prints your returns and the points played. It exits non-zero when the
+page logs an error or when no ball is returned within 20 s of match time. Add `--full` to play on to
+Results (usually one to three minutes; it adds `results.png`).
+
+The run uses the Arcade's debug hooks, which are on in dev builds and on any page opened with
+`?debug`. `window.__arcade` has `state()`, `startMatch(level, seed?)`, `demo()` (a Black-belt CPU
+plays your side) and `screen(name)`. `?screen=<name>` opens on that screen, for example
+`node scripts/devshot.mjs "arcade/index.html?screen=match" match.png`.
+
 ## Development
 
 You need npm and Node `^22.22.2 || ^24.15.0 || >=26.0.0`, the versions both Vitest 5 and jsdom 30
@@ -138,7 +189,7 @@ npm run dev        # http://localhost:5173
 | `npm run build` | Typecheck, then a production build into `dist/` (relative `base: './'`, so it runs from any path) |
 | `npm run preview` | Serve the built `dist/` locally |
 | `npm test` | All Vitest tests, including a smoke subset of the balance simulation |
-| `npm run test:sim` | The full balance simulation of spec §6 (slow) |
+| `npm run test:sim` | The full balance simulations (slow): the typing game's (spec §6) and the Arcade's (Arcade spec §7) |
 | `npm run typecheck` | `tsc --noEmit -p .` (the game, tests and tools) and `tsc --noEmit -p tsconfig.node.json` (the Node-side tests in `tests/scripts/`) |
 | `npm run art:export` | Screenshot every section of the art QA page (`tools/art.html`) to `artifacts/art/` |
 | `npm run e2e` | Build the game and play it in the local Chrome, about 4 minutes (see [below](#end-to-end-run-npm-run-e2e)). Screenshots go to `artifacts/e2e/` |
