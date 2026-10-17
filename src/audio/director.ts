@@ -2,7 +2,7 @@ import { POWER_MAX } from '../core/power';
 import { umpireCall } from '../core/scoring';
 import type { KeyResult } from '../core/typing';
 import type { CallKind, GameEvent, PlayerId, PointReason, PublicState, Surface, TurnState } from '../core/types';
-import { clamp } from '../core/util';
+import { callRank, panFor, POLITE_APPLAUSE_GAIN, pointReaction, SPOKEN_CALLS } from './cues';
 import type { AudioEngine, SfxName } from './engine';
 import type { Umpire } from './speech';
 
@@ -19,30 +19,10 @@ export interface DirectorContext {
 const REMOTE_KEY_GAIN = 0.35;
 /** Gain of the opponent's power-meter cues relative to the local player's own. */
 const REMOTE_POWER_GAIN = 0.6;
-/** Gain of the applause for the opponent's ace or winner. */
-const POLITE_APPLAUSE_GAIN = 0.5;
 /** Crowd murmur levels: chatter before the first serve, hush for serve and rally, buzz after a point. */
 const CROWD = { chatter: 0.4, hush: 0.12, buzz: 0.5 } as const;
 /** Lateral court position (m) that pans a bounce fully to one side. */
 const PAN_WIDTH_M = 10;
-
-/**
- * The calls the umpire says, most important first: when a frame carries several, only the top one is
- * said. Unlisted calls (ace, winner, net) are left to the score call and the banner.
- */
-const SPOKEN_CALLS: readonly { call: CallKind; words: string }[] = [
-  { call: 'doubleFault', words: 'Double fault' },
-  { call: 'timeViolation', words: 'Time violation' },
-  { call: 'fault', words: 'Fault' },
-  { call: 'ballDropped', words: 'Fault' },
-  { call: 'out', words: 'Out' },
-];
-
-/** Index into SPOKEN_CALLS (lower = more important), or Infinity for a call the umpire leaves unsaid. */
-function callRank(call: CallKind): number {
-  const i = SPOKEN_CALLS.findIndex((c) => c.call === call);
-  return i < 0 ? Number.POSITIVE_INFINITY : i;
-}
 
 const LOCAL_KEY_SFX: Record<KeyResult, SfxName | null> = {
   ignored: null,
@@ -62,11 +42,6 @@ function eventAgeMs(ev: GameEvent, s: PublicState): number {
   const last = s.lastTurn;
   if (last && last.data.turnId === ev.turn) return Math.max(0, last.τ - ev.τ) + (cur ? cur.τ : 0);
   return Number.POSITIVE_INFINITY;
-}
-
-/** Stereo pan for a court x as the viewer sees it (end-1 viewers see the court rotated by 180°). */
-function panFor(x: number, viewer: PlayerId | 'spectator'): number {
-  return clamp((viewer === 1 ? -x : x) / PAN_WIDTH_M, -1, 1);
 }
 
 /** The turn of `s` (current or previous) with id `id`, or null. */
@@ -136,7 +111,7 @@ export class AudioDirector {
           break;
         }
         case 'bounce':
-          this.audio.play('bounce', { surface: ctx.surface, pan: panFor(ev.at.x, ctx.viewer) });
+          this.audio.play('bounce', { surface: ctx.surface, pan: panFor(ev.at.x, ctx.viewer, PAN_WIDTH_M) });
           break;
         case 'netHit':
           this.audio.play('netHit');
@@ -178,9 +153,9 @@ export class AudioDirector {
 
   /** The home crowd: cheers the viewer's points, groans at the viewer's errors, claps politely otherwise. */
   private react(winner: PlayerId, reason: PointReason, viewer: PlayerId | 'spectator'): void {
-    if (viewer === 'spectator' || winner === viewer) this.audio.play('applause');
-    else if (reason === 'ace' || reason === 'winner') this.audio.play('applause', { gain: POLITE_APPLAUSE_GAIN });
-    else this.audio.play('ooh');
+    const { name, opts } = pointReaction(winner, reason, viewer);
+    if (opts) this.audio.play(name, opts);
+    else this.audio.play(name);
   }
 
   private setCrowd(level: number): void {
