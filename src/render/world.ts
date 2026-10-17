@@ -1,15 +1,18 @@
 import { turnViewAt, type TurnView } from '../core/turnView';
 import type { PlayerId, PublicState, TurnState, Vec2, ViewModel } from '../core/types';
 import { drawBall, drawBallShadow, type BallView } from './ball';
-import { checker, drawCourt } from './court';
+import { drawCourt } from './court';
 import type { Effects } from './effects';
-import { OUTLINE, PAL } from './palette';
+import { PAL } from './palette';
 import { drawLeaderPath, drawTierRing } from './plates';
 import type { PlayerPose } from './players';
 import { netScreenY, project, viewerEnd } from './projection';
 import type { LeaderMark, RingMark } from './prompts';
 import { drawBackdrop, drawNet, drawUmpire, type SceneState } from './scene';
+import { drawContactShadow } from './shadow';
 import { drawPlayer, type SpriteSheet } from './sprites/sheet';
+
+export { drawContactShadow };
 
 // ---------------------------------------------------------------------------------------------
 // The frame: which turn the viewer sees, at which τ.
@@ -98,13 +101,6 @@ export function umpireLook(ball: BallView | null, poses: readonly [PlayerPose, P
   return y > net + UMPIRE_ACROSS_PX ? 1 : 0;
 }
 
-/** Contact shadow under the feet (rows from the anchor row − 1), 50 % checker-dithered: [dx from, dx to]. */
-const SHADOW: readonly [number, number][] = [
-  [-6, 6],
-  [-8, 8],
-  [-6, 6],
-];
-
 /** The pulsing ring under the local player's feet (two sizes), as rows of '#' centred on the feet. */
 const ACTIVE_RING: readonly (readonly string[])[] = [
   ['....#######....', '.##.........##.', '#.............#', '.##.........##.', '....#######....'],
@@ -118,15 +114,6 @@ function paintRows(ctx: CanvasRenderingContext2D, rows: readonly string[], cx: n
   ctx.fillStyle = color;
   rows.forEach((row, r) => {
     for (let c = 0; c < row.length; c++) if (row[c] === '#') ctx.fillRect(x0 + c, y0 + r, 1, 1);
-  });
-}
-
-function drawShadow(ctx: CanvasRenderingContext2D, at: { x: number; y: number }): void {
-  const x = Math.round(at.x);
-  const y = Math.round(at.y);
-  ctx.fillStyle = OUTLINE;
-  SHADOW.forEach(([from, to], r) => {
-    for (let dx = from; dx <= to; dx++) if (checker(x + dx, y + r - 1)) ctx.fillRect(x + dx, y + r - 1, 1, 1);
   });
 }
 
@@ -199,7 +186,7 @@ export function drawWorld(ctx: CanvasRenderingContext2D, f: WorldFrame, a: World
     const ring = ACTIVE_RING[Math.floor(a.clockMs / RING_PULSE_MS) % 2]!;
     paintRows(ctx, ring, Math.round(at.x), Math.round(at.y), PAL.white);
   }
-  for (const p of a.poses) drawShadow(ctx, groundAt(f, p.feet));
+  for (const p of a.poses) drawContactShadow(ctx, groundAt(f, p.feet));
   if (a.ball) drawBallShadow(ctx, a.ball, viewer);
   drawLeaders(ctx, a.leaders);
   drawActors(ctx, f, a);

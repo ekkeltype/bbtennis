@@ -1,33 +1,20 @@
 import { ballAt, tossZ } from '../core/trajectory';
 import { turnViewAt, type TurnView } from '../core/turnView';
 import type { BallFlight, PlayerId, ServeTurnData, TurnState, Vec3 } from '../core/types';
-import { OUTLINE, PAL, TIER_COLOR } from './palette';
+import { BALL_MAX_Z, tossHandDx, type BallView } from './ballPaint';
 import type { PlayerPose } from './players';
-import { project, scaleAt, viewerEnd } from './projection';
-import { CELL, frameIndex } from './sprites/animations';
-import { posesFor } from './sprites/poses';
+import { scaleAt, viewerEnd } from './projection';
 import type { WorldFrame } from './world';
 
-/** Highest drawn ball height (R21): extreme net-clearance arcs are flattened at 6 m. */
-export const BALL_MAX_Z = 6;
+export { BALL_MAX_Z, drawBall, drawBallShadow, type BallView } from './ballPaint';
+
 /** A ball that has been called, has passed or was dropped fades out over this long (R21). */
 export const BALL_FADE_MS = 300;
 /** Motion trail: positions this many ms apart behind the ball. */
 const TRAIL_STEP_MS = 16;
 const TRAIL_SAMPLES = 2;
-/** The insane trail: more samples, drawn in the insane colour at falling opacity (power-meter spec §6). */
+/** The insane trail: more samples (drawn in the insane colour at falling opacity, see ballPaint; power-meter spec §6). */
 const HOT_TRAIL_SAMPLES = 4;
-const HOT_TRAIL_ALPHA = [0.7, 0.5, 0.3, 0.15];
-/** Screen distance (px) beyond which a trail sample is drawn: the trail only shows on fast balls. */
-const TRAIL_MIN_PX = 2.5;
-
-/**
- * The ball this frame: held in a player's tossing hand, or in the air at a world position with an
- * opacity and a short trail of earlier positions (newest first).
- */
-export type BallView =
-  | { kind: 'held'; player: PlayerId }
-  | { kind: 'air'; pos: Vec3; alpha: number; trail: Vec3[]; hot: boolean };
 
 const held = (player: PlayerId): BallView => ({ kind: 'held', player });
 
@@ -45,12 +32,6 @@ export function flightBall(flight: BallFlight, t: number, alpha: number): BallVi
 function fading(sinceEnd: number): number | null {
   const alpha = 1 - Math.max(0, sinceEnd) / BALL_FADE_MS;
   return alpha > 0 ? alpha : null;
-}
-
-/** Pixel offset from the feet anchor to the centre of the tossing (left) hand in serve frame `i`. */
-function tossHandDx(pose: PlayerPose, i: number): number {
-  const hand = posesFor('serve', pose.view)[i]!.handL;
-  return hand.x + 0.5 - CELL.anchorX;
 }
 
 /** The tossed ball above the server's tossing hand, `tossZ` high (spec §3.2.3). */
@@ -120,64 +101,4 @@ export function ballView(f: WorldFrame, poses: readonly [PlayerPose, PlayerPose]
     default:
       return held(d.owner);
   }
-}
-
-/** Ball sprite (spec §4.1): a 3×3 core with a highlight and a shade pixel inside a 1 px dark outline. */
-const BALL_ART = ['.ooo.', 'oHbbo', 'obbbo', 'obbso', '.ooo.'];
-const BALL_INK: Record<string, string> = { o: OUTLINE, H: PAL.cream, b: PAL.ball, s: PAL.ballShade };
-
-/** Screen centre of the ball: the air position projected, or just above the holder's tossing hand. */
-function ballScreen(ball: BallView, viewer: PlayerId | 'spectator', poses: readonly [PlayerPose, PlayerPose]): { x: number; y: number } {
-  if (ball.kind === 'air') return project(ball.pos, viewer);
-  const pose = poses[ball.player];
-  const feet = project({ x: pose.feet.x, y: pose.feet.y, z: 0 }, viewer);
-  const hand = posesFor(pose.anim, pose.view)[frameIndex(pose.anim, pose.frame)]!.handL;
-  const hx = pose.flip ? CELL.w - 1 - hand.x : hand.x;
-  return { x: Math.round(feet.x) - CELL.anchorX + hx + 0.5, y: Math.round(feet.y) - CELL.anchorY + hand.y - 1.5 };
-}
-
-/** Draws the ball with its motion trail when fast, or a purple trail for an insane shot when `hotTrail` (Reduce effects off). */
-export function drawBall(
-  ctx: CanvasRenderingContext2D,
-  ball: BallView,
-  viewer: PlayerId | 'spectator',
-  poses: readonly [PlayerPose, PlayerPose],
-  hotTrail = false,
-): void {
-  const at = ballScreen(ball, viewer, poses);
-  const cx = Math.round(at.x);
-  const cy = Math.round(at.y);
-  ctx.save();
-  if (ball.kind === 'air') {
-    const hot = ball.hot && hotTrail;
-    ball.trail.forEach((p, i) => {
-      const s = project(p, viewer);
-      if (!hot && Math.hypot(s.x - at.x, s.y - at.y) < TRAIL_MIN_PX * (i + 1)) return;
-      ctx.globalAlpha = ball.alpha * (hot ? (HOT_TRAIL_ALPHA[i] ?? 0.15) : i === 0 ? 0.5 : 0.25);
-      ctx.fillStyle = hot ? TIER_COLOR.insane : i === 0 ? PAL.ball : PAL.ballShade;
-      const size = hot ? 3 : 3 - i;
-      ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, size, size);
-    });
-    ctx.globalAlpha = ball.alpha;
-  }
-  BALL_ART.forEach((row, r) => {
-    for (let c = 0; c < row.length; c++) {
-      const ink = BALL_INK[row[c]!];
-      if (!ink) continue;
-      ctx.fillStyle = ink;
-      ctx.fillRect(cx - 2 + c, cy - 2 + r, 1, 1);
-    }
-  });
-  ctx.restore();
-}
-
-/** Draws the ball's ground shadow, a 3×1 dark dash at z = 0 (spec §4.1); a held ball has none. */
-export function drawBallShadow(ctx: CanvasRenderingContext2D, ball: BallView, viewer: PlayerId | 'spectator'): void {
-  if (ball.kind !== 'air') return;
-  const g = project({ x: ball.pos.x, y: ball.pos.y, z: 0 }, viewer);
-  ctx.save();
-  ctx.globalAlpha = ball.alpha;
-  ctx.fillStyle = OUTLINE;
-  ctx.fillRect(Math.round(g.x) - 1, Math.round(g.y), 3, 1);
-  ctx.restore();
 }

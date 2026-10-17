@@ -1,5 +1,5 @@
 import { seedRng, uniform } from '../core/rng';
-import type { GameEvent, PlayerId, RngState, Surface, TurnState, Vec2 } from '../core/types';
+import type { GameEvent, PlayerId, RngState, Surface, TurnState, Vec2, Vec3 } from '../core/types';
 import { checker } from './court';
 import { OUTLINE, PAL } from './palette';
 import type { PlayerPose } from './players';
@@ -84,6 +84,7 @@ export class Effects {
   private excite = 0;
   private shakeLeft = 0;
   private shakeAge = 0;
+  private reduced = false;
   private pointNo: number | null = null;
   private surface: Surface = 'hard';
 
@@ -111,15 +112,66 @@ export class Effects {
   /** Consumes the frame's events and the players' poses, then advances everything by `dtMs`. */
   update(f: WorldFrame, poses: readonly [PlayerPose, PlayerPose], dtMs: number, reduce: boolean): void {
     const dt = Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
+    this.reduced = reduce;
     this.surface = f.pub.config.surface;
     if (this.pointNo !== f.pub.pointNo) {
       this.pointNo = f.pub.pointNo;
-      this.marks.length = 0;
+      this.clearMarks();
     }
     for (const e of f.vm.events) this.onEvent(f, e, reduce);
     for (const p of [0, 1] as const) this.footwork(p, poses[p], dt, reduce);
     const floor = Math.min(EXCITE.rallyMax, Math.max(0, (f.pub.rallyStrikes - EXCITE.rallyFrom) * EXCITE.rallyStep));
-    this.excite = Math.max(floor, this.excite - (EXCITE.decayPerS * dt) / 1000);
+    this.advance(dt, reduce);
+    // The long-rally floor holds the crowd up after the plain decay (max(floor, max(0, x)) = max(floor, x)).
+    this.excite = Math.max(floor, this.excite);
+  }
+
+  /** A racket-contact spark at the world point `at` (shorter with `reduce`). */
+  spark(at: Vec3, reduce: boolean): void {
+    this.spawn('spark', at.x, at.y, at.z, 0, 0, 0, reduce ? SPARK_MS / 2 : SPARK_MS, PAL.white);
+  }
+
+  /** A bounce puff on the ground point `at`; on clay it also leaves a ball mark (the oldest goes past 24). */
+  bouncePuff(at: Vec2, surface: Surface, _reduce: boolean): void {
+    this.spawn('puff', at.x, at.y, 0, 0, 0, 0, PUFF_MS, DUST_COLOR[surface]);
+    if (surface === 'clay') {
+      if (this.marks.length >= MAX_MARKS) this.marks.shift();
+      this.marks.push({ x: at.x, y: at.y });
+    }
+  }
+
+  /** One puff of run dust at the feet `at` (the caller sets the cadence, so `reduce` has nothing to thin here). */
+  runDust(at: Vec2, surface: Surface, _reduce: boolean): void {
+    this.dust(at, DUST_COLOR[surface], 0.0006);
+  }
+
+  /** Forgets the clay ball marks (a new point begins). */
+  clearMarks(): void {
+    this.marks.length = 0;
+  }
+
+  /** Starts the 300 ms screen shake; nothing when the last `advance` had Reduce effects on. */
+  startShake(): void {
+    if (this.reduced) return;
+    this.shakeLeft = SHAKE_MS;
+    this.shakeAge = 0;
+  }
+
+  /** Raises the crowd excitement to at least `level` (0–1). */
+  cheer(level: number): void {
+    this.excite = Math.max(this.excite, level);
+  }
+
+  /** Throws a burst of confetti (fewer pieces with `reduce`). Named apart from the `confetti` count getter. */
+  confettiBurst(reduce: boolean): void {
+    this.throwConfetti(reduce ? CONFETTI_REDUCED : CONFETTI);
+  }
+
+  /** Ages the particles and confetti by `dtMs`, runs the shake down and decays the crowd excitement. */
+  advance(dtMs: number, reduce: boolean): void {
+    const dt = Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
+    this.reduced = reduce;
+    this.excite = Math.max(0, this.excite - (EXCITE.decayPerS * dt) / 1000);
     this.shakeLeft -= dt;
     this.shakeAge += dt;
     for (const q of this.parts) {
@@ -141,32 +193,25 @@ export class Effects {
       case 'strike': {
         const t = turnById(f, e.turn);
         // Returning an insane shot draws a cheer, whatever the return's own outcome (choice-stack spec §4).
-        if (t?.data.kind === 'return' && t.data.chase.tier === 'insane') this.excite = Math.max(this.excite, EXCITE.point);
+        if (t?.data.kind === 'return' && t.data.chase.tier === 'insane') this.cheer(EXCITE.point);
         const o = t?.outcome;
         if (o?.kind !== 'strike') return;
         const p = o.strike.flight.p0;
-        this.spawn('spark', p.x, p.y, p.z, 0, 0, 0, reduce ? SPARK_MS / 2 : SPARK_MS, PAL.white);
+        this.spark(p, reduce);
         return;
       }
       case 'bounce':
-        this.spawn('puff', e.at.x, e.at.y, 0, 0, 0, 0, PUFF_MS, DUST_COLOR[this.surface]);
-        if (this.surface === 'clay') {
-          if (this.marks.length >= MAX_MARKS) this.marks.shift();
-          this.marks.push({ x: e.at.x, y: e.at.y });
-        }
+        this.bouncePuff(e.at, this.surface, reduce);
         return;
       case 'point': {
         const great = e.reason === 'ace' || e.reason === 'winner';
-        this.excite = Math.max(this.excite, great ? EXCITE.great : EXCITE.point);
-        if (great && !reduce) {
-          this.shakeLeft = SHAKE_MS;
-          this.shakeAge = 0;
-        }
+        this.cheer(great ? EXCITE.great : EXCITE.point);
+        if (great) this.startShake();
         return;
       }
       case 'match':
         this.excite = EXCITE.match;
-        this.throwConfetti(reduce ? CONFETTI_REDUCED : CONFETTI);
+        this.confettiBurst(reduce);
         return;
       default:
         return;

@@ -1,41 +1,26 @@
-import { BELTS } from '../core/belts';
 import { POWER_MAX } from '../core/power';
-import { currentServer, pointsDisplay, setLine, situation, type SetCell } from '../core/scoring';
+import { situation } from '../core/scoring';
 import { TUNING } from '../core/tuning';
-import type { DisplayPrefs, LeadIn, PlayerInfo, PublicState, ScoreState } from '../core/types';
-import { clamp, easeOutQuad } from '../core/util';
-import { contrastRatio } from './color';
+import type { DisplayPrefs, LeadIn, PublicState } from '../core/types';
+import { drawBanner, shadowText, type Banner, type BannerLine } from './banner';
 import { checker } from './court';
 import { drawText, FONT, textWidth } from './font';
-import { BELT_COLOR, OUTLINE, PAL, RAMPS, TIER_COLOR, TIER_TYPED, type Ramp } from './palette';
+import { OUTLINE, PAL, TIER_COLOR, TIER_TYPED } from './palette';
 import { H, W } from './projection';
 import { createLayer, type Layer } from './screen';
+import { BOARD, beltColor, drawScoreboard, panel, rect, scoreRowsFor, type ScoreRow } from './scoreboard';
 import type { WorldFrame } from './world';
+
+export { drawBanner, beltColor };
+export type { Banner, BannerLine, ScoreRow };
+
+/** Both scoreboard rows (spec §4.3); the serve dot marks the current server while the match is on. */
+export function scoreRows(pub: PublicState): [ScoreRow, ScoreRow] {
+  return scoreRowsFor(pub.score, pub.players, pub.status === 'playing' && pub.score.winner === null);
+}
 
 /** The on-screen pause button (spec §4.3), top-right in the HUD band, in 480×270 buffer pixels. */
 export const PAUSE_ICON_RECT: Readonly<{ x: number; y: number; w: number; h: number }> = { x: 462, y: 3, w: 15, h: 15 };
-
-/**
- * One scoreboard row: upper-case name, belt colour and, for a belt too dark to read on the panel, the
- * light 1 px inner outline of its swatch (null otherwise), the set columns as drawn (`setLine`: games
- * of completed sets, tiebreak superscripts, the Tiebreak format's points), current games and points,
- * serve dot.
- */
-export interface ScoreRow {
-  name: string;
-  belt: string;
-  beltRim: string | null;
-  setCells: SetCell[];
-  games: number;
-  points: string;
-  serving: boolean;
-}
-
-/** A banner line and the time since it appeared (a line can join a banner that is already up). */
-export interface BannerLine { text: string; ageMs: number }
-
-/** A banner: its lines, time since it appeared, time left (null = stays) and whether it is the small kind. */
-export interface Banner { lines: BannerLine[]; ageMs: number; leftMs: number | null; small: boolean }
 
 /** One banner of a lead-in (lead-in τ): its lines with the time each joins, its span, and whether it is the point call. */
 export interface LeadInBanner { lines: { text: string; atMs: number }[]; fromMs: number; toMs: number; point: boolean }
@@ -45,12 +30,6 @@ const SPEED_SHOW_MS = 2000;
 const SPEED_FADE_MS = 500;
 /** The situation banner (MATCH POINT, DEUCE…) at the start of PRE_SERVE. */
 const SITUATION_MS = 1500;
-/** Banner slide-in (the banner and each line joining it) and fade-out. */
-const BANNER_IN_MS = 180;
-const BANNER_OUT_MS = 250;
-/** Top row of the call banners: a one-line banner is centred on y 96; longer ones grow downward from here. */
-const BANNER_TOP = 83;
-const BANNER_LINE_H = 18;
 /** The serve clock turns yellow (never red) for its last seconds. */
 const CLOCK_WARN_S = 5;
 /**
@@ -61,47 +40,6 @@ const CLOCK_WARN_S = 5;
  * a locked word doubled downward (Large words) and its timing bar end by y 238.
  */
 const UNSTABLE_CY = H - 13;
-
-/** Belt colours under this contrast against the scoreboard panel (black, navy, brown) get a swatch rim. */
-const SWATCH_MIN_CONTRAST = 3;
-
-/** The cloth ramp of a player's belt colour (see `beltColor`), if there is one. */
-function beltRamp(p: PlayerInfo): Ramp | undefined {
-  const level = p.kind === 'cpu' && p.cpuLevel !== null ? BELTS[p.cpuLevel] : undefined;
-  return level ? RAMPS.cloth[BELT_COLOR[level.belt]] : RAMPS.cloth[p.look.headband ?? p.look.shirt];
-}
-
-/**
- * A player's belt colour for the scoreboard swatch and remote name chips: a CPU's belt (spec §3.8),
- * a human's headband colour if they wear one, else their shirt colour.
- */
-export function beltColor(p: PlayerInfo): string {
-  return beltRamp(p)?.[1] ?? PAL.grey;
-}
-
-/** The highlight shade of a belt too dark to read on the scoreboard panel, for its swatch's inner outline. */
-function beltRim(p: PlayerInfo): string | null {
-  const ramp = beltRamp(p);
-  return ramp && contrastRatio(ramp[1], PAL.night) < SWATCH_MIN_CONTRAST ? ramp[0] : null;
-}
-
-/** Both scoreboard rows (spec §4.3); the serve dot marks the current server while the match is on. */
-export function scoreRows(pub: PublicState): [ScoreRow, ScoreRow] {
-  const s = pub.score;
-  const points = pointsDisplay(s);
-  const cells = setLine(s);
-  const server = pub.status === 'playing' && s.winner === null ? currentServer(s) : null;
-  const row = (p: 0 | 1): ScoreRow => ({
-    name: pub.players[p].name.toUpperCase(),
-    belt: beltColor(pub.players[p]),
-    beltRim: beltRim(pub.players[p]),
-    setCells: cells[p],
-    games: s.games[p],
-    points: points[p],
-    serving: server === p,
-  });
-  return [row(0), row(1)];
-}
 
 /** Whole seconds left on the serve clock during PRE_SERVE, TOSS and CATCH (spec §3.2.1), else null. */
 export function serveClockSeconds(f: WorldFrame): number | null {
@@ -178,32 +116,8 @@ export function bannerFor(f: WorldFrame): Banner | null {
   return text ? { lines: [{ text, ageMs: age }], ageMs: age, leftMs: SITUATION_MS - age, small: true } : null;
 }
 
-function rect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string): void {
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, w, h);
-}
-
-/** An outlined dark panel. */
-function panel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, fill: string = PAL.night): void {
-  rect(ctx, x, y, w, h, OUTLINE);
-  rect(ctx, x + 1, y + 1, w - 2, h - 2, fill);
-}
-
-/** Text with a one-glyph-pixel dark drop shadow. */
-function shadowText(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, color: string, scale: 1 | 2 = 1): void {
-  drawText(ctx, s, x + scale, y + scale, OUTLINE, scale);
-  drawText(ctx, s, x, y, color, scale);
-}
-
-// Scoreboard geometry: x 2–150, two 9 px rows inside a 1 px frame (spec §4.3).
-const BOARD = { x: 2, y: 1, w: 149, h: 20, row: 9 };
 /** Power meters (power-meter spec §6): four 3×5 segments, 1 px apart, right of each scoreboard row; full ones pulse every 400 ms. */
 const METER = { x: BOARD.x + BOARD.w + 3, dy: 2, segW: 3, segH: 5, gap: 1, pulseMs: 400 };
-const POINTS_W = 16;
-const GAMES_W = 9;
-const NAME_X = BOARD.x + 13;
-/** A set column: 1 px before its numbers and 2 px after them (8 px for one digit). */
-const SET_PAD = { left: 1, right: 2 };
 
 /** One rectangle of the HUD power meters, in buffer pixels. */
 export interface MeterRect { x: number; y: number; w: number; h: number; color: string }
@@ -239,98 +153,6 @@ export function meterRects(levels: [number, number], clockMs: number, steady: bo
     }
   });
   return out;
-}
-
-/** Superscript digits (3×5), drawn 1 px right of the number they belong to, level with its top. */
-const SUP_DIGITS: readonly (readonly string[])[] = [
-  ['###', '#.#', '#.#', '#.#', '###'],
-  ['.#.', '##.', '.#.', '.#.', '###'],
-  ['###', '..#', '###', '#..', '###'],
-  ['###', '..#', '.##', '..#', '###'],
-  ['#.#', '#.#', '###', '..#', '..#'],
-  ['###', '#..', '###', '..#', '###'],
-  ['###', '#..', '###', '#.#', '###'],
-  ['###', '..#', '..#', '.#.', '.#.'],
-  ['###', '#.#', '###', '#.#', '###'],
-  ['###', '#.#', '###', '..#', '###'],
-];
-const SUP_GAP = 1;
-
-const supWidth = (n: number): number => String(n).length * 4 - 1;
-
-function drawSup(ctx: CanvasRenderingContext2D, n: number, x: number, y: number, color: string): void {
-  ctx.fillStyle = color;
-  [...String(n)].forEach((d, i) => {
-    SUP_DIGITS[Number(d)]?.forEach((row, dy) => {
-      for (let dx = 0; dx < row.length; dx++) if (row[dx] === '#') ctx.fillRect(x + 4 * i + dx, y + dy, 1, 1);
-    });
-  });
-}
-
-/** A set column: its left edge and the x its numbers end at (right-aligned; a superscript follows). */
-interface SetColumn { x: number; numbersEnd: number }
-
-/** The set columns of both rows, laid right to left so the last one ends at `right`. */
-function setColumns(rows: [ScoreRow, ScoreRow], right: number): SetColumn[] {
-  const cols: SetColumn[] = [];
-  let x = right;
-  for (let k = rows[0].setCells.length - 1; k >= 0; k--) {
-    const cells = rows.flatMap((r) => r.setCells[k] ?? []);
-    const numbers = Math.max(...cells.map((c) => textWidth(String(c.value))));
-    const sups = Math.max(0, ...cells.map((c) => (c.sup === null ? 0 : SUP_GAP + supWidth(c.sup))));
-    x -= SET_PAD.left + numbers + sups + SET_PAD.right;
-    cols.unshift({ x, numbersEnd: x + SET_PAD.left + numbers });
-  }
-  return cols;
-}
-
-/** `name` cut short (trailing spaces dropped) to at most `maxW` px. */
-function fitName(name: string, maxW: number): string {
-  let out = name;
-  while (out.length > 0 && textWidth(out) > maxW) out = out.slice(0, -1).trimEnd();
-  return out;
-}
-
-/** Games and points show until a Tiebreak-format match is decided; then its final tiebreak column is the whole score. */
-function showsGameColumns(s: ScoreState): boolean {
-  return !(s.format === 'tiebreak' && s.winner !== null);
-}
-
-function drawScoreboard(ctx: CanvasRenderingContext2D, pub: PublicState): void {
-  const rows = scoreRows(pub);
-  const right = BOARD.x + BOARD.w - 1;
-  const pointsX = right - POINTS_W;
-  const gamesX = pointsX - GAMES_W;
-  const gameColumns = showsGameColumns(pub.score);
-  const setsRight = gameColumns ? gamesX : right;
-  const cols = setColumns(rows, setsRight);
-  const nameW = (cols[0]?.x ?? setsRight) - 1 - NAME_X;
-  panel(ctx, BOARD.x, BOARD.y, BOARD.w, BOARD.h);
-  if (gameColumns) rect(ctx, pointsX, BOARD.y + 1, POINTS_W, BOARD.h - 2, PAL.gold);
-  rect(ctx, BOARD.x + 1, BOARD.y + BOARD.row + 1, BOARD.w - 2, 1, PAL.shadow);
-  const centred = (s: string, x: number, w: number, y: number, color: string): void =>
-    drawText(ctx, s, x + Math.floor((w - textWidth(s)) / 2), y, color);
-  rows.forEach((r, i) => {
-    const top = BOARD.y + 1 + i * BOARD.row;
-    if (r.serving) {
-      rect(ctx, BOARD.x + 2, top + 3, 3, 3, PAL.ball);
-      rect(ctx, BOARD.x + 2, top + 5, 3, 1, PAL.ballShade);
-    }
-    rect(ctx, BOARD.x + 6, top + 1, 5, 7, PAL.grey);
-    rect(ctx, BOARD.x + 7, top + 2, 3, 5, r.beltRim ?? r.belt);
-    if (r.beltRim !== null) rect(ctx, BOARD.x + 8, top + 3, 1, 3, r.belt);
-    drawText(ctx, fitName(r.name, nameW), NAME_X, top, PAL.cream);
-    r.setCells.forEach((c, k) => {
-      const col = cols[k]!;
-      const text = String(c.value);
-      drawText(ctx, text, col.numbersEnd - textWidth(text), top, PAL.silver);
-      // Level with the top of the digits (glyph row 1).
-      if (c.sup !== null) drawSup(ctx, c.sup, col.numbersEnd + SUP_GAP, top + 1, PAL.silver);
-    });
-    if (!gameColumns) return;
-    centred(String(r.games), gamesX, GAMES_W, top, PAL.white);
-    centred(r.points, pointsX, POINTS_W, top, OUTLINE);
-  });
 }
 
 function drawServeClock(ctx: CanvasRenderingContext2D, seconds: number): void {
@@ -378,29 +200,6 @@ function readout(ctx: CanvasRenderingContext2D, text: string, right: number, y: 
   ctx.globalAlpha = alpha;
   panel(ctx, right - w, y, w, 10);
   drawText(ctx, text, right - w + 3, y, PAL.cream);
-  ctx.restore();
-}
-
-/** Share of the screen width that something `ageMs` into its slide-in still lies to the left. */
-const slideLeft = (ageMs: number): number => 1 - easeOutQuad(clamp(ageMs / BANNER_IN_MS, 0, 1));
-
-function drawBanner(ctx: CanvasRenderingContext2D, b: Banner): void {
-  const alpha = b.leftMs === null ? 1 : clamp(b.leftMs / BANNER_OUT_MS, 0, 1);
-  if (alpha <= 0) return;
-  const h = b.lines.length * BANNER_LINE_H + 8;
-  const widest = Math.max(...b.lines.map((l) => textWidth(l.text, 2)));
-  const w = b.small ? widest + 24 : W;
-  const x = Math.round((W - w) / 2 - slideLeft(b.ageMs) * W);
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  rect(ctx, x, BANNER_TOP, w, h, OUTLINE);
-  rect(ctx, x, BANNER_TOP + 1, w, 1, PAL.gold);
-  rect(ctx, x, BANNER_TOP + 2, w, h - 4, PAL.night);
-  rect(ctx, x, BANNER_TOP + h - 2, w, 1, PAL.gold);
-  b.lines.forEach((line, i) => {
-    const tx = Math.round((W - textWidth(line.text, 2)) / 2 - slideLeft(line.ageMs) * W);
-    shadowText(ctx, line.text, tx, BANNER_TOP + 3 + i * BANNER_LINE_H, i === 0 ? PAL.white : PAL.gold, 2);
-  });
   ctx.restore();
 }
 
@@ -460,7 +259,7 @@ export class Hud {
     if (overlay.paused || overlay.focusLost) dim(ctx);
     if (overlay.coach) drawCoach(ctx, overlay.coach);
     else {
-      drawScoreboard(ctx, f.pub);
+      drawScoreboard(ctx, f.pub.score, f.pub.players, f.pub.status === 'playing' && f.pub.score.winner === null);
       const levels = meterLevels(f);
       if (levels) for (const r of meterRects(levels, clockMs, prefs.reduceEffects)) rect(ctx, r.x, r.y, r.w, r.h, r.color);
     }
