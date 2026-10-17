@@ -1,0 +1,101 @@
+/*
+ * Black Belt Tennis Arcade: only what src/styles.css (the shared overlay styles) does not cover.
+ * Sizes are whole game pixels, calc(n * var(--u)), as there.
+ */
+
+/* ---------- The logo's "ARCADE" line (title and main menu) ---------- */
+
+#ui .arcade-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(6 * var(--u));
+}
+
+#ui .arcade-word {
+  font-size: calc(16 * var(--u));
+  letter-spacing: calc(6 * var(--u));
+  margin-right: calc(-6 * var(--u));
+  color: var(--gold);
+  text-shadow:
+    var(--u) var(--u) 0 var(--ink),
+    calc(2 * var(--u)) calc(2 * var(--u)) 0 #9a6a1e;
+}
+
+#ui .arcade-logo.small {
+  gap: calc(3 * var(--u));
+}
+
+#ui .arcade-logo.small .arcade-word {
+  font-size: calc(8 * var(--u));
+  letter-spacing: calc(4 * var(--u));
+  margin-right: calc(-4 * var(--u));
+  text-shadow: var(--u) var(--u) 0 var(--ink);
+}
+
+#ui .title .press {
+  margin-top: calc(24 * var(--u));
+}
+
+/* ---------- vs CPU setup: room for the longest belt label ("BLACK BELT 2ND DAN") ---------- */
+
+#ui .arcade-setup {
+  width: calc(380 * var(--u));
+  --label-w: 72;
+  --value-w: 152;
+}
+
+/* ---------- How to Play: the controls table and the rules in two columns ---------- */
+
+#ui .arcade-how-to .how-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(8 * var(--u));
+}
+
+#ui .arcade-how-to .col {
+  display: flex;
+  flex-direction: column;
+  gap: calc(5 * var(--u));
+}
+
+#ui .arcade-how-to .controls {
+  border-collapse: collapse;
+  background: var(--ink);
+  box-shadow: inset 0 0 0 var(--u) var(--shadow);
+}
+
+#ui .arcade-how-to .controls th,
+#ui .arcade-how-to .controls td {
+  padding: calc(2 * var(--u)) calc(3 * var(--u));
+  font-weight: normal;
+  text-align: left;
+  white-space: nowrap;
+}
+
+#ui .arcade-how-to .controls thead th {
+  font-family: var(--body);
+  font-size: calc(9 * var(--u));
+  color: var(--grey);
+}
+
+#ui .arcade-how-to .controls tbody th {
+  color: var(--gold);
+}
+
+#ui .arcade-how-to .controls kbd + kbd {
+  margin-left: calc(2 * var(--u));
+}
+
+#ui .arcade-how-to .rule {
+  font-family: var(--body);
+  font-size: calc(10 * var(--u));
+  line-height: calc(11 * var(--u));
+  color: var(--mist);
+}
+
+#ui .arcade-how-to .rule-title {
+  font-family: var(--head);
+  font-size: calc(8 * var(--u));
+  color: var(--gold);
+}
