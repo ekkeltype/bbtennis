@@ -132,15 +132,23 @@ function skyPixel(st: StandStyle, x: number, y: number): string {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Static backdrop: sky/roof, stands, aisles, walls and ad boards (one layer per surface).
+// Static backdrop: sky/roof, stands, aisles, walls and ad boards (one layer per surface and board set).
 
-const BOARDS: { text: string; body: string; hi: string; ink: string }[] = [
-  { text: 'TYPE FAST', body: PAL.boardGreen, hi: PAL.boardGreenHi, ink: PAL.cream },
-  { text: 'BLACK BELT', body: PAL.night, hi: PAL.slate, ink: PAL.white },
-  { text: 'DOJO CUP', body: PAL.crowdRed, hi: PAL.clayHi, ink: PAL.cream },
-];
+interface Board { text: string; body: string; hi: string; ink: string }
 
-function paintBase(surface: Surface): Layer {
+/** The back-wall ad boards, left to right: `typing` (Black Belt Tennis, the default) or `arcade` (the Arcade). */
+export type BoardSet = 'typing' | 'arcade';
+
+const GREEN_BOARD = { body: PAL.boardGreen, hi: PAL.boardGreenHi, ink: PAL.cream };
+const BELT_BOARD: Board = { text: 'BLACK BELT', body: PAL.night, hi: PAL.slate, ink: PAL.white };
+const CUP_BOARD: Board = { text: 'DOJO CUP', body: PAL.crowdRed, hi: PAL.clayHi, ink: PAL.cream };
+
+const BOARDS: Record<BoardSet, readonly Board[]> = {
+  typing: [{ text: 'TYPE FAST', ...GREEN_BOARD }, BELT_BOARD, CUP_BOARD],
+  arcade: [{ text: 'HIT HARD', ...GREEN_BOARD }, BELT_BOARD, CUP_BOARD],
+};
+
+function paintBase(surface: Surface, boards: BoardSet): Layer {
   const st = STYLE[surface];
   const layer = createLayer(W, H);
   const { g } = layer;
@@ -161,7 +169,7 @@ function paintBase(surface: Surface): Layer {
   g.putImageData(img, 0, 0);
   paintSeats(g, st);
   paintSideWalls(g, st);
-  paintBoards(g);
+  paintBoards(g, BOARDS[boards]);
   return layer;
 }
 
@@ -190,12 +198,12 @@ function paintSideWalls(g: CanvasRenderingContext2D, st: StandStyle): void {
   }
 }
 
-function paintBoards(g: CanvasRenderingContext2D): void {
+function paintBoards(g: CanvasRenderingContext2D, boards: readonly Board[]): void {
   const x0 = BOARD_X0;
   const span = W - 2 * x0;
-  BOARDS.forEach((b, i) => {
-    const l = x0 + Math.round((span * i) / BOARDS.length);
-    const r = x0 + Math.round((span * (i + 1)) / BOARDS.length);
+  boards.forEach((b, i) => {
+    const l = x0 + Math.round((span * i) / boards.length);
+    const r = x0 + Math.round((span * (i + 1)) / boards.length);
     g.fillStyle = b.body;
     g.fillRect(l, BOARD_TOP, r - l, FLOOR.top - BOARD_TOP);
     g.fillStyle = b.hi;
@@ -264,18 +272,19 @@ function paintLanterns(): Layer {
   return layer;
 }
 
-const bases = new Map<Surface, Layer>();
+const bases = new Map<string, Layer>();
 let lanterns: Layer | null = null;
 let drawCrowd: ReturnType<typeof createCrowd> | null = null;
 
 /**
  * Paints the stadium behind the court: dithered sky (or the dojo's roof and paper lanterns), shaded
- * stands with a procedural, animated crowd, ad boards and side walls. The stadium is the same for
- * every viewer. Static parts are painted once per surface; the crowd is recomposed at most every
- * 100 ms of `s.t`, bobbing when idle and raising arms for the `s.crowdExcite` share of fans.
+ * stands with a procedural, animated crowd, the ad boards of `boards` and side walls. The stadium is
+ * the same for every viewer. Static parts are painted once per (surface, board set); the crowd is
+ * recomposed at most every 100 ms of `s.t`, bobbing when idle and raising arms for the
+ * `s.crowdExcite` share of fans.
  */
-export function drawBackdrop(ctx: CanvasRenderingContext2D, surface: Surface, s: SceneState): void {
-  ctx.drawImage(cachedLayer(bases, surface, () => paintBase(surface)).canvas, 0, 0);
+export function drawBackdrop(ctx: CanvasRenderingContext2D, surface: Surface, s: SceneState, boards: BoardSet = 'typing'): void {
+  ctx.drawImage(cachedLayer(bases, `${surface}:${boards}`, () => paintBase(surface, boards)).canvas, 0, 0);
   (drawCrowd ??= createCrowd(SEATS))(ctx, s.crowdExcite, s.t);
   if (surface === 'dojo') ctx.drawImage((lanterns ??= paintLanterns()).canvas, 0, 0);
 }
