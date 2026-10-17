@@ -159,7 +159,7 @@ export class ArcadeRenderer {
       g.fillRect(0, 0, W, H);
       g.translate(shake.x, shake.y);
     }
-    drawBackdrop(g, surface, scene);
+    drawBackdrop(g, surface, scene, 'arcade');
     drawCourt(g, surface, viewer);
     drawNet(g, surface, viewer);
     drawUmpire(g, scene);
