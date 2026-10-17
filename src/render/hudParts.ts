@@ -9,6 +9,15 @@ export const PAUSE_ICON_RECT: Readonly<{ x: number; y: number; w: number; h: num
 
 /** The serve clock turns yellow (never red) for its last seconds. */
 const CLOCK_WARN_S = 5;
+/** How long a speed readout stays after its strike, then fades. */
+const SPEED_SHOW_MS = 2000;
+const SPEED_FADE_MS = 500;
+
+/** Opacity of a speed readout `ageMs` after its strike: 1 for 2 s, then fading out over 0.5 s; null once gone. */
+export function speedAlpha(ageMs: number): number | null {
+  const alpha = ageMs < SPEED_SHOW_MS ? 1 : 1 - (ageMs - SPEED_SHOW_MS) / SPEED_FADE_MS;
+  return alpha > 0 ? alpha : null;
+}
 
 /** The serve clock's whole seconds at 2× on a panel at the top centre; yellow for the last 5 s. */
 export function drawServeClock(ctx: CanvasRenderingContext2D, seconds: number): void {

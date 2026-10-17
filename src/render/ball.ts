@@ -1,9 +1,8 @@
 import { ballAt, tossZ } from '../core/trajectory';
 import { turnViewAt, type TurnView } from '../core/turnView';
 import type { BallFlight, PlayerId, ServeTurnData, TurnState, Vec3 } from '../core/types';
-import { BALL_MAX_Z, tossHandDx, type BallView } from './ballPaint';
+import { capBallZ, tossBallView, type BallView } from './ballPaint';
 import type { PlayerPose } from './players';
-import { scaleAt, viewerEnd } from './projection';
 import type { WorldFrame } from './world';
 
 export { BALL_MAX_Z, drawBall, drawBallShadow, type BallView } from './ballPaint';
@@ -18,14 +17,12 @@ const HOT_TRAIL_SAMPLES = 4;
 
 const held = (player: PlayerId): BallView => ({ kind: 'held', player });
 
-const capped = (p: Vec3): Vec3 => (p.z > BALL_MAX_Z ? { x: p.x, y: p.y, z: BALL_MAX_Z } : p);
-
 /** The ball `t` ms along `flight` (height capped), with its trail: 4 hot samples for an insane shot, else 2. */
 export function flightBall(flight: BallFlight, t: number, alpha: number): BallView {
   const hot = flight.tier === 'insane';
   const trail: Vec3[] = [];
-  for (let i = 1; i <= (hot ? HOT_TRAIL_SAMPLES : TRAIL_SAMPLES); i++) trail.push(capped(ballAt(flight, t - i * TRAIL_STEP_MS)));
-  return { kind: 'air', pos: capped(ballAt(flight, t)), alpha, trail, hot };
+  for (let i = 1; i <= (hot ? HOT_TRAIL_SAMPLES : TRAIL_SAMPLES); i++) trail.push(capBallZ(ballAt(flight, t - i * TRAIL_STEP_MS)));
+  return { kind: 'air', pos: capBallZ(ballAt(flight, t)), alpha, trail, hot };
 }
 
 /** Opacity `sinceEnd` ms after a call, pass or drop; null once faded out. */
@@ -45,11 +42,7 @@ function tossBall(
 ): BallView {
   if (v.tossAt === null) return held(d.owner);
   const since = v.simτ - turnViewAt(t, v.tossAt).simτ;
-  const viewer = f.vm.viewer;
-  const rot = viewerEnd(viewer) === 0 ? 1 : -1;
-  const dx = (rot * tossHandDx(pose, 0)) / scaleAt(pose.feet.y, viewer);
-  const z = Math.min(BALL_MAX_Z, tossZ(since, d.tossApexMs * d.pace));
-  return { kind: 'air', pos: { x: pose.feet.x + dx, y: pose.feet.y, z }, alpha, trail: [], hot: false };
+  return tossBallView(pose, tossZ(since, d.tossApexMs * d.pace), alpha, f.vm.viewer);
 }
 
 /** The previous turn's ball carried on past its end and fading out (serve lead-ins, match end). */

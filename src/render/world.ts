@@ -6,11 +6,12 @@ import type { Effects } from './effects';
 import { PAL } from './palette';
 import { drawLeaderPath, drawTierRing } from './plates';
 import type { PlayerPose } from './players';
-import { netScreenY, project, viewerEnd } from './projection';
+import { project, viewerEnd } from './projection';
 import type { LeaderMark, RingMark } from './prompts';
 import { drawBackdrop, drawNet, drawUmpire, type SceneState } from './scene';
 import { drawContactShadow } from './shadow';
 import { drawPlayer, type SpriteSheet } from './sprites/sheet';
+import { umpireLookAt } from './umpire';
 
 export { drawContactShadow };
 
@@ -89,16 +90,9 @@ export interface WorldActors {
   hotTrail: boolean;
 }
 
-/** Screen rows above/below the net line inside which the umpire looks across the court. */
-const UMPIRE_ACROSS_PX = 12;
-
 /** Where the umpire looks (spec §4.1 scene): at the ball's end of the court, across while it is near the net. */
 export function umpireLook(ball: BallView | null, poses: readonly [PlayerPose, PlayerPose], f: WorldFrame): -1 | 0 | 1 {
-  if (ball === null) return 0;
-  const y = groundAt(f, ball.kind === 'held' ? poses[ball.player].feet : ball.pos).y;
-  const net = netScreenY();
-  if (y < net - UMPIRE_ACROSS_PX) return -1;
-  return y > net + UMPIRE_ACROSS_PX ? 1 : 0;
+  return umpireLookAt(ball, poses, f.vm.viewer);
 }
 
 /** The pulsing ring under the local player's feet (two sizes), as rows of '#' centred on the feet. */

@@ -5,7 +5,7 @@ import type { DisplayPrefs, LeadIn, PublicState } from '../core/types';
 import { drawBanner, type Banner, type BannerLine } from './banner';
 import { checker } from './court';
 import { drawText, FONT, textWidth } from './font';
-import { PAUSE_ICON_RECT, drawPauseIcon, drawServeClock, message, readout } from './hudParts';
+import { PAUSE_ICON_RECT, drawPauseIcon, drawServeClock, message, readout, speedAlpha } from './hudParts';
 import { OUTLINE, PAL, TIER_COLOR, TIER_TYPED } from './palette';
 import { H, W } from './projection';
 import { createLayer, type Layer } from './screen';
@@ -23,9 +23,6 @@ export function scoreRows(pub: PublicState): [ScoreRow, ScoreRow] {
 /** One banner of a lead-in (lead-in τ): its lines with the time each joins, its span, and whether it is the point call. */
 export interface LeadInBanner { lines: { text: string; atMs: number }[]; fromMs: number; toMs: number; point: boolean }
 
-/** How long the speed readout stays after a strike, then fades. */
-const SPEED_SHOW_MS = 2000;
-const SPEED_FADE_MS = 500;
 /** The situation banner (MATCH POINT, DEUCE…) at the start of PRE_SERVE. */
 const SITUATION_MS = 1500;
 /**
@@ -50,8 +47,8 @@ export function serveClockSeconds(f: WorldFrame): number | null {
 export function speedReadout(f: WorldFrame): { kmh: number; alpha: number } | null {
   const o = f.last?.turn.outcome;
   if (f.turn?.data.kind !== 'return' || o?.kind !== 'strike') return null;
-  const alpha = f.τ < SPEED_SHOW_MS ? 1 : 1 - (f.τ - SPEED_SHOW_MS) / SPEED_FADE_MS;
-  return alpha > 0 ? { kmh: o.strike.kmh, alpha } : null;
+  const alpha = speedAlpha(f.τ);
+  return alpha === null ? null : { kmh: o.strike.kmh, alpha };
 }
 
 /**

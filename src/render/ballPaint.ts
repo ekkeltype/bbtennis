@@ -1,6 +1,6 @@
 import type { PlayerId, Vec2, Vec3 } from '../core/types';
 import { OUTLINE, PAL, TIER_COLOR } from './palette';
-import { project } from './projection';
+import { project, scaleAt, viewerEnd } from './projection';
 import { CELL, frameIndex, type AnimName, type View } from './sprites/animations';
 import { posesFor } from './sprites/poses';
 
@@ -26,6 +26,21 @@ export interface HandPose { feet: Vec2; anim: AnimName; frame: number; view: Vie
 export function tossHandDx(pose: Pick<HandPose, 'view'>, i: number): number {
   const hand = posesFor('serve', pose.view)[i]!.handL;
   return hand.x + 0.5 - CELL.anchorX;
+}
+
+/** `p` with its height capped at `BALL_MAX_Z` (R21). */
+export function capBallZ(p: Vec3): Vec3 {
+  return p.z > BALL_MAX_Z ? { x: p.x, y: p.y, z: BALL_MAX_Z } : p;
+}
+
+/**
+ * The tossed ball `z` m high (capped at `BALL_MAX_Z`) above the tossing hand of a server standing
+ * in `pose`, as `viewer` sees it, at opacity `alpha`; no trail.
+ */
+export function tossBallView(pose: Pick<HandPose, 'feet' | 'view'>, z: number, alpha: number, viewer: PlayerId | 'spectator'): BallView {
+  const rot = viewerEnd(viewer) === 0 ? 1 : -1;
+  const dx = (rot * tossHandDx(pose, 0)) / scaleAt(pose.feet.y, viewer);
+  return { kind: 'air', pos: { x: pose.feet.x + dx, y: pose.feet.y, z: Math.min(BALL_MAX_Z, z) }, alpha, trail: [], hot: false };
 }
 
 /** Ball sprite (spec §4.1): a 3×3 core with a highlight and a shade pixel inside a 1 px dark outline. */

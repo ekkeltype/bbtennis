@@ -1,7 +1,8 @@
-import type { Surface } from '../core/types';
+import type { PlayerId, Surface, Vec2 } from '../core/types';
+import type { BallView } from './ballPaint';
 import { paintGrid } from './court';
 import { OUTLINE, PAL } from './palette';
-import { project } from './projection';
+import { netScreenY, project } from './projection';
 import type { SceneState } from './scene';
 import { cachedLayer, createLayer, type Layer } from './screen';
 
@@ -130,6 +131,26 @@ function paintUmpire(look: -1 | 0 | 1): Layer {
 }
 
 const umpires = new Map<-1 | 0 | 1, Layer>();
+
+/** Screen rows above/below the net line inside which the umpire looks across the court. */
+const UMPIRE_ACROSS_PX = 12;
+
+/**
+ * Where the umpire looks (spec §4.1 scene) for `viewer`: at the ball's end of the court (a held
+ * ball: its holder's feet), across while it is near the net; ahead when there is no ball.
+ */
+export function umpireLookAt(
+  ball: BallView | null,
+  poses: readonly [{ feet: Vec2 }, { feet: Vec2 }],
+  viewer: PlayerId | 'spectator',
+): -1 | 0 | 1 {
+  if (ball === null) return 0;
+  const at = ball.kind === 'held' ? poses[ball.player].feet : ball.pos;
+  const y = project({ x: at.x, y: at.y, z: 0 }, viewer).y;
+  const net = netScreenY();
+  if (y < net - UMPIRE_ACROSS_PX) return -1;
+  return y > net + UMPIRE_ACROSS_PX ? 1 : 0;
+}
 
 /**
  * Paints the umpire on the high chair beside the screen-right net post (the stadium does not rotate
