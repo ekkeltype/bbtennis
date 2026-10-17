@@ -2,25 +2,23 @@ import { POWER_MAX } from '../core/power';
 import { situation } from '../core/scoring';
 import { TUNING } from '../core/tuning';
 import type { DisplayPrefs, LeadIn, PublicState } from '../core/types';
-import { drawBanner, shadowText, type Banner, type BannerLine } from './banner';
+import { drawBanner, type Banner, type BannerLine } from './banner';
 import { checker } from './court';
 import { drawText, FONT, textWidth } from './font';
+import { PAUSE_ICON_RECT, drawPauseIcon, drawServeClock, message, readout } from './hudParts';
 import { OUTLINE, PAL, TIER_COLOR, TIER_TYPED } from './palette';
 import { H, W } from './projection';
 import { createLayer, type Layer } from './screen';
 import { BOARD, beltColor, drawScoreboard, panel, rect, scoreRowsFor, type ScoreRow } from './scoreboard';
 import type { WorldFrame } from './world';
 
-export { drawBanner, beltColor };
+export { drawBanner, beltColor, PAUSE_ICON_RECT };
 export type { Banner, BannerLine, ScoreRow };
 
 /** Both scoreboard rows (spec §4.3); the serve dot marks the current server while the match is on. */
 export function scoreRows(pub: PublicState): [ScoreRow, ScoreRow] {
   return scoreRowsFor(pub.score, pub.players, pub.status === 'playing' && pub.score.winner === null);
 }
-
-/** The on-screen pause button (spec §4.3), top-right in the HUD band, in 480×270 buffer pixels. */
-export const PAUSE_ICON_RECT: Readonly<{ x: number; y: number; w: number; h: number }> = { x: 462, y: 3, w: 15, h: 15 };
 
 /** One banner of a lead-in (lead-in τ): its lines with the time each joins, its span, and whether it is the point call. */
 export interface LeadInBanner { lines: { text: string; atMs: number }[]; fromMs: number; toMs: number; point: boolean }
@@ -30,8 +28,6 @@ const SPEED_SHOW_MS = 2000;
 const SPEED_FADE_MS = 500;
 /** The situation banner (MATCH POINT, DEUCE…) at the start of PRE_SERVE. */
 const SITUATION_MS = 1500;
-/** The serve clock turns yellow (never red) for its last seconds. */
-const CLOCK_WARN_S = 5;
 /**
  * Centre row of "Connection unstable...": its 24 px box fills y 245–268 at the bottom centre, beside
  * the RTT readout. The typist's words keep running under it, and no plate reaches that low: serve and
@@ -155,15 +151,6 @@ export function meterRects(levels: [number, number], clockMs: number, steady: bo
   return out;
 }
 
-function drawServeClock(ctx: CanvasRenderingContext2D, seconds: number): void {
-  const text = String(seconds);
-  const w = Math.max(28, textWidth(text, 2) + 10);
-  const x = Math.round((W - w) / 2);
-  panel(ctx, x, 1, w, 20);
-  rect(ctx, x + 1, 2, w - 2, 1, PAL.shadow);
-  shadowText(ctx, text, x + Math.floor((w - textWidth(text, 2)) / 2), 2, seconds <= CLOCK_WARN_S ? PAL.tierYellow : PAL.cream, 2);
-}
-
 /** Widest coach text line: the panel ends left of the serve clock's slot at the top centre. */
 const COACH_TEXT_W = 214;
 
@@ -186,23 +173,6 @@ function drawCoach(ctx: CanvasRenderingContext2D, text: string): void {
   shown.forEach((l, i) => drawText(ctx, l, BOARD.x + 4, 1 + i * FONT.cellH, PAL.cream));
 }
 
-function drawPauseIcon(ctx: CanvasRenderingContext2D): void {
-  const { x, y, w, h } = PAUSE_ICON_RECT;
-  panel(ctx, x, y, w, h);
-  rect(ctx, x + 4, y + 4, 2, h - 8, PAL.cream);
-  rect(ctx, x + w - 6, y + 4, 2, h - 8, PAL.cream);
-}
-
-/** A right-aligned readout on a small panel ending at x `right`. */
-function readout(ctx: CanvasRenderingContext2D, text: string, right: number, y: number, alpha: number): void {
-  const w = textWidth(text) + 6;
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  panel(ctx, right - w, y, w, 10);
-  drawText(ctx, text, right - w + 3, y, PAL.cream);
-  ctx.restore();
-}
-
 let dimLayer: Layer | null = null;
 
 /** Darkens the frame with a cached 50 % checker of near-black (pause and focus-lost overlays). */
@@ -213,18 +183,6 @@ function dim(ctx: CanvasRenderingContext2D): void {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (checker(x, y)) dimLayer.g.fillRect(x, y, 1, 1);
   }
   ctx.drawImage(dimLayer.canvas, 0, 0);
-}
-
-/** A centred message box with a 2× title and optional 1× line. */
-function message(ctx: CanvasRenderingContext2D, title: string, line: string | null, cy: number): void {
-  const w = Math.max(textWidth(title, 2), line ? textWidth(line) : 0) + 20;
-  const h = line ? 36 : 24;
-  const x = Math.round((W - w) / 2);
-  const y = Math.round(cy - h / 2);
-  panel(ctx, x, y, w, h);
-  rect(ctx, x + 1, y + 1, w - 2, 1, PAL.gold);
-  shadowText(ctx, title, x + Math.round((w - textWidth(title, 2)) / 2), y + 4, PAL.white, 2);
-  if (line) drawText(ctx, line, x + Math.round((w - textWidth(line)) / 2), y + 22, PAL.cream);
 }
 
 /**
