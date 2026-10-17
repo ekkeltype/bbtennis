@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { ArcadeCpu } from '../../src/arcade/core/cpu';
+import { createMatch, step } from '../../src/arcade/core/match';
 import { replay, simulateMatch } from '../../src/arcade/core/sim';
-import type { ArcadeConfig } from '../../src/arcade/core/types';
+import type { ArcadeConfig, PlayerInput } from '../../src/arcade/core/types';
 import { ofType } from './matchHelpers';
 
 const TIEBREAK: ArcadeConfig = { format: 'tiebreak', deuceRule: 'advantage', surface: 'hard', pace: 'normal' };
@@ -47,6 +49,19 @@ describe('simulateMatch', () => {
     }
     expect(r.points.map((p) => p.hits)).toEqual(counted);
     expect(Math.max(...r.points.map((p) => p.hits))).toBe(r.state.longestRally);
+  });
+
+  it('drives each player with ArcadeCpu(player, level, match seed) (ruling R8), as CPU players of those levels', () => {
+    const r = simulateMatch(TIEBREAK, [GREEN, 9], 107, { maxTicks: 3000, record: true });
+    expect(r.state.players.map((p) => [p.kind, p.cpuLevel])).toEqual([['cpu', GREEN], ['cpu', 9]]);
+    const s = createMatch(TIEBREAK, r.state.players, 107);
+    const cpus = [new ArcadeCpu(0, GREEN, 107), new ArcadeCpu(1, 9, 107)] as const;
+    const expected: [PlayerInput, PlayerInput][] = [];
+    for (const inp of r.inputs) {
+      expected.push([cpus[0].input(s), cpus[1].input(s)]);
+      step(s, inp);
+    }
+    expect(r.inputs).toEqual(expected);
   });
 
   it('stops at maxTicks', () => {
