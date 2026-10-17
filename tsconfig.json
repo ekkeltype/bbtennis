@@ -15,5 +15,5 @@
     "skipLibCheck": true
   },
   "include": ["src", "tests", "tools"],
-  "exclude": ["tests/scripts", "tools/scratch", "node_modules", "dist"]
+  "exclude": ["tests/scripts", "tests/arcade/boundary.test.ts", "tools/scratch", "node_modules", "dist"]
 }

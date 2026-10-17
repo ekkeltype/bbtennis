@@ -3,7 +3,7 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["tests/scripts"],
+  "include": ["tests/scripts", "tests/arcade/boundary.test.ts"],
   // Replaces the base exclude list, which leaves tests/scripts out of the browser program.
   "exclude": []
 }
