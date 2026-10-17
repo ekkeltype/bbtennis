@@ -96,6 +96,8 @@ export class HeldKeys {
   }
 
   private readonly keydown = (e: KeyboardEvent): void => {
+    // macOS sends no keyup for other keys while Cmd is held, so drop everything held.
+    if (e.key === 'Meta' || e.metaKey) this.clear();
     if (!this.active() || e.ctrlKey || e.metaKey || FUNCTION_KEY.test(e.key)) return;
     if (MENU.has(e.code)) {
       e.preventDefault();
@@ -110,6 +112,7 @@ export class HeldKeys {
   };
 
   private readonly keyup = (e: KeyboardEvent): void => {
+    if (e.key === 'Meta') this.clear();
     if (!this.active()) return;
     if (e.key === 'Alt' && !e.ctrlKey && !e.metaKey) e.preventDefault();
     this.held.delete(e.code);

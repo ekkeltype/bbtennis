@@ -97,14 +97,27 @@ describe('arcade import boundary', () => {
     expect(failures).toEqual([]);
   });
 
-  it('(c) src/arcade/core uses only the allowed maths and no clocks, timers or DOM', () => {
+  it('(c) src/arcade/core and every module it reaches at runtime use only the allowed maths and no clocks, timers or DOM', () => {
     const forbidden = [
       /Math\.(sin|cos|tan|asin|acos|atan2?|sinh|cosh|tanh|exp|expm1|log1p|log2|log10|log|pow|cbrt|hypot|random)\b/,
       /\*\*/,
       /\b(Date|performance|setTimeout|setInterval|requestAnimationFrame|document|window)\b/,
     ];
+    // Exact integer operations such as Math.imul and the bit operators (rng) are deterministic and stay allowed.
+    const reached = new Set<string>();
+    const walk = (file: string): void => {
+      if (reached.has(file)) return;
+      reached.add(file);
+      for (const e of edges(file)) {
+        if (!e.runtime) continue;
+        const target = resolveSpec(file, e.spec);
+        if (target !== null) walk(target);
+      }
+    };
+    for (const file of tsFiles(join(ARCADE, 'core'))) walk(file);
+    expect(reached.size).toBeGreaterThan(tsFiles(join(ARCADE, 'core')).length);
     const offenders: string[] = [];
-    for (const file of tsFiles(join(ARCADE, 'core'))) {
+    for (const file of reached) {
       const text = stripComments(readFileSync(file, 'utf8'));
       for (const re of forbidden) {
         const m = re.exec(text);

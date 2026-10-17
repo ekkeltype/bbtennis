@@ -137,6 +137,21 @@ describe('HeldKeys menu and filters', () => {
     expect(keys.input()).toMatchObject({ topspin: false, mx: 0 });
   });
 
+  it('drops held keys on a Meta keydown or keyup (macOS sends no keyup for keys held under Cmd)', () => {
+    down('KeyD');
+    expect(keys.input()).toMatchObject({ mx: 1 });
+    expect(fire('keydown', { code: 'MetaLeft', key: 'Meta', metaKey: true }).defaultPrevented).toBe(false);
+    expect(keys.input()).toMatchObject({ mx: 0 });
+
+    down('KeyD');
+    fire('keyup', { code: 'MetaLeft', key: 'Meta' });
+    expect(keys.input()).toMatchObject({ mx: 0 });
+
+    down('KeyD');
+    expect(down('KeyW', { metaKey: true }).defaultPrevented).toBe(false);
+    expect(keys.input()).toMatchObject({ mx: 0, my: 0 });
+  });
+
   it('prevents the Alt keyup default', () => {
     expect(fire('keyup', { code: 'AltLeft', key: 'Alt' }).defaultPrevented).toBe(true);
   });

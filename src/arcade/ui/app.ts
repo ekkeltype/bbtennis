@@ -29,7 +29,7 @@ import { matchScreen } from './screens/match';
 import { optionsScreen } from './screens/options';
 import { pauseScreen } from './screens/pause';
 import { resultsScreen, type ResultsParams } from './screens/results';
-import { titleScreen } from './screens/title';
+import { arcadeLogo, titleScreen } from './screens/title';
 import { ArcadeStore, type ArcadeSettings, type CpuSetup } from './store';
 
 /** Screens with the attract demo running behind them. */
@@ -104,7 +104,7 @@ export class ArcadeApp implements ArcadeContext {
   /** Registers the screens, waits for the fonts, starts the loop and shows the gate. */
   async start(): Promise<void> {
     const r = this.router;
-    r.register('gate', gateScreen(this));
+    r.register('gate', gateScreen(this, () => arcadeLogo()));
     r.register('title', titleScreen(this));
     r.register('mainMenu', mainMenuScreen(this));
     r.register('cpuSetup', cpuSetupScreen(this));

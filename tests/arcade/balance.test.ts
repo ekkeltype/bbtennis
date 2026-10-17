@@ -48,9 +48,9 @@
  *   slice 0.45 → 0.2, kick 0.6 → 0.25 (first serves fault 26–29 % of the time, second serves
  *   13–15 %).
  * - Receiving spot: receive.x 2.6 → 3.1.
- * Unchanged: the rally shot speeds, tSigma, the slice-serve curve and every rule. CPU behaviour (cpu.ts,
- * ruling R10): a serve return goes to a corner with probability 0.3 × aggression (rally balls keep
- * 0.25 + 0.6 × aggression), else deep through the middle.
+ * Unchanged: the rally shot speeds, tSigma, the slice-serve curve and every rule. CPU behaviour (cpu.ts, spec §7):
+ * a serve return goes to a corner with probability 0.3 × aggression (rally balls keep
+ * 0.25 + 0.6 × aggression); depth follows the rally choice (deep with deepChance, otherwise neutral).
  */
 import { describe, expect, it } from 'vitest';
 import { simulateMatch } from '../../src/arcade/core/sim';

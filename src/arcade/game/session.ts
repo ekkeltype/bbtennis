@@ -74,6 +74,7 @@ export class ArcadeSession {
 
   /** Starts the 3-2-1 countdown (sim frozen), then the sim runs. */
   resume(): void {
+    if (!this.paused) return;
     this.paused = false;
     this.countdownMs = COUNTDOWN_MS;
     this.accMs = 0;
@@ -86,11 +87,12 @@ export class ArcadeSession {
   /** Advances by dtMs (fixed 60 Hz steps; at most 15 per frame; the rest is dropped) and returns the view. */
   frame(dtMs: number): ArcadeView {
     const events: ArcadeEvent[] = [];
+    const dt = Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
     if (!this.disposed && !this.paused && !this.over) {
       if (this.countdownMs > 0) {
-        this.countdownMs = Math.max(0, this.countdownMs - Math.max(0, dtMs));
+        this.countdownMs = Math.max(0, this.countdownMs - dt);
       } else {
-        this.run(Math.max(0, dtMs), events);
+        this.run(dt, events);
       }
     }
     const countdown = this.countdownMs > 0 ? Math.ceil(this.countdownMs / 1000) : null;

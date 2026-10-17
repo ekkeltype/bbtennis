@@ -138,3 +138,31 @@ describe('ArcadeSession end', () => {
     expect(make().view).toBeNull();
   });
 });
+
+describe('ArcadeSession guards', () => {
+  it('a stray resume() on a running session does not freeze it', () => {
+    const s = make();
+    s.frame(FRAME);
+    s.resume();
+    expect(s.frame(FRAME).state.tick).toBe(2);
+  });
+
+  it('a second resume() during the countdown does not restart it', () => {
+    const s = make();
+    s.pause();
+    s.resume();
+    expect(s.frame(1000).overlay.countdown).toBe(2);
+    s.resume();
+    expect(s.frame(1000).overlay.countdown).toBe(1);
+    expect(s.frame(1000).overlay.countdown).toBeNull();
+    expect(s.frame(FRAME).state.tick).toBe(1);
+  });
+
+  it('frame(NaN) runs no ticks and later frames run normally', () => {
+    const s = make();
+    expect(s.frame(NaN).state.tick).toBe(0);
+    expect(s.frame(Infinity).state.tick).toBe(0);
+    expect(s.frame(FRAME).state.tick).toBe(1);
+    expect(s.frame(FRAME).state.tick).toBe(2);
+  });
+});

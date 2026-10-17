@@ -39,8 +39,9 @@ const CPU = {
   lob: { oppNetDist: 4.0, base: 0.3, perAggression: 0.5 },
   corner: { base: 0.25, perAggression: 0.6 },
   /**
-   * Corner chance on a serve return (Task 9 balance, ruling R10): returns go mostly deep through
-   * the middle, so the server keeps an edge (spec §7: the server wins 55–70 %).
+   * Corner chance on a serve return (spec §7 balance): lower than in a rally, so returns are
+   * rarely placed into a corner and the server keeps an edge (the server wins 55–70 %). Depth
+   * follows the rally choice: deep with `deepChance`, otherwise neutral.
    */
   returnCorner: { base: 0, perAggression: 0.3 },
   deepChance: 0.5,
