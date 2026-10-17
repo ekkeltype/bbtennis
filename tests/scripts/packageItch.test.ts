@@ -142,6 +142,22 @@ describe('scripts/packageItch.mjs', () => {
     expect(names).toContain('index.html');
   });
 
+  it('leaves out the Arcade page and its own chunks but keeps shared chunks', () => {
+    writeDist({
+      ...FIXTURE,
+      'arcade/index.html': Buffer.from('<p>arcade</p>'),
+      'assets/arcade--iKvlCC4.js': Buffer.from('console.log("arcade");'),
+      'assets/arcade-DTbqsM8M.css': Buffer.from('.a{}'),
+      'assets/router-DVzuFdla.js': Buffer.from('export const r=1;'),
+      'assets/router-BVjUJ3BB.css': Buffer.from('.r{}'),
+    });
+    expect(run().status).toBe(0);
+    const names = readZip(readFileSync(zipPath)).map((e) => e.name);
+    expect(names.filter((n) => n.includes('arcade'))).toEqual([]);
+    expect(names).toContain('assets/router-DVzuFdla.js');
+    expect(names).toContain('assets/router-BVjUJ3BB.css');
+  });
+
   it('stores every file byte for byte with its CRC-32', () => {
     writeDist(FIXTURE);
     expect(run().status).toBe(0);

@@ -190,7 +190,7 @@ npm run dev        # http://localhost:5173
 | `npm run preview` | Serve the built `dist/` locally |
 | `npm test` | All Vitest tests, including a smoke subset of the balance simulation |
 | `npm run test:sim` | The full balance simulations (slow): the typing game's (spec §6) and the Arcade's (Arcade spec §7) |
-| `npm run typecheck` | `tsc --noEmit -p .` (the game, tests and tools) and `tsc --noEmit -p tsconfig.node.json` (the Node-side tests in `tests/scripts/`) |
+| `npm run typecheck` | `tsc --noEmit -p .` (the game, tests and tools) and `tsc --noEmit -p tsconfig.node.json` (the Node-side tests: `tests/scripts/` and `tests/arcade/boundary.test.ts`) |
 | `npm run art:export` | Screenshot every section of the art QA page (`tools/art.html`) to `artifacts/art/` |
 | `npm run e2e` | Build the game and play it in the local Chrome, about 4 minutes (see [below](#end-to-end-run-npm-run-e2e)). Screenshots go to `artifacts/e2e/` |
 | `npm run package:itch` | After `npm run build`, zip the contents of `dist/` into `black-belt-tennis-itch.zip`, with `index.html` at the zip root |

@@ -8,6 +8,9 @@
  * otherwise, names are UTF-8, times are the files' modification times. No ZIP64: a build is a few MB
  * (Buffer writes throw rather than wrap if a size ever passes 4 GB).
  *
+ * The Arcade is a separate page (dist/arcade/) with its own chunks (assets/arcade-*.js/.css) and is
+ * not part of the itch.io game, so those are left out. Chunks shared with the typing page stay.
+ *
  * Exits 1 and writes nothing when dist/ has no index.html at its root.
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -47,11 +50,17 @@ function dosDateTime(d) {
   };
 }
 
-/** Every file under `dir` as a path relative to it with forward slashes, sorted. */
+/** True for the Arcade-only files of a build: its page folder and its own hashed chunks. */
+function isArcadeOnly(name) {
+  return name.startsWith('arcade/') || /^assets\/arcade-[^/]*\.(js|css)$/.test(name);
+}
+
+/** Every file under `dir` as a path relative to it with forward slashes, sorted, minus the Arcade's own files. */
 function listFiles(dir) {
   return readdirSync(dir, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => relative(dir, join(entry.parentPath, entry.name)).split(sep).join('/'))
+    .filter((name) => !isArcadeOnly(name))
     .sort();
 }
 
