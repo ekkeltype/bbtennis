@@ -1,3 +1,4 @@
+import { BELTS, isMilestoneBelt, type BeltRank } from './belts';
 import { insaneOffered, levelFromKeys } from './power';
 import { chance, forkSeed, intBelow, normalIH, seedRng, uniform } from './rng';
 import { CPU_LEVEL_WPM, CPU_MILESTONES } from './tuning';
@@ -9,43 +10,9 @@ import { clamp, lerp } from './util';
 /** A CPU typist's parameters (spec §3.8): speed, per-key error rate, reaction before a prompt's first key, aggression. */
 export interface CpuProfile { wpm: number; err: number; reactionMs: number; aggression: number }
 
-/** One of the 15 CPU levels as shown to the player: belt with 0–2 stripes (or dan grade), WPM and label. */
-export interface CpuLevelInfo {
-  level: number;
-  belt: 'white' | 'yellow' | 'green' | 'brown' | 'black';
-  stripes: 0 | 1 | 2;
-  dan: 0 | 2 | 3;
+/** One of the 15 CPU levels as shown to the player: belt rank (belt, stripes, dan, label) plus WPM. */
+export interface CpuLevelInfo extends BeltRank {
   wpm: number;
-  label: string;
-}
-
-type Rank = Pick<CpuLevelInfo, 'belt' | 'stripes' | 'dan'>;
-
-/** Belt, stripes and dan of each level (index = level); WPMs come from CPU_LEVEL_WPM. */
-const RANKS: readonly Rank[] = [
-  { belt: 'white', stripes: 0, dan: 0 },
-  { belt: 'white', stripes: 1, dan: 0 },
-  { belt: 'white', stripes: 2, dan: 0 },
-  { belt: 'yellow', stripes: 0, dan: 0 },
-  { belt: 'yellow', stripes: 1, dan: 0 },
-  { belt: 'yellow', stripes: 2, dan: 0 },
-  { belt: 'green', stripes: 0, dan: 0 },
-  { belt: 'green', stripes: 1, dan: 0 },
-  { belt: 'green', stripes: 2, dan: 0 },
-  { belt: 'brown', stripes: 0, dan: 0 },
-  { belt: 'brown', stripes: 1, dan: 0 },
-  { belt: 'brown', stripes: 2, dan: 0 },
-  { belt: 'black', stripes: 0, dan: 0 },
-  { belt: 'black', stripes: 0, dan: 2 },
-  { belt: 'black', stripes: 0, dan: 3 },
-];
-
-const DAN_ORDINALS: Record<2 | 3, string> = { 2: '2ND', 3: '3RD' };
-
-function rankLabel(r: Rank): string {
-  const belt = `${r.belt.toUpperCase()} BELT`;
-  if (r.dan !== 0) return `${belt} ${DAN_ORDINALS[r.dan]} DAN`;
-  return r.stripes === 0 ? belt : `${belt} ${'★'.repeat(r.stripes)}`;
 }
 
 /** WPM of a level; throws a RangeError for anything but an integer 0..14. */
@@ -56,11 +23,11 @@ function levelWpm(level: number): number {
 }
 
 /** The 15 CPU levels, easiest first (index = level); labels like 'GREEN BELT ★★' or 'BLACK BELT 2ND DAN'. */
-export const CPU_LEVELS: CpuLevelInfo[] = RANKS.map((rank, level) => ({ level, ...rank, wpm: levelWpm(level), label: rankLabel(rank) }));
+export const CPU_LEVELS: CpuLevelInfo[] = BELTS.map((rank) => ({ ...rank, wpm: levelWpm(rank.level) }));
 
 /** True for a level that is a milestone row of spec §3.8 (a belt with no stripes, or a dan grade). */
 export function isMilestone(level: number): boolean {
-  return CPU_LEVELS[level]?.stripes === 0;
+  return isMilestoneBelt(level);
 }
 
 /** Profile of a level: its milestone row, or a linear interpolation in WPM between the two milestone rows around it. */

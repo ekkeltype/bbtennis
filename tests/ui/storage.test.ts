@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { load, save, storageOk, STORAGE_PREFIX } from '../../src/ui/storage';
+import { createStore, load, save, storageOk, STORAGE_PREFIX } from '../../src/ui/storage';
 
 const isNumberList = (v: unknown): v is number[] => Array.isArray(v) && v.every((x) => typeof x === 'number');
 
@@ -96,5 +96,48 @@ describe('storageOk', () => {
   it('is true with working storage and leaves no probe key behind', () => {
     expect(storageOk()).toBe(true);
     expect(window.localStorage.length).toBe(0);
+  });
+});
+
+describe('createStore', () => {
+  it('saves under the given prefix and loads it back', () => {
+    const s = createStore('x:');
+    expect(s.save('key', [4, 5])).toBe(true);
+    expect(window.localStorage.getItem('x:key')).toBe('[4,5]');
+    expect(s.load('key', [], isNumberList)).toEqual([4, 5]);
+  });
+
+  it('keeps stores with different prefixes apart', () => {
+    const a = createStore('a:');
+    const b = createStore('b:');
+    a.save('key', [1]);
+    expect(b.load('key', [0], isNumberList)).toEqual([0]);
+    expect(load('key', [0], isNumberList)).toEqual([0]);
+  });
+
+  it('falls back on invalid JSON or a rejecting validator', () => {
+    const s = createStore('x:');
+    window.localStorage.setItem('x:bad', '{nope');
+    window.localStorage.setItem('x:wrong', '["s"]');
+    expect(s.load('bad', [0], isNumberList)).toEqual([0]);
+    expect(s.load('wrong', [0], isNumberList)).toEqual([0]);
+  });
+
+  it('with a throwing localStorage: load falls back, save and storageOk are false', () => {
+    const s = createStore('x:');
+    blockStorage();
+    expect(s.load('key', [9], isNumberList)).toEqual([9]);
+    expect(s.save('key', [1])).toBe(false);
+    expect(s.storageOk()).toBe(false);
+  });
+
+  it('storageOk is true with working storage and leaves no probe key', () => {
+    expect(createStore('x:').storageOk()).toBe(true);
+    expect(window.localStorage.length).toBe(0);
+  });
+
+  it('the default load/save stay bound to bbtennis:v1:', () => {
+    save('k', [2]);
+    expect(createStore('bbtennis:v1:').load('k', [], isNumberList)).toEqual([2]);
   });
 });

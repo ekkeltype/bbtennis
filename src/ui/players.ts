@@ -1,4 +1,4 @@
-import { CPU_LEVELS } from '../core/cpu';
+import { BELTS } from '../core/belts';
 import type { Look, PlayerInfo, Profile } from '../core/types';
 import { BELT_COLOR } from '../render/palette';
 
@@ -17,7 +17,7 @@ const pick = <T>(list: readonly T[], i: number): T => list[((i % list.length) + 
 
 /** The CPU opponent of a level: its own name and look, wearing its belt as a headband (spec §3.8). */
 export function cpuPlayer(level: number): PlayerInfo {
-  const info = CPU_LEVELS[level] ?? CPU_LEVELS[0]!;
+  const info = BELTS[level] ?? BELTS[0]!;
   const look: Look = {
     skin: (level * 5) % 6,
     hairStyle: (level * 2) % 5,

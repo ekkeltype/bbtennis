@@ -21,7 +21,7 @@ type RampField = 'skin' | 'hair' | 'shirt' | 'shorts' | 'racket';
  * colour, shirt, shorts, headband (or none) and racket, with a live animated preview in the near and
  * far views. Every change is stored at once; choosing a headband stops the earned-belt default.
  */
-export function customizeScreen(ctx: UiContext): ScreenFactory {
+export function customizeScreen(ctx: Pick<UiContext, 'router' | 'profile' | 'setProfile'>): ScreenFactory {
   return () => {
     const draft: Profile = { name: ctx.profile.name, look: { ...ctx.profile.look } };
     const preview = new LookPreview(draft.look);

@@ -1,4 +1,4 @@
-import { CPU_LEVELS } from '../core/cpu';
+import { BELTS } from '../core/belts';
 import { POWER_MAX } from '../core/power';
 import { currentServer, pointsDisplay, setLine, situation, type SetCell } from '../core/scoring';
 import { TUNING } from '../core/tuning';
@@ -67,7 +67,7 @@ const SWATCH_MIN_CONTRAST = 3;
 
 /** The cloth ramp of a player's belt colour (see `beltColor`), if there is one. */
 function beltRamp(p: PlayerInfo): Ramp | undefined {
-  const level = p.kind === 'cpu' && p.cpuLevel !== null ? CPU_LEVELS[p.cpuLevel] : undefined;
+  const level = p.kind === 'cpu' && p.cpuLevel !== null ? BELTS[p.cpuLevel] : undefined;
   return level ? RAMPS.cloth[BELT_COLOR[level.belt]] : RAMPS.cloth[p.look.headband ?? p.look.shirt];
 }
 

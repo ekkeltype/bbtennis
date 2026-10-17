@@ -1,4 +1,4 @@
-import { CPU_LEVELS } from '../core/cpu';
+import { BELTS as BELT_RANKS } from '../core/belts';
 import { NAME_CHARS, NAME_MAX, sanitizeName } from '../core/text';
 import type { DeuceRule, FormatId, Look, PaceId, Profile, Surface, WordPackId } from '../core/types';
 import { RAMPS } from '../render/palette';
@@ -62,7 +62,7 @@ export const DEFAULT_PROFILE: Profile = {
 
 /** A career with no matches played. */
 export const DEFAULT_CAREER: Career = {
-  perLevel: CPU_LEVELS.map(() => ({ played: 0, won: 0 })),
+  perLevel: BELT_RANKS.map(() => ({ played: 0, won: 0 })),
   bestWpm: 0,
   earned: [],
 };
@@ -93,7 +93,7 @@ export function isSettings(v: unknown): v is Settings {
     oneOf(DEUCE_RULES, v['deuceRule']) &&
     oneOf(SURFACES, v['surface']) &&
     oneOf(FORMATS, v['format']) &&
-    intIn(v['cpuLevel'], 0, CPU_LEVELS.length - 1) &&
+    intIn(v['cpuLevel'], 0, BELT_RANKS.length - 1) &&
     unit(vol['master']) &&
     unit(vol['music']) &&
     unit(vol['sfx']) &&
@@ -133,7 +133,7 @@ export function isCareer(v: unknown): v is Career {
   const { perLevel, bestWpm, earned } = v;
   return (
     Array.isArray(perLevel) &&
-    perLevel.length === CPU_LEVELS.length &&
+    perLevel.length === BELT_RANKS.length &&
     perLevel.every((r) => isObject(r) && count(r['played']) && count(r['won']) && r['won'] <= r['played']) &&
     typeof bestWpm === 'number' &&
     Number.isFinite(bestWpm) &&
@@ -150,7 +150,7 @@ export function isCareer(v: unknown): v is Career {
  * (spec §3.11). Returns a new object; an invalid level leaves the career as it was.
  */
 export function recordCareer(c: Career, level: number, won: boolean, wpm: number): Career {
-  const info = Number.isInteger(level) ? CPU_LEVELS[level] : undefined;
+  const info = Number.isInteger(level) ? BELT_RANKS[level] : undefined;
   if (info === undefined) return c;
   const perLevel = c.perLevel.map((r, i) => (i === level ? { played: r.played + 1, won: r.won + (won ? 1 : 0) } : { ...r }));
   const bestWpm = Number.isFinite(wpm) && wpm > c.bestWpm ? wpm : c.bestWpm;
@@ -170,7 +170,7 @@ export function beaten(c: Career, level: number): boolean {
  */
 export function creditBeatenLevels(c: Career): Career {
   const earned = [...c.earned];
-  CPU_LEVELS.forEach((info, level) => {
+  BELT_RANKS.forEach((info, level) => {
     if (beaten(c, level) && !earned.includes(info.belt)) earned.push(info.belt);
   });
   return { perLevel: c.perLevel.map((r) => ({ ...r })), bestWpm: c.bestWpm, earned };
