@@ -137,8 +137,8 @@ false→true edges, detected by the sim.
 
 - Top speed 6.0 m/s; acceleration to top speed in 0.15 s; stopping in 0.1 s. Diagonals are normalized.
 - While a shot is committed (charging) the top speed is 60 %.
-- Bounds: a player stays on their own half, at least 0.4 m from the net, at most 6 m behind the
-  baseline, and |x| ≤ 6.5 m.
+- Bounds: a player stays on their own half, at least 0.4 m from the net, at most 2.0 m behind the
+  baseline (further back, the near player's feet would leave the 270 px screen), and |x| ≤ 6.5 m.
 - During the serve set-up the server moves only along x, behind the baseline, between the centre
   mark (0.3 m from it) and the singles sideline on the serving side. The receiver moves freely in its
   half until the serve is struck.
@@ -148,8 +148,10 @@ false→true edges, detected by the sim.
 - A press of a shot key while the ball is in play (or coming) **commits** that shot. Pressing another
   shot key before contact switches the shot type and keeps the charge.
 - The charge grows from the commit: `charge = min(1, (t − tCommit) / chargeMs)`, `chargeMs = 500`.
-- **The swing is automatic**: on the first tick the ball is inside the committed player's reach zone
-  (§4.4), the player hits it. A player who has not committed does not swing; the ball goes by.
+- **The swing is automatic**: a committed player hits the ball at its closest approach inside their
+  reach zone (§4.4): the first tick on which the ball is in the zone and, one tick later, it would be
+  no closer (horizontally), out of the zone, or past its second bounce. A player who has not
+  committed does not swing; the ball goes by.
 - **Timing grade** at contact, from `d = tContact − tCommit`:
   - `d < rushedMs (150)` → **rushed**: power × 0.75, aim pulled 50 % toward the court centre, scatter
     × 1.8.
@@ -215,7 +217,9 @@ the effective gravity before the bounce and the bounce behaviour. Every segment 
 
 - Scatter: `L += σ·(n1, n2)`, with `n1, n2` standard normal from the hitter's RNG (`normalIH`) and
   `σ = 0.35 m × grade factor × stretch factor × (1 + 0.5 × incomingSpeed/30)`.
-- `T` also gets `× (1 + 0.04·n3)` (a little more or less arc).
+- `T` also gets `× (1 + 0.10·g·n3)`, g = grade factor × stretch factor: a shorter T is a faster,
+  flatter ball (the landing point does not move), so rushed and stretched shots from low contact
+  points risk the net.
 - In/out and net are not rolled separately: they follow from the flight. **Out** — the first bounce
   lands outside the opponent's singles court (lines count as in; the ball's radius 0.033 m is added).
   **Net** — at the net plane (y = 0) the ball is below the net height there (0.914 m at the centre,
@@ -271,28 +275,31 @@ the effective gravity before the bounce and the bounce behaviour. Every segment 
 - **15 levels** with the typing game's ranks and labels (`core/belts`), White belt to Black belt 3rd
   dan. Each level's profile is interpolated between five milestone rows:
 
-| Milestone | Reaction (ms) | Read error (m) | Speed × | Press timing σ (ms) | Aim margin (m) | Aggression |
-|---|---|---|---|---|---|---|
-| White (0) | 420 | 1.2 | 0.78 | 160 | 1.6 | 0.15 |
-| Yellow (3) | 340 | 0.9 | 0.84 | 120 | 1.3 | 0.3 |
-| Green (6) | 260 | 0.6 | 0.90 | 85 | 1.0 | 0.45 |
-| Brown (9) | 190 | 0.35 | 0.95 | 55 | 0.75 | 0.6 |
-| Black (12–14) | 140 → 100 | 0.2 → 0.1 | 1.0 | 35 → 20 | 0.6 → 0.45 | 0.75 → 0.85 |
+| Milestone | Reaction (ms) | Read error (m) | Speed × | Press timing σ (ms) | Aggression |
+|---|---|---|---|---|---|
+| White (0) | 420 | 1.2 | 0.78 | 160 | 0.15 |
+| Yellow (3) | 340 | 0.9 | 0.84 | 120 | 0.3 |
+| Green (6) | 260 | 0.6 | 0.90 | 85 | 0.45 |
+| Brown (9) | 190 | 0.35 | 0.95 | 55 | 0.6 |
+| Black (12) | 140 | 0.2 | 1.0 | 35 | 0.75 |
+| Black 3rd dan (14) | 100 | 0.1 | 1.0 | 20 | 0.85 |
 
   - **Reaction**: after the opponent's hit, the CPU keeps its previous plan for this long.
   - **Read error**: its predicted contact point is off by this much (a fixed offset drawn per shot),
     shrinking linearly to 0 over the last 0.5 s of the ball's approach; so low belts arrive late or
     misplaced and stretch.
-  - **Movement**: it runs toward a contact spot beside the predicted contact point, at the speed
-    factor × the player top speed.
+  - **Movement**: it steers (8 directions, like a human) toward a contact spot 0.7 m beside the
+    predicted contact point; a speed factor below 1 is applied by holding the direction on only that
+    share of ticks (a deterministic accumulator), since inputs carry no speed.
   - **Commit**: it commits so that contact falls `chargeMs + perfectWindowMs/2` after the commit,
     plus normal noise with the level's σ; low belts are often rushed or merely clean.
   - **Shot choice**: by aggression: attack a corner (topspin, aiming away from the opponent) vs
     rally deep through the middle; slice when stretched; lob when the opponent is within 4 m of the
     net (more often at higher aggression); approach the net after a short opponent ball at high
     aggression.
-  - **Aim** uses the level's own margin instead of the grade margin when that is larger (a careful
-    White belt).
+  - **Aim**: through the same direction keys, held only for the last 2 ticks before the predicted
+    contact (so aiming barely moves it). Corner aim with probability `0.25 + 0.6 × aggression`, else
+    neutral (deep middle).
   - **Serve**: a first serve is flat with probability = aggression, else slice; a second serve is
     kick. It aims wide/T/body at random weighted by aggression. It tosses 0.6–1.2 s after the set-up
     starts and presses with its timing σ around the perfect window.
