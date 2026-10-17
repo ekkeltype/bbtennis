@@ -8,9 +8,10 @@ import { poseAt } from '../../../src/arcade/render/animator';
 import { drawArcadeHud } from '../../../src/arcade/render/hud';
 import { ArcadeRenderer, ballViewAt, chargeBar } from '../../../src/arcade/render/renderer';
 import type { Look, PlayerInfo } from '../../../src/core/types';
+import { BALL_MAX_Z } from '../../../src/render/ballPaint';
 import type { Screen } from '../../../src/render/screen';
 import { buildSheet } from '../../../src/render/sprites/sheet';
-import { matchInSetup } from '../matchHelpers';
+import { matchInSetup, runUntil, untilType } from '../matchHelpers';
 
 const LOOK_A: Look = { skin: 1, hairStyle: 2, hair: 3, shirt: 6, shorts: 7, headband: 5, racket: 2 };
 const LOOK_B: Look = { skin: 3, hairStyle: 4, hair: 1, shirt: 2, shorts: 1, headband: null, racket: 0 };
@@ -190,6 +191,34 @@ describe('ballViewAt', () => {
     const { s } = matchInSetup(1);
     const poses = [poseAt(s, 0, s.tick * DT, 0), poseAt(s, 1, s.tick * DT, 0)] as const;
     expect(ballViewAt(s, s.tick * DT, poses, 0, true)).toEqual({ kind: 'held', player: 0 });
+  });
+
+  it("keeps the ball in the server's hand after a time violation, and after the double fault it makes", () => {
+    const { s } = matchInSetup(1);
+    const at = (): ReturnType<typeof ballViewAt> => {
+      const poses = [poseAt(s, 0, s.tick * DT, 0), poseAt(s, 1, s.tick * DT, 0)] as const;
+      return ballViewAt(s, s.tick * DT, poses, 0, true);
+    };
+    runUntil(s, untilType('call'));
+    expect(s.phase.kind).toBe('dead');
+    expect(s.point.call?.call).toBe('timeViolation');
+    expect(at()).toEqual({ kind: 'held', player: 0 });
+    runUntil(s, untilType('point'));
+    expect(s.point.call?.call).toBe('doubleFault');
+    expect(at()).toEqual({ kind: 'held', player: 0 });
+  });
+
+  it('caps the drawn ball and its trail at BALL_MAX_Z', () => {
+    const s = rally();
+    const f = buildFlight({ ...s.flight!.hit, type: 'lob', target: { x: 0, y: -8 }, T: 2.6 });
+    s.flight = f;
+    const t = f.hit.tick * DT + 1.25;
+    expect(flightPos(f, 1.25 - 0.032).z).toBeGreaterThan(BALL_MAX_Z + 1);
+    const poses = [poseAt(s, 0, t, 0), poseAt(s, 1, t, 0)] as const;
+    const ball = ballViewAt(s, t, poses, 0, true);
+    if (ball?.kind !== 'air') throw new Error('no ball');
+    expect(ball.pos.z).toBe(BALL_MAX_Z);
+    expect(ball.trail.map((q) => q.z)).toEqual([BALL_MAX_Z, BALL_MAX_Z]);
   });
 
   it('flies at the flight position with a two-sample trail, then fades over 300 ms after tEnd until tGone', () => {

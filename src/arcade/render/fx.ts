@@ -30,7 +30,10 @@ export class ArcadeFx {
     this.effects = effects;
   }
 
-  /** Takes in the frame's events and the players' speeds, then advances the effects by `dtMs`. */
+  /**
+   * Takes in the frame's events and the players' speeds, then advances the effects by `dtMs`. Give
+   * each view exactly once: its events trigger effects with no dedup, so a repeat would replay them.
+   */
   consume(view: ArcadeView, reduce: boolean, dtMs: number): void {
     const dt = Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
     const s = view.state;

@@ -1,18 +1,18 @@
 import { currentServer } from '../../core/scoring';
 import type { Look } from '../../core/types';
-import { drawBall, drawBallShadow, tossHandDx, type BallView } from '../../render/ballPaint';
+import { capBallZ, drawBall, drawBallShadow, tossBallView, type BallView } from '../../render/ballPaint';
 import { shadowText } from '../../render/banner';
 import { drawCourt } from '../../render/court';
 import { Effects } from '../../render/effects';
 import { FONT, textWidth } from '../../render/font';
 import { OUTLINE, PAL } from '../../render/palette';
-import { H, W, netScreenY, project, scaleAt, viewerEnd } from '../../render/projection';
+import { H, W, project } from '../../render/projection';
 import { drawBackdrop, drawNet, type SceneState } from '../../render/scene';
 import { rect } from '../../render/scoreboard';
 import type { Screen } from '../../render/screen';
 import { drawContactShadow } from '../../render/shadow';
 import { buildSheet, drawPlayer, type SpriteSheet } from '../../render/sprites/sheet';
-import { drawUmpire } from '../../render/umpire';
+import { drawUmpire, umpireLookAt } from '../../render/umpire';
 import { ballAt } from '../core/match';
 import { chargeAt, rallyGrade } from '../core/shot';
 import { DT, TICK_HZ } from '../core/tuning';
@@ -29,8 +29,6 @@ const TRAIL_STEP_S = 0.016;
 const TRAIL_SAMPLES = 2;
 /** Events are kept this long for the banners and readouts (longer than any of them lasts). */
 const RECENT_TICKS = 10 * TICK_HZ;
-/** Screen rows above/below the net line inside which the umpire looks across the court. */
-const UMPIRE_ACROSS_PX = 12;
 /** Tallest standing head above the feet anchor (px, hair included), and the gap above it to the charge bar. */
 const HEAD_PX = 43;
 const HEAD_GAP = 3;
@@ -43,17 +41,11 @@ const PLAYERS = [0, 1] as const;
 
 const ground = (p: Vec2, viewer: PlayerId | 'spectator'): { x: number; y: number } => project({ x: p.x, y: p.y, z: 0 }, viewer);
 
-/** The tossed ball above the server's tossing hand at the toss height `z` (as the typing game draws it). */
-function tossBall(pose: ArcadePose, z: number, viewer: PlayerId | 'spectator'): BallView {
-  const rot = viewerEnd(viewer) === 0 ? 1 : -1;
-  const dx = (rot * tossHandDx(pose, 0)) / scaleAt(pose.feet.y, viewer);
-  return { kind: 'air', pos: { x: pose.feet.x + dx, y: pose.feet.y, z }, alpha: 1, trail: [], hot: false };
-}
-
 /**
- * The ball at sim time `t` (spec §6.1): in the server's hand at the intro and set-up, on the toss
- * above the tossing hand, then `ballAt` on the flight with a two-sample trail (none when `trail` is
- * off) at full opacity until tEnd, fading out over 300 ms after it; null when there is none.
+ * The ball at sim time `t` (spec §6.1): in the server's hand at the intro and set-up, and through
+ * the dead time after a time violation; on the toss above the tossing hand; then `ballAt` on the
+ * flight with a two-sample trail (none when `trail` is off) at full opacity until tEnd, fading out
+ * over 300 ms after it. Drawn heights are capped at `BALL_MAX_Z`. Null when there is none.
  */
 export function ballViewAt(
   s: Readonly<ArcadeState>,
@@ -64,9 +56,12 @@ export function ballViewAt(
 ): BallView | null {
   const kind = s.phase.kind;
   if (kind === 'intro' || kind === 'setup') return { kind: 'held', player: currentServer(s.score) };
+  // Only a time violation (or the double fault it makes) ends a serve with no flight; the called server keeps the ball.
+  const call = s.point.call;
+  if (kind === 'dead' && s.flight === null && call !== null) return { kind: 'held', player: call.player };
   const pos = ballAt(s, t);
   if (pos === null) return null;
-  if (kind === 'toss' && s.toss !== null) return tossBall(poses[s.toss.player], pos.z, viewer);
+  if (kind === 'toss' && s.toss !== null) return tossBallView(poses[s.toss.player], pos.z, 1, viewer);
   const f = s.flight;
   if (f === null) return null;
   const hitT = f.hit.tick * DT;
@@ -76,9 +71,9 @@ export function ballViewAt(
   for (let i = 1; trail && i <= TRAIL_SAMPLES; i++) {
     const at = t - i * TRAIL_STEP_S;
     const q = at >= hitT ? ballAt(s, at) : null;
-    if (q) samples.push(q);
+    if (q) samples.push(capBallZ(q));
   }
-  return { kind: 'air', pos, alpha, trail: samples, hot: false };
+  return { kind: 'air', pos: capBallZ(pos), alpha, trail: samples, hot: false };
 }
 
 /** The local player's charge bar while committed: the charge (0–1) and whether a contact now would be perfect. */
@@ -87,15 +82,6 @@ export function chargeBar(s: Readonly<ArcadeState>, viewer: PlayerId | 'spectato
   const commit = s.p[viewer].commit;
   if (commit === null) return null;
   return { charge: chargeAt(commit.tick, s.tick), perfect: rallyGrade(commit.tick, s.tick) === 'perfect' };
-}
-
-/** Where the umpire looks: at the ball's end of the court, across while it is near the net. */
-function umpireLook(ball: BallView | null, poses: readonly [ArcadePose, ArcadePose], viewer: PlayerId | 'spectator'): -1 | 0 | 1 {
-  if (ball === null) return 0;
-  const y = ground(ball.kind === 'held' ? poses[ball.player].feet : ball.pos, viewer).y;
-  const net = netScreenY();
-  if (y < net - UMPIRE_ACROSS_PX) return -1;
-  return y > net + UMPIRE_ACROSS_PX ? 1 : 0;
 }
 
 /** Top row of the charge bar over a player whose feet are at screen row `feetY`. */
@@ -145,7 +131,11 @@ export class ArcadeRenderer {
     for (const look of this.looks) buildSheet(look);
   }
 
-  /** Draws the frame of `view`, `dtMs` after the previous one, then presents it. */
+  /**
+   * Draws the frame of `view`, `dtMs` after the previous one, then presents it. Draw each view
+   * exactly once: its events are consumed (effects, banners, the PERFECT pop) with no dedup, so a
+   * repeat would replay them.
+   */
   draw(view: ArcadeView, prefs: { reduceEffects: boolean }, dtMs: number): void {
     const dt = Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
     this.clockMs += dt;
@@ -161,7 +151,7 @@ export class ArcadeRenderer {
 
     const g = this.screen.buf;
     const surface = s.config.surface;
-    const scene: SceneState = { crowdExcite: this.effects.crowdExcite, umpireLook: umpireLook(ball, poses, viewer), t: this.clockMs };
+    const scene: SceneState = { crowdExcite: this.effects.crowdExcite, umpireLook: umpireLookAt(ball, poses, viewer), t: this.clockMs };
     const shake = this.effects.shake();
     g.save();
     if (shake.x !== 0 || shake.y !== 0) {

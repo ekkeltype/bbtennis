@@ -135,16 +135,18 @@ describe('poseAt swings', () => {
     expect(poseAt(s, 1, n * DT, 0)).toMatchObject({ anim: 'backhand', frame: 2 });
   });
 
-  it('plays stretch for a stretch contact, mirrored on the backhand side', () => {
+  it('plays stretch for a forehand-side stretch, the backhand frames (never mirrored) for a backhand-side one', () => {
     for (const x of [1.2, -1.2]) {
       const s = rally();
       committedAt(s, { x, y: 10 });
       const n = contactTick(s);
       expect(contactAt(1, s.p[1].pos, s.flight!, n, false)!.stretch).toBe(true);
-      const flip = x < 0;
-      expect(posesUntil(s, n).get(n - 1)).toMatchObject({ anim: 'stretch', frame: 0, flip });
-      expect(s.p[1].lastSwing).toMatchObject({ tick: n, stretch: true });
-      expect(poseAt(s, 1, n * DT, 0)).toMatchObject({ anim: 'stretch', frame: 1, flip });
+      const forehand = x > 0;
+      const before = posesUntil(s, n).get(n - 1);
+      expect(before).toMatchObject(forehand ? { anim: 'stretch', frame: 0, flip: false } : { anim: 'backhand', frame: 1, flip: false });
+      expect(s.p[1].lastSwing).toMatchObject({ tick: n, stroke: forehand ? 'forehand' : 'backhand', stretch: true });
+      const at = poseAt(s, 1, n * DT, 0);
+      expect(at).toMatchObject(forehand ? { anim: 'stretch', frame: 1, flip: false } : { anim: 'backhand', frame: 2, flip: false });
     }
   });
 

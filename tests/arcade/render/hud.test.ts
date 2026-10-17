@@ -106,16 +106,18 @@ describe('HUD readouts', () => {
     expect(serveClockShown(s)).toBeNull();
   });
 
-  it('shows the serve speed for 2 s after a serve', () => {
+  it('shows the serve speed for 2 s after a serve, then fades it out over 0.5 s', () => {
     const { s } = matchInSetup(SEED);
     const ev = step(s, forPlayer(0, press('topspin')));
     ev.push(...runTicks(s, 38));
     ev.push(...step(s, forPlayer(0, press('slice'))));
-    const hit = ofType(ev, 'hit')[0]!;
-    expect(serveKmhShown(s, ev)).toBe(Math.round(hit.kmh));
-    ev.push(...runTicks(s, ticks(2) - 1));
-    expect(serveKmhShown(s, ev)).toBe(Math.round(hit.kmh));
-    ev.push(...runTicks(s, 1));
+    const kmh = Math.round(ofType(ev, 'hit')[0]!.kmh);
+    expect(serveKmhShown(s, ev)).toEqual({ kmh, alpha: 1 });
+    ev.push(...runTicks(s, ticks(2)));
+    expect(serveKmhShown(s, ev)).toEqual({ kmh, alpha: 1 });
+    ev.push(...runTicks(s, ticks(0.25)));
+    expect(serveKmhShown(s, ev)?.alpha).toBeCloseTo(0.5, 6);
+    ev.push(...runTicks(s, ticks(0.25)));
     expect(serveKmhShown(s, ev)).toBeNull();
   });
 });

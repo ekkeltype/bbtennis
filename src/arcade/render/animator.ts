@@ -13,7 +13,7 @@ export interface ArcadePose { feet: Vec2; anim: AnimName; frame: number; view: V
 /** The animation part of a pose. */
 interface Frame { anim: AnimName; frame: number; flip: boolean }
 
-/** What a swing draws: a groundstroke side, the stretch reach, or the serve frames (serve and smash). */
+/** What a swing draws: a groundstroke side, the forehand-side stretch reach, or the serve frames (serve and smash). */
 type Swing = 'forehand' | 'backhand' | 'stretch' | 'serve';
 
 /** Swing frame time; the contact frame (2) lands on the contact tick, so a swing starts 2 frames (180 ms) before it. */
@@ -30,19 +30,19 @@ const TROPHY_AT = 0.45;
 /** Calls that end a point; the others (fault, time violation) only end a serve. */
 const POINT_CALLS: ReadonlySet<CallKind> = new Set<CallKind>(['ace', 'winner', 'out', 'net', 'doubleFault']);
 
-const pose = (anim: AnimName, frame: number, flip = false): Frame => ({ anim, frame, flip });
+const pose = (anim: AnimName, frame: number): Frame => ({ anim, frame, flip: false });
 
 /** Frame of a looping animation at sim time `t` (s). */
 const loopFrame = (anim: AnimName, t: number): number => frameIndex(anim, Math.floor((Math.max(0, t) * 1000) / ANIMS[anim].msPerFrame));
 
 /**
  * Swing frame `n` (0–1 backswing, 2 contact, 3 follow-through). The stretch has two frames, reach
- * and contact, mirrored for a backhand-side reach. Serve and smash wind up in the trophy pose (1).
+ * and contact. Serve and smash wind up in the trophy pose (1).
  */
-function swingFrame(swing: Swing, n: number, forehand: boolean): Frame {
+function swingFrame(swing: Swing, n: number): Frame {
   switch (swing) {
     case 'stretch':
-      return pose('stretch', n < CONTACT_FRAME ? 0 : 1, !forehand);
+      return pose('stretch', n < CONTACT_FRAME ? 0 : 1);
     case 'serve':
       return pose('serve', Math.min(3, Math.max(1, n)));
     default:
@@ -60,15 +60,18 @@ function followThrough(p: PlayerState, t: number): Frame | null {
   const ms = (t - last.tick * DT) * 1000;
   if (ms < 0 || ms >= FOLLOW_MS) return null;
   const n = swingStep(ms);
-  if (last.stroke === 'serve' || last.stroke === 'smash') return swingFrame('serve', n, true);
-  return swingFrame(last.stretch ? 'stretch' : last.stroke, n, last.stroke === 'forehand');
+  if (last.stroke === 'serve' || last.stroke === 'smash') return swingFrame('serve', n);
+  return swingFrame(last.stretch && last.stroke === 'forehand' ? 'stretch' : last.stroke, n);
 }
 
-/** The swing a contact plays. */
+/**
+ * The swing a contact plays. The stretch pose reaches to the forehand side only, so a backhand-side
+ * stretch plays the backhand, unmirrored, as in the typing game.
+ */
 function swingOf(c: Contact): Swing {
   if (c.smash) return 'serve';
-  if (c.stretch) return 'stretch';
-  return c.forehand ? 'forehand' : 'backhand';
+  if (!c.forehand) return 'backhand';
+  return c.stretch ? 'stretch' : 'forehand';
 }
 
 /** A committed player's backswing: the live flight's contact from the current spot within 11 ticks puts frame 2 on its tick. */
@@ -80,7 +83,7 @@ function backswing(s: Readonly<ArcadeState>, p: PlayerId, t: number): Frame | nu
     const c = contactAt(p, ps.pos, f, n, s.point.serveUnbounced);
     if (c === null) continue;
     const step = swingStep((t - n * DT) * 1000);
-    return step < 0 ? null : swingFrame(swingOf(c), Math.min(CONTACT_FRAME, step), c.forehand);
+    return step < 0 ? null : swingFrame(swingOf(c), Math.min(CONTACT_FRAME, step));
   }
   return null;
 }

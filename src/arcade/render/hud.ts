@@ -1,5 +1,5 @@
 import { drawBanner, type Banner } from '../../render/banner';
-import { drawPauseIcon, drawServeClock, message, readout } from '../../render/hudParts';
+import { drawPauseIcon, drawServeClock, message, readout, speedAlpha } from '../../render/hudParts';
 import { H, W } from '../../render/projection';
 import { drawScoreboard } from '../../render/scoreboard';
 import { serveClockLeft } from '../core/match';
@@ -12,8 +12,6 @@ export interface HudBanner { lines: string[]; startTick: number; endTick: number
 
 /** The serve clock shows in its last seconds only. */
 const CLOCK_SHOW_S = 5;
-/** The serve speed shows for this long after a serve. */
-const SPEED_SHOW_S = 2;
 
 const CALL_TEXT: Record<CallKind, string> = {
   fault: 'FAULT',
@@ -78,12 +76,13 @@ export function serveClockShown(s: Readonly<ArcadeState>): number | null {
   return left !== null && left <= CLOCK_SHOW_S ? Math.ceil(left) : null;
 }
 
-/** The latest serve's speed (km/h, rounded) for 2 s after it, else null. */
-export function serveKmhShown(s: Readonly<ArcadeState>, recent: readonly ArcadeEvent[]): number | null {
+/** The latest serve's speed (km/h, rounded) and the readout's opacity: 1 for 2 s, then fading out over 0.5 s; null once gone. */
+export function serveKmhShown(s: Readonly<ArcadeState>, recent: readonly ArcadeEvent[]): { kmh: number; alpha: number } | null {
   for (let i = recent.length - 1; i >= 0; i--) {
     const e = recent[i]!;
     if (e.type !== 'hit' || !e.hit.type.startsWith('serve')) continue;
-    return s.tick - e.tick < ticksOf(SPEED_SHOW_S) ? Math.round(e.kmh) : null;
+    const alpha = speedAlpha(((s.tick - e.tick) * 1000) / TICK_HZ);
+    return alpha === null ? null : { kmh: Math.round(e.kmh), alpha };
   }
   return null;
 }
@@ -97,7 +96,7 @@ function toBanner(b: HudBanner, t: number): Banner {
 
 /**
  * The Arcade HUD (spec §6.1): the shared scoreboard, the serve clock in its last 5 s, the serve
- * speed for 2 s (bottom right), the pause icon, the call / score / situation banners and the 3-2-1
+ * speed for 2 s then fading (bottom right), the pause icon, the call / score / situation banners and the 3-2-1
  * resume countdown. A spectator (the attract demo behind the menus) gets none of it, as in the
  * typing game. `clockMs` (the renderer's wall clock) is unused: every part runs on sim time
  * (`view.t`), so it freezes with the sim.
@@ -108,8 +107,8 @@ export function drawArcadeHud(ctx: CanvasRenderingContext2D, view: ArcadeView, r
   drawScoreboard(ctx, s.score, s.players);
   const clock = serveClockShown(s);
   if (clock !== null) drawServeClock(ctx, clock);
-  const kmh = serveKmhShown(s, recent);
-  if (kmh !== null) readout(ctx, `${kmh} KM/H`, W - 2, H - 12, 1);
+  const speed = serveKmhShown(s, recent);
+  if (speed !== null) readout(ctx, `${speed.kmh} KM/H`, W - 2, H - 12, speed.alpha);
   drawPauseIcon(ctx);
   const banner = bannerAt(s, recent);
   if (banner) drawBanner(ctx, toBanner(banner, view.t));
