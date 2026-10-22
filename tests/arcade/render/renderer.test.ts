@@ -136,7 +136,7 @@ describe('ArcadeRenderer', () => {
 
   it('draws a white 12×2 charge bar for the local player in the perfect window', () => {
     const s = rally();
-    s.p[0].commit = { shot: 'topspin', tick: s.tick - 33 };
+    s.p[0].commit = { shot: 'topspin', tick: s.tick - 33, step: null };
     const { screen, frames } = fakeScreen();
     const r = new ArcadeRenderer(screen);
     r.draw(view(s, 0), { reduceEffects: false }, 16);
@@ -174,12 +174,12 @@ describe('chargeBar', () => {
   it('fills with the charge while the local player is committed, white in the perfect window', () => {
     const s = rally();
     expect(chargeBar(s, 0)).toBeNull();
-    s.p[0].commit = { shot: 'slice', tick: s.tick - 15 };
+    s.p[0].commit = { shot: 'slice', tick: s.tick - 15, step: null };
     expect(chargeBar(s, 0)?.charge).toBeCloseTo(0.5, 9);
     expect(chargeBar(s, 0)?.perfect).toBe(false);
-    s.p[0].commit = { shot: 'slice', tick: s.tick - 30 };
+    s.p[0].commit = { shot: 'slice', tick: s.tick - 30, step: null };
     expect(chargeBar(s, 0)).toEqual({ charge: 1, perfect: true });
-    s.p[0].commit = { shot: 'slice', tick: s.tick - 40 };
+    s.p[0].commit = { shot: 'slice', tick: s.tick - 40, step: null };
     expect(chargeBar(s, 0)).toEqual({ charge: 1, perfect: false });
     expect(chargeBar(s, 1)).toBeNull();
     expect(chargeBar(s, 'spectator')).toBeNull();

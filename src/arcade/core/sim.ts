@@ -1,6 +1,7 @@
 import { BELTS } from '../../core/belts';
 import type { Look } from '../../core/types';
 import { ArcadeCpu } from './cpu';
+import type { ArcadeCpuProfile } from './cpu';
 import { createMatch, step } from './match';
 import { TICK_HZ } from './tuning';
 import type { ArcadeConfig, ArcadeEvent, ArcadeState, PlayerId, PlayerInfo, PlayerInput, PointReason } from './types';
@@ -30,7 +31,8 @@ const DEFAULT_MAX_TICKS = 60 * 60 * TICK_HZ;
 /** Any valid look will do for a simulated player. */
 const SIM_LOOK: Look = { skin: 0, hairStyle: 0, hair: 0, shirt: 0, shorts: 0, headband: null, racket: 0 };
 
-function simPlayer(level: number): PlayerInfo {
+function simPlayer(level: number | ArcadeCpuProfile): PlayerInfo {
+  if (typeof level !== 'number') return { name: 'CPU (own profile)', look: { ...SIM_LOOK }, kind: 'cpu', cpuLevel: null };
   return { name: `CPU ${BELTS[level]?.label ?? level}`, look: { ...SIM_LOOK }, kind: 'cpu', cpuLevel: level };
 }
 
@@ -57,13 +59,13 @@ class PointTracker {
 }
 
 /**
- * Plays CPU vs CPU (belt levels 0..14; `new ArcadeCpu(p, level, seed)` with the match seed) until
+ * Plays CPU vs CPU (belt levels 0..14 or profiles; `new ArcadeCpu(p, level, seed)` with the match seed) until
  * the match is decided (status 'over', on the tick of its match event) or `maxTicks` ticks have
  * been stepped (default one hour, 60·60·60). `record` keeps both inputs of every tick for `replay`.
  */
 export function simulateMatch(
   config: ArcadeConfig,
-  levels: [number, number],
+  levels: [number | ArcadeCpuProfile, number | ArcadeCpuProfile],
   seed: number,
   opts: { maxTicks?: number; record?: boolean } = {},
 ): SimResult {

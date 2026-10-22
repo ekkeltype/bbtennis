@@ -71,8 +71,13 @@ export type Stroke = 'forehand' | 'backhand' | 'smash' | 'serve';
 export interface PlayerState {
   pos: Vec2;
   vel: Vec2;
-  /** Committed shot and the tick it was committed at (spec §4.3); null when not committed. */
-  commit: { shot: ShotKey; tick: number } | null;
+  /**
+   * Committed shot, the tick it was committed at and where the planted player's automatic steps
+   * lead (null: none, the player stands) (spec §4.3); null when not committed.
+   */
+  commit: { shot: ShotKey; tick: number; step: Vec2 | null } | null;
+  /** A shot key pressed before the ball came this player's way, waiting to commit (spec §4.3); null when none. */
+  pending: ShotKey | null;
   /** Shot keys held on the previous tick (press = false → true). */
   held: { topspin: boolean; slice: boolean; lob: boolean };
   /** The player's latest contact, for animation. */

@@ -18,8 +18,11 @@ export function receiveSpot(receiver: PlayerId, side: Side): Vec2 {
   return { x: sideSign(side) * s * ARCADE.receive.x, y: -s * (COURT.halfLength + ARCADE.receive.behindBaseline) };
 }
 
-/** Movement mode: free play, the server's set-up rail (x only), or no input (walking/locked). */
-export type MoveMode = { kind: 'free' } | { kind: 'rail'; side: Side } | { kind: 'locked' };
+/**
+ * Movement mode: free play, the server's set-up rail (x only), no input (walking/locked), or
+ * planted (committed, spec §4.3): input ignored, automatic steps toward `to` (null: stand).
+ */
+export type MoveMode = { kind: 'free' } | { kind: 'rail'; side: Side } | { kind: 'locked' } | { kind: 'planted'; to: Vec2 | null };
 
 /** Clamps a position to the player's bounds (own half, netGap, maxBehind, maxAbsX). */
 export function clampToBounds(pos: Vec2, player: PlayerId): Vec2 {
@@ -28,25 +31,46 @@ export function clampToBounds(pos: Vec2, player: PlayerId): Vec2 {
   return { x: Math.min(Math.max(pos.x, -ARCADE.move.maxAbsX), ARCADE.move.maxAbsX), y: s * depth };
 }
 
+/** The planted player's wanted velocity: toward `to` at stepSpeed, slowing to arrive (d / arriveTime); zero without a target. */
+function stepVelocity(pos: Vec2, to: Vec2 | null): Vec2 {
+  if (to === null) return { x: 0, y: 0 };
+  const dx = to.x - pos.x;
+  const dy = to.y - pos.y;
+  const d = Math.sqrt(dx * dx + dy * dy);
+  if (d === 0) return { x: 0, y: 0 };
+  const v = Math.min(ARCADE.plant.stepSpeed, d / ARCADE.plant.arriveTime);
+  return { x: (dx / d) * v, y: (dy / d) * v };
+}
+
 /**
- * Integrates one tick of input (spec §4.2): acceleration, top speed (× chargeSpeedMult while committed), bounds.
- * Rail mode uses the x input only, keeps y and holds x on the serving side of the centre. Locked mode ignores
- * input and brakes. A clamped axis zeroes that velocity component. Mutates p.
+ * Integrates one tick of input (spec §4.2): acceleration, top speed, bounds. Rail mode uses the x
+ * input only, keeps y and holds x on the serving side of the centre. Locked mode ignores input and
+ * brakes. Planted mode ignores input and steps toward its target, changing speed at the braking
+ * rate (spec §4.3). A clamped axis zeroes that velocity component. Mutates p.
  */
 export function stepMove(p: PlayerState, player: PlayerId, input: PlayerInput, mode: MoveMode): void {
   const s = endSign(player);
   const m = ARCADE.move;
-  let ix = mode.kind === 'locked' ? 0 : input.mx * s;
-  let iy = mode.kind === 'free' ? input.my * s : 0;
-  const len = Math.sqrt(ix * ix + iy * iy);
-  if (len > 0) {
-    ix /= len;
-    iy /= len;
+  let wx: number;
+  let wy: number;
+  let maxDelta: number;
+  if (mode.kind === 'planted') {
+    const w = stepVelocity(p.pos, mode.to);
+    wx = w.x;
+    wy = w.y;
+    maxDelta = (m.topSpeed / m.stopTime) * DT;
+  } else {
+    let ix = mode.kind === 'locked' ? 0 : input.mx * s;
+    let iy = mode.kind === 'free' ? input.my * s : 0;
+    const len = Math.sqrt(ix * ix + iy * iy);
+    if (len > 0) {
+      ix /= len;
+      iy /= len;
+    }
+    wx = ix * m.topSpeed;
+    wy = iy * m.topSpeed;
+    maxDelta = (len > 0 ? m.topSpeed / m.accelTime : m.topSpeed / m.stopTime) * DT;
   }
-  const top = m.topSpeed * (p.commit !== null ? m.chargeSpeedMult : 1);
-  const wx = ix * top;
-  const wy = iy * top;
-  const maxDelta = (len > 0 ? m.topSpeed / m.accelTime : m.topSpeed / m.stopTime) * DT;
   const dx = wx - p.vel.x;
   const dy = wy - p.vel.y;
   const dl = Math.sqrt(dx * dx + dy * dy);

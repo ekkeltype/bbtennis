@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildFlight, flightPos } from '../../src/arcade/core/flight';
 import { ballAt, createMatch, flightTime, receiverOf, serveClockLeft, step } from '../../src/arcade/core/match';
 import { receiveSpot, serveSpot } from '../../src/arcade/core/movement';
-import { contactAt } from '../../src/arcade/core/reach';
+import { contactAt, stepSpot } from '../../src/arcade/core/reach';
 import { kmhOf, tossZ } from '../../src/arcade/core/shot';
 import { ARCADE, DT } from '../../src/arcade/core/tuning';
 import { NO_INPUT } from '../../src/arcade/core/types';
@@ -476,7 +476,7 @@ describe('presses', () => {
     const a = serveInAir();
     const ev = runTicks(a.s, 1, () => forPlayer(a.receiver, press(['topspin', 'lob'])));
     expect(ofType(ev, 'commit')).toEqual([{ tick: a.hitTick + 1, type: 'commit', player: a.receiver, shot: 'topspin' }]);
-    expect(a.s.p[a.receiver].commit).toEqual({ shot: 'topspin', tick: a.hitTick + 1 });
+    expect(a.s.p[a.receiver].commit).toMatchObject({ shot: 'topspin', tick: a.hitTick + 1 });
 
     const b = serveInAir();
     runTicks(b.s, 1, () => forPlayer(b.receiver, press(['lob', 'slice'])));
@@ -497,32 +497,108 @@ describe('presses', () => {
     const a = serveInAir();
     const ev = runTicks(a.s, 6, (st) => forPlayer(a.receiver, st.tick === a.hitTick ? press('topspin') : st.tick === a.hitTick + 4 ? press('slice') : NO_INPUT));
     expect(ofType(ev, 'commit')).toHaveLength(1);
-    expect(a.s.p[a.receiver].commit).toEqual({ shot: 'slice', tick: a.hitTick + 1 });
+    expect(a.s.p[a.receiver].commit).toMatchObject({ shot: 'slice', tick: a.hitTick + 1 });
   });
 
-  it('a key held from before is not a press', () => {
+  it('a key held since before the set-up, never pressed again, does not commit', () => {
     const a = serveInAir();
-    // Held through the serve hit tick: no edge afterwards.
     a.s.p[a.receiver].held = { topspin: true, slice: false, lob: false };
     const ev = runTicks(a.s, 5, () => forPlayer(a.receiver, press('topspin')));
     expect(ofType(ev, 'commit')).toEqual([]);
     expect(a.s.p[a.receiver].commit).toBeNull();
   });
 
-  it("the hitter's presses are ignored while their own ball flies", () => {
+  it("the hitter's press while their own ball flies waits for the return, without committing", () => {
     const a = serveInAir();
-    const ev = runTicks(a.s, 10, (st) => forPlayer(a.server, st.tick % 2 === 0 ? press('topspin') : press('slice')));
+    const ev = runTicks(a.s, 10, (st) => forPlayer(a.server, st.tick === a.hitTick + 3 ? press('slice') : st.tick === a.hitTick + 6 ? press('lob') : NO_INPUT));
     expect(ofType(ev, 'commit')).toEqual([]);
     expect(a.s.p[a.server].commit).toBeNull();
+    expect(a.s.p[a.server].pending).toBe('lob'); // the latest press
   });
 
-  it('receiver presses during set-up and toss are ignored', () => {
+  it('a pending press commits on the first tick the ball comes that way, charging from there', () => {
+    const s = rallyState(1, { contact: { x: 0, y: 11, z: 1 }, target: { x: 0, y: -9 }, T: 1.0 });
+    const hitTick = s.tick;
+    s.p[0].pending = 'lob';
+    const ev = runTicks(s, 1);
+    expect(ofType(ev, 'commit')).toEqual([{ tick: hitTick + 1, type: 'commit', player: 0, shot: 'lob' }]);
+    expect(s.p[0].commit).toMatchObject({ shot: 'lob', tick: hitTick + 1 });
+    expect(s.p[0].pending).toBeNull();
+  });
+
+  it('a receiver press during the set-up or toss commits on the first tick after the serve', () => {
     const { s } = matchInSetup(SEED);
     const server = currentServer(s.score);
     const receiver = other(server);
-    const ev = scriptedServe(s, { key: 'lob', tossKey: 'topspin', hitDelayTicks: 42, receiver: (st) => (st.tick % 2 === 0 ? press('topspin') : NO_INPUT) });
+    const setupTick = s.tick;
+    const ev = scriptedServe(s, { key: 'lob', tossKey: 'topspin', hitDelayTicks: 42, receiver: (st) => (st.tick === setupTick + 20 ? press('slice') : NO_INPUT) });
+    const hitTick = s.tick;
     expect(ofType(ev, 'commit')).toEqual([]);
-    expect(s.p[receiver].commit).toBeNull();
+    expect(s.p[receiver].pending).toBe('slice');
+    const next = runTicks(s, 1);
+    expect(ofType(next, 'commit')).toEqual([{ tick: hitTick + 1, type: 'commit', player: receiver, shot: 'slice' }]);
+  });
+
+  it("presses are forgotten at the player's own hit and when the point ends", () => {
+    const { s } = matchInSetup(SEED);
+    const server = currentServer(s.score);
+    scriptedServe(s, { key: 'lob', tossKey: 'topspin', hitDelayTicks: 42 });
+    expect(s.p[server].pending).toBeNull(); // the toss and serve presses are the server's own
+    runTicks(s, 1, () => forPlayer(server, press('slice')));
+    expect(s.p[server].pending).toBe('slice');
+    runUntil(s, (st) => st.phase.kind === 'dead', IDLE, 400);
+    expect(s.p[server].pending).toBeNull();
+  });
+});
+
+describe('planted', () => {
+  /** A deep rally ball to player 1 standing `lateral` m beside its path near its baseline; returns the state. */
+  function incoming(lateral: number): ArcadeState {
+    const s = rallyState(0, { contact: { x: 0, y: -12, z: 1 }, target: { x: 0, y: 9 }, T: 1.0 });
+    const b = flightPos(s.flight!, 73 * DT);
+    s.p[1].pos = { x: b.x + lateral, y: b.y };
+    return s;
+  }
+
+  it('the commit sets the step target from stepSpot on the commit tick', () => {
+    const s = incoming(1.2);
+    const pos = { ...s.p[1].pos };
+    runTicks(s, 1, () => forPlayer(1, press('topspin')));
+    expect(s.p[1].commit!.step).toEqual(stepSpot(1, pos, s.flight!, s.tick, false));
+  });
+
+  it('a committed player ignores the direction keys and steps to the target', () => {
+    const run = (mx: -1 | 0 | 1): Vec2 => {
+      const s = incoming(1.3);
+      runTicks(s, 1, () => forPlayer(1, press('topspin')));
+      const from = { ...s.p[1].pos };
+      const to = s.p[1].commit!.step!;
+      expect(Math.sqrt((to.x - from.x) ** 2 + (to.y - from.y) ** 2)).toBeGreaterThan(0.4);
+      runTicks(s, 40, () => forPlayer(1, hold({ mx, my: 1 })));
+      expect(s.p[1].commit).not.toBeNull(); // still waiting for the ball
+      expect(s.p[1].pos.x).toBeCloseTo(to.x, 2);
+      expect(s.p[1].pos.y).toBeCloseTo(to.y, 2);
+      return s.p[1].pos;
+    };
+    expect(run(-1)).toEqual(run(1));
+  });
+
+  it('a player committed far from the ball steps stepMax toward it and lets it pass', () => {
+    const s = incoming(3.5);
+    runTicks(s, 1, () => forPlayer(1, press('topspin')));
+    const from = { ...s.p[1].pos };
+    const ev = runUntil(s, untilType('point'), (st) => forPlayer(1, hold({ mx: 1 })), 400);
+    expect(ofType(ev, 'hit')).toEqual([]);
+    expect(ofType(ev, 'point')[0]).toMatchObject({ winner: 0, reason: 'winner' });
+    const moved = Math.sqrt((s.p[1].pos.x - from.x) ** 2 + (s.p[1].pos.y - from.y) ** 2);
+    expect(moved).toBeLessThanOrEqual(ARCADE.plant.stepMax + 1e-9);
+  });
+
+  it('an uncommitted player still runs freely', () => {
+    const s = incoming(3.5);
+    const x0 = s.p[1].pos.x;
+    runTicks(s, 30, () => forPlayer(1, hold({ mx: 1 })));
+    expect(Math.abs(s.p[1].pos.x - x0)).toBeGreaterThan(2);
   });
 });
 

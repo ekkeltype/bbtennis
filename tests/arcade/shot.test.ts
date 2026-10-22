@@ -100,7 +100,7 @@ describe('aimTarget serve', () => {
 type Args = Parameters<typeof resolveHit>[0];
 const base = (o: Partial<Args> = {}): Args => ({
   tick: 100, player: 0, type: 'topspin', grade: 'clean', stretch: false, volley: false, charge: 1,
-  contact: { x: 0, y: -12, z: 1 }, incomingSpeed: 0, mx: 0, my: 0, pace: 'normal', serveSide: null, ...o,
+  contact: { x: 0, y: -12, z: 1 }, incomingSpeed: 0, mx: 0, my: 0, pace: 'normal', serveSide: null, serveReturn: false, ...o,
 });
 
 describe('resolveHit', () => {
@@ -177,6 +177,11 @@ describe('scatter statistics', () => {
   it('clean neutral topspin SD is scatter.sigma × the clean factor', () => sdX({}, sigma * ARCADE.grade.clean.scatter));
   it('rushed + stretch SD is scatter.sigma × the rushed and stretch factors', () =>
     sdX({ grade: 'rushed' as Grade, stretch: true }, sigma * ARCADE.grade.rushed.scatter * ARCADE.stretch.scatter));
+  it('a half-charged clean hit scatters more: × (clean + perMissingCharge × 0.5)', () => {
+    const c = ARCADE.grade.clean;
+    sdX({ charge: 0.5 }, sigma * (c.scatter + c.scatterPerMissingCharge * 0.5));
+  });
+  it('a serve return scatters × returnFactor', () => sdX({ serveReturn: true }, sigma * ARCADE.grade.clean.scatter * ARCADE.scatter.returnFactor));
 });
 
 describe('kmhOf', () => {

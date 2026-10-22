@@ -33,7 +33,7 @@ function rally(): ArcadeState {
 function committedAt(s: ArcadeState, pos: Vec2): void {
   s.p[1].pos = { ...pos };
   s.p[1].vel = { x: 0, y: 0 };
-  s.p[1].commit = { shot: 'topspin', tick: s.tick };
+  s.p[1].commit = { shot: 'topspin', tick: s.tick, step: null };
 }
 
 /** The first tick on which player 1, standing at its position, meets the live flight. */

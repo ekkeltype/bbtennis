@@ -10,8 +10,21 @@ import { tossZ } from './shot';
 import { ARCADE, ARCADE_CPU_MILESTONES, DT, TICK_HZ } from './tuning';
 import type { ArcadeState, Controller, Flight, PlayerId, PlayerInput, ShotKey, Vec2 } from './types';
 
-/** One CPU level's skill (spec §5): seconds, metres, a speed factor and an aggression share. */
-export interface ArcadeCpuProfile { reaction: number; readError: number; speed: number; pressSigma: number; aggression: number }
+/**
+ * One CPU level's skill (spec §5): seconds, metres, a speed factor, an aggression share, and its
+ * serve: the shares of first serves hit flat and kicked (the rest sliced), and the chance a serve
+ * is aimed wide or down the T rather than at the body.
+ */
+export interface ArcadeCpuProfile {
+  reaction: number;
+  readError: number;
+  speed: number;
+  pressSigma: number;
+  aggression: number;
+  serveFlat: number;
+  serveKick: number;
+  serveAim: number;
+}
 
 type Axis = -1 | 0 | 1;
 type Keys = { topspin: boolean; slice: boolean; lob: boolean };
@@ -34,9 +47,16 @@ const CPU = {
   aimTicks: 2,
   /** Distance short of a 0.7 m spot that still counts as reachable (the reach zone is wider; 0 for a stretch spot). */
   reachSlack: 0.3,
+  /**
+   * A commit plants the CPU (spec §4.3), so it commits on its lead only within commitRange m of its
+   * spot; further off it keeps running and commits lastLead s before the contact at the latest.
+   */
+  commitRange: 0.6,
+  lastLead: 0.2,
   /** A clamped spot must leave the ball this far inside the reach radius. */
   reachMargin: 0.2,
   lob: { oppNetDist: 4.0, base: 0.3, perAggression: 0.5 },
+  /** Rally aim into a corner, by aggression (serves use the profile's serveAim). */
   corner: { base: 0.25, perAggression: 0.6 },
   /**
    * Corner chance on a serve return (spec §7 balance): lower than in a rally, so returns are
@@ -52,8 +72,13 @@ const CPU = {
   approach: { inside: 4.0, aggression: 0.5, fromNet: 2.5 },
 } as const;
 
-function profileOf(r: Row): ArcadeCpuProfile {
-  return { reaction: r.reaction, readError: r.readError, speed: r.speed, pressSigma: r.pressSigma, aggression: r.aggression };
+const PROFILE_KEYS = ['reaction', 'readError', 'speed', 'pressSigma', 'aggression', 'serveFlat', 'serveKick', 'serveAim'] as const;
+
+/** The profile between rows a (t = 0) and b (t = 1). */
+function profileBetween(a: Row, b: Row, t: number): ArcadeCpuProfile {
+  const out = {} as ArcadeCpuProfile;
+  for (const k of PROFILE_KEYS) out[k] = a[k] + (b[k] - a[k]) * t;
+  return out;
 }
 
 /** Level 0..14 → profile, interpolated linearly between milestone rows; RangeError otherwise. */
@@ -63,13 +88,9 @@ export function arcadeCpuProfile(level: number): ArcadeCpuProfile {
   const rows = ARCADE_CPU_MILESTONES;
   for (let i = 0; i < rows.length; i++) {
     const a = rows[i]!;
-    if (a.level === level) return profileOf(a);
+    if (a.level === level) return profileBetween(a, a, 0);
     const b = rows[i + 1];
-    if (b !== undefined && level > a.level && level < b.level) {
-      const t = (level - a.level) / (b.level - a.level);
-      const l = (x: number, y: number): number => x + (y - x) * t;
-      return { reaction: l(a.reaction, b.reaction), readError: l(a.readError, b.readError), speed: l(a.speed, b.speed), pressSigma: l(a.pressSigma, b.pressSigma), aggression: l(a.aggression, b.aggression) };
-    }
+    if (b !== undefined && level > a.level && level < b.level) return profileBetween(a, b, (level - a.level) / (b.level - a.level));
   }
   throw new RangeError(`arcadeCpuProfile: no milestone rows cover level ${level}`);
 }
@@ -125,6 +146,7 @@ const idle = (): PlayerInput => ({ mx: 0, my: 0, topspin: false, slice: false, l
 const move = (d: Dir): PlayerInput => ({ mx: d.mx, my: d.my, topspin: false, slice: false, lob: false });
 const axisOf = (d: number): Axis => (d > CPU.deadband ? 1 : d < -CPU.deadband ? -1 : 0);
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
+const dist = (a: Vec2, b: Vec2): number => Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
 
 /** The last tick count after the toss at which the toss is still at or above the drop height. */
 function lastHitTicks(pace: PaceId): number {
@@ -143,10 +165,10 @@ export class ArcadeCpu implements Controller {
   private readonly reactTicks: number;
   private readonly m: ArcadeCpuMemory;
 
-  /** `player` it controls, belt `level` 0..14 (RangeError otherwise), match `seed`. */
-  constructor(player: PlayerId, level: number, seed: number) {
+  /** `player` it controls, belt `level` 0..14 (RangeError otherwise) or a profile of its own, match `seed`. */
+  constructor(player: PlayerId, level: number | ArcadeCpuProfile, seed: number) {
     this.player = player;
-    this.profile = arcadeCpuProfile(level);
+    this.profile = typeof level === 'number' ? arcadeCpuProfile(level) : { ...level };
     this.reactTicks = Math.round(this.profile.reaction * TICK_HZ);
     this.m = {
       rng: seedRng(forkSeed(seed, 20 + player)), acc: 0, target: null, lastTick: -1,
@@ -202,17 +224,18 @@ export class ArcadeCpu implements Controller {
     return now >= hitTick ? this.tap(plan.key, d, now) : move(d);
   }
 
-  /** Draws the serve: toss wait U(0.6, 1.2) s, flat/slice (kick on serve 2), wide/T/body aim, hit timing. */
+  /** Draws the serve: toss wait U(0.6, 1.2) s, flat/kick/slice by the profile (kick on serve 2), wide/T/body aim, hit timing. */
   private planServe(s: Readonly<ArcadeState>, since: number): ServePlan {
     const r = this.m.rng;
-    const a = this.profile.aggression;
+    const p = this.profile;
     const uWait = uniform(r);
-    const uFlat = uniform(r);
+    const uKind = uniform(r);
     const uCorner = uniform(r);
     const uWide = uniform(r);
     const n = normalIH(r);
     const wait = Math.round((CPU.tossWait.min + (CPU.tossWait.max - CPU.tossWait.min) * uWait) * TICK_HZ);
-    const key: ShotKey = s.point.serveNo === 2 ? 'lob' : uFlat < a ? 'topspin' : 'slice';
+    const first: ShotKey = uKind < p.serveFlat ? 'topspin' : uKind < p.serveFlat + p.serveKick ? 'lob' : 'slice';
+    const key: ShotKey = s.point.serveNo === 2 ? 'lob' : first;
     const pace = s.config.pace;
     const ideal = ARCADE.serve.apexTime / ARCADE.pace[pace] + ARCADE.serve.perfectAfterApex / 2 + n * this.profile.pressSigma;
     const hitAfter = Math.min(Math.max(Math.round(ideal * TICK_HZ), 2), lastHitTicks(pace));
@@ -220,7 +243,7 @@ export class ArcadeCpu implements Controller {
     const boxSign = endSign(other(this.player)) * (serveSide(s.score) === 'deuce' ? 1 : -1);
     const wide: Axis = boxSign * endSign(this.player) > 0 ? 1 : -1;
     let mx: Axis = 0;
-    if (uCorner < CPU.corner.base + CPU.corner.perAggression * a) mx = uWide < 0.5 ? wide : wide === 1 ? -1 : 1;
+    if (uCorner < p.serveAim) mx = uWide < 0.5 ? wide : wide === 1 ? -1 : 1;
     return { since, wait, hitAfter, key, mx };
   }
 
@@ -245,12 +268,16 @@ export class ArcadeCpu implements Controller {
       plan.err = { x: 0, y: 0 };
     }
     if (c === null) return move(this.steer(pos, this.m.target));
+    if (s.p[me].commit !== null) return move(this.aim(s, plan, pos)); // planted: the direction keys only aim
     const fade = clamp01(((c.tick - now) * DT) / CPU.errorFade);
     const target = clampToBounds({ x: c.spot.x + plan.err.x * fade, y: c.spot.y + plan.err.y * fade }, me);
     this.m.target = target;
     const d = now >= c.tick - CPU.aimTicks ? this.aim(s, plan, pos) : this.steer(pos, target);
     const live = (now - f.hit.tick) * DT < f.tEnd;
-    if (s.p[me].commit === null && live && now >= c.tick - plan.lead) return this.tap(this.shotKey(s, plan, c, pos, target, now), d, now);
+    const near = dist(pos, target) <= CPU.commitRange;
+    if (live && now >= c.tick - plan.lead && (near || now >= c.tick - Math.round(CPU.lastLead * TICK_HZ))) {
+      return this.tap(this.shotKey(s, plan, c, pos, target, now), d, now);
+    }
     return move(d);
   }
 
@@ -345,15 +372,17 @@ export class ArcadeCpu implements Controller {
     return this.reaches(spot, b) ? spot : null;
   }
 
-  /** The CPU's own estimate of how far it can run from rest in `avail` s, the last `charging` s of them committed. */
+  /**
+   * The CPU's own estimate of how far it gets from rest in `avail` s, the last `charging` s of them
+   * committed: running, then the planted steps (spec §4.3).
+   */
   private coverable(avail: number, charging: number): number {
     const mv = ARCADE.move;
     const v = mv.topSpeed * this.profile.speed;
     const chg = Math.min(avail, Math.max(0, charging));
     const free = avail - chg;
-    const v0 = free > 0 ? v : v * mv.chargeSpeedMult;
-    const startLoss = (v0 * v0 * mv.accelTime) / (2 * mv.topSpeed);
-    return Math.max(0, v * free + v * mv.chargeSpeedMult * chg - startLoss);
+    const run = free > 0 ? Math.max(0, v * free - (v * v * mv.accelTime) / (2 * mv.topSpeed)) : 0;
+    return run + Math.min(ARCADE.plant.stepMax, ARCADE.plant.stepSpeed * chg);
   }
 
   /** Stretched (predicted lateral > stretchDist) → slice; opponent near the net → lob (by aggression); else topspin. */

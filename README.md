@@ -123,9 +123,9 @@ saved and plays on.
 ## Black Belt Tennis Arcade
 
 A second game in this repository: the same pixel-art tennis, played with arcade controls instead of
-typing. You run around your half and press a shot key as the ball comes, and your player swings by
-itself when the ball arrives. It is singles against the CPU, in a desktop browser with a physical
-keyboard.
+typing. You run around your half and press a shot key as the ball comes: your feet plant, and your
+player swings by itself when the ball arrives. It is singles against the CPU, in a desktop browser
+with a physical keyboard.
 
 It lives at `/arcade/`, as the second page of the same Vite project (`arcade/index.html`, code in
 `src/arcade/`). `npm run dev` serves it at <http://localhost:5173/arcade/>, and `npm run build`
@@ -141,9 +141,12 @@ writes it to `dist/arcade/`, so the Pages deploy publishes it at `<site>/arcade/
 
 Both layouts always work, and keys are read by position, so WASD works on any keyboard layout.
 
-- **Swing.** Press a shot key early, as the ball comes toward you. That commits you to the shot, and
-  you swing when the ball reaches you. The charge bar fills in 0.5 s, and contact just after it is
-  full is PERFECT: harder and more accurate. A late press rushes the shot.
+- **Swing.** Get into position, then press a shot key. That commits you to the shot and plants your
+  feet: you take a few small steps (up to 1 m) toward the ball and swing when it reaches you. While
+  you are planted, the direction keys only aim. The charge bar fills in 0.5 s, and contact just after
+  it is full is PERFECT: harder and more accurate. A late press is weaker and less accurate, and one
+  under 0.15 s before contact is rushed. You can press before the ball is struck (during the toss,
+  say): the press waits and commits you as the ball comes.
 - **Aim.** Hold a direction as you hit: left or right aims for that sideline, up aims deep, down aims
   short (a short slice is a drop shot). Hold none to play safe, through the middle.
 - **Serve.** Press a shot key to toss and again to serve, best just after the top of the toss. The

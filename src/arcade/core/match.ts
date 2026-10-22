@@ -5,7 +5,7 @@ import type { DistributiveOmit, ScoreState } from '../../core/types';
 import { buildFlight, flightPos, inBoxFor, inCourtFor } from './flight';
 import { receiveSpot, serveSpot, stepMove, walkToward } from './movement';
 import type { MoveMode } from './movement';
-import { contactAt } from './reach';
+import { contactAt, stepSpot } from './reach';
 import type { Contact } from './reach';
 import { chargeAt, kmhOf, rallyGrade, resolveHit, serveGrade, tossZ } from './shot';
 import { ARCADE, DT, TICK_HZ } from './tuning';
@@ -55,7 +55,7 @@ function setupSpots(score: ScoreState): [Vec2, Vec2] {
 }
 
 function playerAt(pos: Vec2): PlayerState {
-  return { pos: { x: pos.x, y: pos.y }, vel: { x: 0, y: 0 }, commit: null, held: { topspin: false, slice: false, lob: false }, lastSwing: null };
+  return { pos: { x: pos.x, y: pos.y }, vel: { x: 0, y: 0 }, commit: null, pending: null, held: { topspin: false, slice: false, lob: false }, lastSwing: null };
 }
 
 /** A new match: coin toss from the match stream (forkSeed(seed, 1)), hit streams forkSeed(seed, 10 + p), phase intro until tick = intro·60. */
@@ -132,6 +132,7 @@ function placeAt(p: PlayerState, at: Vec2): void {
   p.pos = { x: at.x, y: at.y };
   p.vel = { x: 0, y: 0 };
   p.commit = null;
+  p.pending = null;
 }
 
 /** Starts the next serve's set-up: players on their spots, serve clock from now. */
@@ -161,6 +162,7 @@ function stepSetup(c: StepCtx): void {
   const receiver = other(server);
   stepMove(s.p[server], server, inputs[server], { kind: 'rail', side: serveSide(s.score) });
   stepMove(s.p[receiver], receiver, inputs[receiver], FREE);
+  remember(c, receiver);
   if (clockExpired(s)) {
     fault(c, 'timeViolation');
     return;
@@ -180,6 +182,7 @@ function stepToss(c: StepCtx): void {
   const server = toss.player;
   const receiver = other(server);
   stepMove(s.p[receiver], receiver, inputs[receiver], FREE);
+  remember(c, receiver);
   if (clockExpired(s)) {
     fault(c, 'timeViolation');
     return;
@@ -202,7 +205,7 @@ function serveHit(c: StepCtx, tossTick: number, server: PlayerId, key: ShotKey, 
   const hit = resolveHit({
     tick: s.tick, player: server, type: SERVE_OF[key], grade: serveGrade(tossTick, s.tick, s.config.pace),
     stretch: false, volley: false, charge: 1, contact: { x: p.pos.x, y: p.pos.y, z }, incomingSpeed: 0,
-    mx: inputs[server].mx, my: inputs[server].my, pace: s.config.pace, serveSide: serveSide(s.score),
+    mx: inputs[server].mx, my: inputs[server].my, pace: s.config.pace, serveSide: serveSide(s.score), serveReturn: false,
   }, s.rng.hits[server]);
   const flight = buildFlight(hit);
   s.flight = flight;
@@ -212,6 +215,7 @@ function serveHit(c: StepCtx, tossTick: number, server: PlayerId, key: ShotKey, 
   s.point.hits = 1;
   s.point.serveUnbounced = true;
   p.lastSwing = { tick: s.tick, stroke: 'serve', stretch: false };
+  p.pending = null;
   const kmh = kmhOf(flight);
   s.stats[server].fastestServeKmh = Math.max(s.stats[server].fastestServeKmh, kmh);
   emit(c, { type: 'hit', hit, kmh });
@@ -222,25 +226,39 @@ function flightT(f: Flight, n: number): number {
   return (n - f.hit.tick) * DT;
 }
 
+/** A player's press this tick, kept until a ball comes their way (spec §4.3); the latest press wins. */
+function remember(c: StepCtx, player: PlayerId): void {
+  const key = c.presses[player];
+  if (key !== null) c.s.p[player].pending = key;
+}
+
+/** Free running, or planted and stepping toward the commit's target (spec §4.3). */
+function moveMode(p: PlayerState): MoveMode {
+  return p.commit === null ? FREE : { kind: 'planted', to: p.commit.step };
+}
+
 /**
- * Ball in play: both players move; the receiver may commit or switch; the flight's rule events this
- * tick crossed (net, first bounce, end); then a committed receiver's contact.
+ * Ball in play: both players move (a committed player planted); the hitter's presses wait; the
+ * receiver commits (this tick's press, else a waiting one) or switches; the flight's rule events
+ * this tick crossed (net, first bounce, end); then a committed receiver's contact.
  */
 function stepRally(c: StepCtx): void {
   const { s, inputs } = c;
   const f = s.flight;
   if (f === null) return;
   const receiver = other(f.hit.player);
-  stepMove(s.p[0], 0, inputs[0], FREE);
-  stepMove(s.p[1], 1, inputs[1], FREE);
+  stepMove(s.p[0], 0, inputs[0], moveMode(s.p[0]));
+  stepMove(s.p[1], 1, inputs[1], moveMode(s.p[1]));
+  remember(c, f.hit.player);
   const rp = s.p[receiver];
-  const key = c.presses[receiver];
+  const key = c.presses[receiver] ?? (rp.commit === null ? rp.pending : null);
   if (key !== null && flightT(f, s.tick) < f.tEnd) {
     if (rp.commit === null) {
-      rp.commit = { shot: key, tick: s.tick };
+      rp.commit = { shot: key, tick: s.tick, step: stepSpot(receiver, rp.pos, f, s.tick, s.point.serveUnbounced) };
+      rp.pending = null;
       emit(c, { type: 'commit', player: receiver, shot: key });
     } else {
-      rp.commit = { shot: key, tick: rp.commit.tick };
+      rp.commit = { ...rp.commit, shot: key };
     }
   }
   if (!flightEvents(c, f)) return;
@@ -297,12 +315,13 @@ function rallyHit(c: StepCtx, player: PlayerId, contact: Contact): void {
   const hit = resolveHit({
     tick: s.tick, player, type: contact.smash ? 'smash' : commit.shot, grade, stretch: contact.stretch, volley: contact.volley,
     charge: chargeAt(commit.tick, s.tick), contact: contact.ball, incomingSpeed: Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z),
-    mx: inputs[player].mx, my: inputs[player].my, pace: s.config.pace, serveSide: null,
+    mx: inputs[player].mx, my: inputs[player].my, pace: s.config.pace, serveSide: null, serveReturn: s.point.hits === 1,
   }, s.rng.hits[player]);
   const flight = buildFlight(hit);
   s.flight = flight;
   p.lastSwing = { tick: s.tick, stroke: contact.smash ? 'smash' : contact.forehand ? 'forehand' : 'backhand', stretch: contact.stretch };
   p.commit = null;
+  p.pending = null;
   s.point.hits += 1;
   s.point.serveUnbounced = false;
   s.stats[player].hits += 1;
@@ -326,13 +345,15 @@ function stepDead(c: StepCtx, phase: Extract<Phase, { kind: 'dead' }>): void {
   else s.phase = { kind: 'over', since: s.tick };
 }
 
-/** Ends the rally or serve: dead time of `ticks`, then `next`. Commits, toss and serve clock are cleared. */
+/** Ends the rally or serve: dead time of `ticks`, then `next`. Commits, waiting presses, toss and serve clock are cleared. */
 function enterDead(s: ArcadeState, ticks: number, next: 'setup' | 'over'): void {
   s.phase = { kind: 'dead', until: s.tick + ticks, next };
   s.toss = null;
   s.serveClockFrom = null;
-  s.p[0].commit = null;
-  s.p[1].commit = null;
+  for (const p of s.p) {
+    p.commit = null;
+    p.pending = null;
+  }
 }
 
 /** Records and emits a call against `player`. */

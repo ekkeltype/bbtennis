@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildFlight, flightPos } from '../../src/arcade/core/flight';
-import { contactAt, inZone } from '../../src/arcade/core/reach';
+import { contactAt, inZone, stepSpot } from '../../src/arcade/core/reach';
 import type { Contact } from '../../src/arcade/core/reach';
 import { ARCADE, DT } from '../../src/arcade/core/tuning';
 import type { Flight, HitEvent, Vec2 } from '../../src/arcade/core/types';
@@ -138,5 +138,74 @@ describe('contactAt', () => {
     const hits = ticksOf(slow, pos);
     expect(hits.length).toBeGreaterThan(0);
     for (const h of hits) expect(h.n * DT).toBeLessThan(slow.tEnd);
+  });
+});
+
+describe('stepSpot', () => {
+  /** The ball's nearest point to `pos` among ticks from `from` at a reachable height on player 1's half. */
+  function nearest(f: Flight, pos: Vec2, from = 0): { x: number; y: number; d: number } {
+    let best = { x: 0, y: 0, d: Infinity };
+    for (let n = from; n * DT < f.tEnd; n++) {
+      const b = flightPos(f, n * DT);
+      if (b.y <= 0 || b.z < ARCADE.reach.minZ || b.z > ARCADE.reach.maxZ) continue;
+      const d = Math.sqrt((b.x - pos.x) ** 2 + (b.y - pos.y) ** 2);
+      if (d < best.d) best = { x: b.x, y: b.y, d };
+    }
+    return best;
+  }
+  const len = (a: Vec2, b: Vec2): number => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+
+  it('leads 0.7 m beside the path, on the side the player is on', () => {
+    const pos = beside(rally, 73, 1.3);
+    const to = stepSpot(1, pos, rally, 0, false)!;
+    const near = nearest(rally, pos);
+    expect(len(to, near)).toBeCloseTo(ARCADE.plant.sideOffset, 6);
+    expect(to.x).toBeGreaterThan(near.x);
+    expect(len(to, pos)).toBeCloseTo(0.6, 1);
+
+    const left = beside(rally, 73, -1.3);
+    expect(stepSpot(1, left, rally, 0, false)!.x).toBeLessThan(near.x);
+  });
+
+  it('steps back out of the path to make room, and picks the forehand side when on it', () => {
+    const on = beside(rally, 73, 0);
+    const to = stepSpot(1, on, rally, 0, false)!;
+    // Player 1's forehand is world −x of the player: the ball passes at to.x − 0.7.
+    expect(to.x).toBeCloseTo(nearest(rally, on).x + ARCADE.plant.sideOffset, 6);
+    const close = beside(rally, 73, 0.3);
+    expect(stepSpot(1, close, rally, 0, false)!.x).toBeGreaterThan(close.x);
+  });
+
+  it('steps at most stepMax toward a ball that passes far away', () => {
+    const pos = beside(rally, 73, 4);
+    const to = stepSpot(1, pos, rally, 0, false)!;
+    expect(len(to, pos)).toBeCloseTo(ARCADE.plant.stepMax, 9);
+    expect(to.x).toBeLessThan(pos.x);
+  });
+
+  it('only uses the ball after the bounce while the serve is unbounced, and from the given tick on', () => {
+    const pos = beside(rally, 50, 0.3);
+    const bounceTick = Math.ceil(rally.bounces[0]!.t / DT);
+    const any = stepSpot(1, pos, rally, 0, false)!;
+    const after = stepSpot(1, pos, rally, 0, true)!;
+    expect(len(any, nearest(rally, pos))).toBeCloseTo(ARCADE.plant.sideOffset, 6);
+    expect(after).toEqual(stepSpot(1, pos, rally, bounceTick, false));
+    expect(after).not.toEqual(any);
+  });
+
+  it('is null for a net ball, the player\'s own ball, and a ball that never reaches a hittable height on the half', () => {
+    const net = buildFlight(hit({ contact: { x: 0, y: -11, z: 0.3 }, target: { x: 0, y: 6 }, T: 0.35 }));
+    expect(stepSpot(1, { x: 0, y: 3 }, net, 0, false)).toBeNull();
+    expect(stepSpot(0, { x: 0, y: -11 }, rally, 0, false)).toBeNull();
+    const end = Math.ceil(rally.tEnd / DT);
+    expect(stepSpot(1, { x: 0, y: 11 }, rally, end, false)).toBeNull();
+  });
+
+  it('stays inside the bounds', () => {
+    const wide = buildFlight(hit({ contact: { x: 0, y: -10, z: 1 }, target: { x: 5.6, y: 9 }, T: 1.0 }));
+    const pos = { x: ARCADE.move.maxAbsX, y: 11 };
+    const near = nearest(wide, pos);
+    expect(near.x + ARCADE.plant.sideOffset).toBeGreaterThan(ARCADE.move.maxAbsX); // unclamped, the spot is out of bounds
+    expect(stepSpot(1, pos, wide, 0, false)!.x).toBe(ARCADE.move.maxAbsX);
   });
 });

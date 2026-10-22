@@ -44,7 +44,8 @@ describe('How to Play', () => {
 
   it('explains the swing timing, aim, serve and shot types', () => {
     const text = root.textContent ?? '';
-    expect(text).toMatch(/early/i);
+    expect(text).toMatch(/plant/i);
+    expect(text).toMatch(/only aim/i);
     expect(text).toContain('0.5 s');
     expect(text).toContain('PERFECT');
     for (const topic of ['SWING', 'AIM', 'SERVE', 'SHOTS']) expect(text).toContain(topic);

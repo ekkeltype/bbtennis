@@ -102,8 +102,11 @@ function rallyPower(grade: Grade, charge: number, stretch: boolean): number {
   return stretch ? base * ARCADE.stretch.power : base;
 }
 
-function gradeScatter(type: ShotType, grade: Grade): number {
-  return isServe(type) ? ARCADE.serveGrade[grade].scatter : ARCADE.grade[grade].scatter;
+/** Scatter factor of the grade; a clean rally hit scatters more the less it was charged (spec §4.3). */
+function gradeScatter(type: ShotType, grade: Grade, charge: number): number {
+  if (isServe(type)) return ARCADE.serveGrade[grade].scatter;
+  const g = ARCADE.grade;
+  return grade === 'clean' ? g.clean.scatter + g.clean.scatterPerMissingCharge * (1 - charge) : g[grade].scatter;
 }
 
 /** Resolves a hit: power, aim, scatter (drawn in the order n1 → x, n2 → y, n3 → T), T, the apex clamp. Draws exactly 3 normals from `rng`. */
@@ -111,15 +114,17 @@ export function resolveHit(a: {
   tick: number; player: PlayerId; type: ShotType; grade: Grade; stretch: boolean; volley: boolean;
   charge: number; contact: Vec3; incomingSpeed: number; mx: -1 | 0 | 1; my: -1 | 0 | 1;
   pace: PaceId; serveSide: Side | null;
+  /** True when this hit returns a serve: its scatter is × scatter.returnFactor (spec §4.7). */
+  serveReturn: boolean;
 }, rng: RngState): HitEvent {
   const n1 = normalIH(rng);
   const n2 = normalIH(rng);
   const n3 = normalIH(rng);
   const sc = ARCADE.scatter;
   const power = isServe(a.type) ? ARCADE.serveGrade[a.grade].power : rallyPower(a.grade, a.charge, a.stretch);
-  const gs = gradeScatter(a.type, a.grade);
+  const gs = gradeScatter(a.type, a.grade, a.charge);
   const stretchScatter = a.stretch ? ARCADE.stretch.scatter : 1;
-  const sigma = sc.sigma * gs * stretchScatter * (1 + (sc.incomingWeight * a.incomingSpeed) / sc.incomingRef);
+  const sigma = sc.sigma * gs * stretchScatter * (1 + (sc.incomingWeight * a.incomingSpeed) / sc.incomingRef) * (a.serveReturn ? sc.returnFactor : 1);
 
   const aim = aimTarget({ hitter: a.player, type: a.type, grade: a.grade, mx: a.mx, my: a.my, serveSide: a.serveSide });
   const receiverSign = a.player === 0 ? -1 : 1;

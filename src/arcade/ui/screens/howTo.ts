@@ -20,8 +20,9 @@ const RULES: Readonly<Record<'swing' | 'aim' | 'serve' | 'shots', { title: strin
   swing: {
     title: 'SWING',
     text:
-      'Press a shot key early, as the ball comes: you commit to the shot and swing by yourself when the ball arrives. ' +
-      'The bar fills in 0.5 s, and contact just after it is full is PERFECT: harder and more accurate. A late press rushes the shot.',
+      'Get into position, then press a shot key: your feet plant, a few small steps take you to the ball and you swing by yourself. ' +
+      'While planted, the direction keys only aim. The bar fills in 0.5 s, and contact just after it is full is PERFECT: harder and more accurate. ' +
+      'A late press is weaker and wilder. A press before the ball is struck waits for it.',
   },
   aim: {
     title: 'AIM',

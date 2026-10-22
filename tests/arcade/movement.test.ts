@@ -7,12 +7,13 @@ import { COURT } from '../../src/core/court';
 
 const FREE: MoveMode = { kind: 'free' };
 
-function pl(x = 0, y = -8, commit: PlayerState['commit'] = null): PlayerState {
-  return { pos: { x, y }, vel: { x: 0, y: 0 }, commit, held: { topspin: false, slice: false, lob: false }, lastSwing: null };
+function pl(x = 0, y = -8): PlayerState {
+  return { pos: { x, y }, vel: { x: 0, y: 0 }, commit: null, pending: null, held: { topspin: false, slice: false, lob: false }, lastSwing: null };
 }
 function inp(mx: -1 | 0 | 1, my: -1 | 0 | 1): PlayerInput {
   return { mx, my, topspin: false, slice: false, lob: false };
 }
+const NO_MOVE = inp(0, 0);
 function speed(p: PlayerState): number {
   return Math.sqrt(p.vel.x * p.vel.x + p.vel.y * p.vel.y);
 }
@@ -51,10 +52,35 @@ describe('stepMove', () => {
     expect(speed(p)).toBeCloseTo(6.0, 9);
   });
 
-  it('committed top speed is 3.6 m/s', () => {
-    const p = pl(0, -8, { shot: 'topspin', tick: 0 });
-    run(p, 0, inp(1, 0), FREE, 60);
-    expect(speed(p)).toBeCloseTo(3.6, 9);
+  it('planted mode ignores input: a running player with no step target stops within 0.1 s plus one tick', () => {
+    const p = pl(0, -8);
+    run(p, 0, inp(1, 0), FREE, 30);
+    const x0 = p.pos.x;
+    run(p, 0, inp(1, 1), { kind: 'planted', to: null }, Math.round(0.1 / DT) + 1);
+    expect(speed(p)).toBeCloseTo(0, 9);
+    expect(p.pos.x - x0).toBeLessThan(0.35); // the slide of a 6 m/s stop
+    expect(p.pos.y).toBeCloseTo(-8, 9);
+  });
+
+  it('planted mode steps toward the target at no more than stepSpeed and settles on it', () => {
+    const p = pl(0, -8);
+    const to = { x: -0.8, y: -8.6 };
+    let max = 0;
+    for (let i = 0; i < 60; i++) {
+      stepMove(p, 0, inp(1, 0), { kind: 'planted', to });
+      max = Math.max(max, speed(p));
+    }
+    expect(max).toBeLessThanOrEqual(ARCADE.plant.stepSpeed + 1e-9);
+    expect(max).toBeGreaterThan(ARCADE.plant.stepSpeed - 1e-9);
+    expect(p.pos.x).toBeCloseTo(to.x, 3);
+    expect(p.pos.y).toBeCloseTo(to.y, 3);
+  });
+
+  it('planted steps keep to the bounds', () => {
+    const p = pl(0, -1);
+    run(p, 0, NO_MOVE, { kind: 'planted', to: { x: 0, y: 0.5 } }, 60);
+    expect(p.pos.y).toBeCloseTo(-ARCADE.move.netGap, 9);
+    expect(p.vel.y).toBeCloseTo(0, 9);
   });
 
   it('stops within 0.1 s plus one tick', () => {

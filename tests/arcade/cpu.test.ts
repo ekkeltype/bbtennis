@@ -8,6 +8,7 @@ import { ARCADE, ARCADE_CPU_MILESTONES, TICK_HZ } from '../../src/arcade/core/tu
 import { NO_INPUT } from '../../src/arcade/core/types';
 import type { ArcadeEvent, ArcadeState, Grade, HitEvent, PlayerId, PlayerInfo, PlayerInput, ShotType } from '../../src/arcade/core/types';
 import { normalIH, seedRng, uniform } from '../../src/core/rng';
+import { COURT } from '../../src/core/court';
 import { currentServer } from '../../src/core/scoring';
 import { CONFIG, IDLE, PLAYERS, matchInSetup, ofType, runUntil } from './matchHelpers';
 
@@ -19,8 +20,8 @@ const CPU_PLAYERS: [PlayerInfo, PlayerInfo] = [
 
 /** A milestone row without its level, as a profile. */
 function row(i: number): ArcadeCpuProfile {
-  const r = ARCADE_CPU_MILESTONES[i]!;
-  return { reaction: r.reaction, readError: r.readError, speed: r.speed, pressSigma: r.pressSigma, aggression: r.aggression };
+  const { level: _level, ...profile } = ARCADE_CPU_MILESTONES[i]!;
+  return profile;
 }
 
 /** Why `v` is not exactly a valid PlayerInput (five fields, axes −1, 0 or 1 without −0, boolean keys), or null. */
@@ -73,7 +74,8 @@ const JITTER: number[] = (() => {
   return Array.from({ length: 200 }, () => -2 + 4 * uniform(r));
 })();
 
-interface ReturnStats { landed: number; crossed: number; hits: number; perfect: number }
+/** `commits`: CPU commits; `nearSpot`: those whose planted step was shorter than stepMax (it committed within reach of its spot). */
+interface ReturnStats { landed: number; crossed: number; hits: number; perfect: number; commits: number; nearSpot: number }
 
 /**
  * Share of commit leads that put a contact on its predicted tick in the perfect window (spec §5
@@ -94,13 +96,19 @@ function perfectLeadShare(pressSigma: number): number {
 
 /** Plays the 200 launcher balls against a CPU of `level` (player 0 idle) until its hit or the point. */
 function returnStats(level: number): ReturnStats {
-  const out: ReturnStats = { landed: 0, crossed: 0, hits: 0, perfect: 0 };
+  const out: ReturnStats = { landed: 0, crossed: 0, hits: 0, perfect: 0, commits: 0, nearSpot: 0 };
   JITTER.forEach((jx, i) => {
     const seed = 500 + i;
     const s = launch(seed, jx);
     const cpu = new ArcadeCpu(1, level, seed);
     for (let n = 0; n < 600; n++) {
       const ev = step(s, [NO_INPUT, cpu.input(s)]);
+      const commit = s.p[1].commit;
+      if (ofType(ev, 'commit').length > 0 && commit !== null) {
+        out.commits += 1;
+        const at = s.p[1].pos;
+        if (commit.step !== null && Math.sqrt((commit.step.x - at.x) ** 2 + (commit.step.y - at.y) ** 2) < ARCADE.plant.stepMax - 1e-6) out.nearSpot += 1;
+      }
       const hit = ofType(ev, 'hit').find((e) => e.hit.player === 1);
       if (hit !== undefined) {
         const f = s.flight!;
@@ -145,8 +153,9 @@ describe('returns from the fixed launcher (200 neutral topspin balls, lateral ji
   const black = returnStats(12);
   const white = returnStats(0);
 
-  it('Black belt (level 12) returns ≥ 90 % into the court', () => {
-    expect(black.landed / 200).toBeGreaterThanOrEqual(0.9);
+  it('Black belt (level 12) reaches ≥ 98 % of them and returns ≥ 80 % into the court (the rest is scatter)', () => {
+    expect(black.hits / 200).toBeGreaterThanOrEqual(0.98);
+    expect(black.landed / 200).toBeGreaterThanOrEqual(0.8);
   });
 
   it('White belt returns ≥ 40 % into the court, and no more than Black belt', () => {
@@ -157,6 +166,11 @@ describe('returns from the fixed launcher (200 neutral topspin balls, lateral ji
   it('commits so that contact falls in the perfect window: Black belt perfect on ≥ 85 % of the share its press σ allows, White less often', () => {
     expect(black.perfect / black.hits).toBeGreaterThanOrEqual(0.85 * perfectLeadShare(arcadeCpuProfile(12).pressSigma));
     expect(white.perfect / white.hits).toBeLessThan(black.perfect / black.hits);
+  });
+
+  it('commits once it is near its spot, so its planted step is short: Black on ≥ 90 % of its commits', () => {
+    expect(black.commits).toBeGreaterThan(150);
+    expect(black.nearSpot / black.commits).toBeGreaterThanOrEqual(0.9);
   });
 
   it('measured rates (for the report)', () => {
@@ -204,7 +218,8 @@ describe('reaction and recovery', () => {
   });
 });
 
-interface ServeRecord { setupTick: number; tossTick: number; hitTick: number; grade: Grade; type: ShotType; serveNo: 1 | 2; dropped: boolean }
+/** One CPU serve; `placed` when its target is over 1 m from the box's centre line (aimed wide or down the T). */
+interface ServeRecord { setupTick: number; tossTick: number; hitTick: number; grade: Grade; type: ShotType; serveNo: 1 | 2; dropped: boolean; placed: boolean }
 
 /** One CPU serve per seed (the server is the CPU, the receiver idle); odd seeds play a second serve. */
 function serves(level: number, count: number): ServeRecord[] {
@@ -229,6 +244,7 @@ function serves(level: number, count: number): ServeRecord[] {
     out.push({
       setupTick, tossTick: toss?.tick ?? -1, hitTick: hit?.tick ?? -1, grade: hit?.hit.grade ?? 'rushed', type: hit?.hit.type ?? 'topspin',
       serveNo, dropped: ofType(ev, 'tossDropped').length > 0 || hit === undefined,
+      placed: hit !== undefined && Math.abs(Math.abs(hit.hit.target.x) - COURT.singlesHalfWidth / 2) > 1,
     });
   }
   return out;
@@ -249,13 +265,20 @@ describe('serving', () => {
     }
   });
 
-  it('a first serve is flat or slice, a second serve is a kick', () => {
-    for (const r of [...top, ...low]) {
-      if (r.serveNo === 1) expect(['serveFlat', 'serveSlice']).toContain(r.type);
-      else expect(r.type).toBe('serveKick');
-    }
-    expect(top.some((r) => r.type === 'serveFlat')).toBe(true);
-    expect(top.some((r) => r.type === 'serveSlice')).toBe(true);
+  it('first serves follow the belt: 3rd dan flat or slice, White kick or slice; a second serve is a kick', () => {
+    for (const r of [...top, ...low]) if (r.serveNo === 2) expect(r.type).toBe('serveKick');
+    const firsts = (rs: ServeRecord[], type: ShotType): number => rs.filter((r) => r.serveNo === 1 && r.type === type).length;
+    expect(firsts(top, 'serveFlat')).toBeGreaterThan(0);
+    expect(firsts(top, 'serveSlice')).toBeGreaterThan(0);
+    expect(firsts(top, 'serveKick')).toBe(0);
+    expect(firsts(low, 'serveFlat')).toBe(0);
+    expect(firsts(low, 'serveKick')).toBeGreaterThan(0);
+    expect(firsts(low, 'serveSlice')).toBeGreaterThan(0);
+  });
+
+  it('low belts serve at the body: White places under half as many serves wide or down the T as 3rd dan', () => {
+    const share = (rs: ServeRecord[]): number => rs.filter((r) => r.placed).length / rs.length;
+    expect(share(low)).toBeLessThan(share(top) / 2);
   });
 
   it('level 14 serve grades are ≥ 50 % perfect', () => {

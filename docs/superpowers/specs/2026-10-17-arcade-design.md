@@ -136,7 +136,7 @@ false→true edges, detected by the sim.
 ### 4.2 Movement
 
 - Top speed 6.0 m/s; acceleration to top speed in 0.15 s; stopping in 0.1 s. Diagonals are normalized.
-- While a shot is committed (charging) the top speed is 60 %.
+- While a shot is committed the player is planted (§4.3): the direction keys do not move them.
 - Bounds: a player stays on their own half, at least 0.4 m from the net, at most 2.0 m behind the
   baseline (further back, the near player's feet would leave the 270 px screen), and |x| ≤ 6.5 m.
 - During the serve set-up the server moves only along x, behind the baseline, between the centre
@@ -145,8 +145,21 @@ false→true edges, detected by the sim.
 
 ### 4.3 Committing, charging and the automatic swing
 
-- A press of a shot key while the ball is in play (or coming) **commits** that shot. Pressing another
-  shot key before contact switches the shot type and keeps the charge.
+- A press of a shot key while the ball is flying toward the player **commits** that shot. A press
+  made before that (after the player's own last hit, or during the set-up and toss by the receiver)
+  **waits**: the latest one commits on the first tick the ball flies toward the player. Waiting
+  presses are forgotten at the player's own hit and when the point or serve ends. Pressing another
+  shot key before contact switches the shot type and keeps the charge. *(Revised 2026-10-22 after
+  playtesting: early presses were dropped, so a Top Spin player who pressed during the toss never
+  swung.)*
+- **A commit plants the player** (as in Top Spin): the direction keys no longer move them, only aim
+  (§4.5), and they brake at the stopping rate. On the commit tick the sim picks a **step target**:
+  the ball's point nearest the player at a reachable height on their half (after the bounce on a
+  serve return), then the spot 0.7 m beside it on the player's side of the path (the forehand side
+  when on it), at most 1.0 m from where the player stands, inside their bounds. The player takes
+  automatic steps toward it at up to 2.5 m/s (slowing over the last 0.25 m). So a press from a good
+  spot connects cleanly, and a press from a bad one lets the ball pass: get into position, then
+  press. *(Revised 2026-10-22; v1 slowed a committed player to 60 % instead.)*
 - The charge grows from the commit: `charge = min(1, (t − tCommit) / chargeMs)`, `chargeMs = 500`.
 - **The swing is automatic**: a committed player hits the ball at its closest approach inside their
   reach zone (§4.4): the first tick on which the ball is in the zone and, one tick later, it would be
@@ -157,11 +170,11 @@ false→true edges, detected by the sim.
     × 1.8.
   - `chargeMs ≤ d ≤ chargeMs + perfectWindowMs (120)` → **perfect**: full power × 1.1, full aim range
     (margin 0.5 m from the lines), scatter × 0.6, a "PERFECT" pop and sound.
-  - otherwise → **clean**: power per the charge `0.8 + 0.2 × charge`, normal aim (margin 1.0 m),
-    scatter × 1.
+  - otherwise → **clean**: power per the charge `0.65 + 0.2 × charge`, normal aim (margin 1.0 m),
+    scatter × `1 + 0.5 × (1 − charge)` (a late press is weaker and wilder; revised 2026-10-22).
 - **Stretch**: a contact more than 1.0 m sideways from the player's centre → power × 0.85, scatter
   × 1.4, the stretch pose.
-- Commits are accepted only while the ball is flying toward the player (after the opponent's hit or
+- A commit happens only while the ball is flying toward the player (after the opponent's hit or
   serve, until the ball dies). After the hit, the commitment clears.
 
 ### 4.4 Reach zone, volleys and smashes
@@ -216,7 +229,9 @@ the effective gravity before the bounce and the bounce behaviour. Every segment 
 ### 4.7 Accuracy and errors
 
 - Scatter: `L += σ·(n1, n2)`, with `n1, n2` standard normal from the hitter's RNG (`normalIH`) and
-  `σ = 0.35 m × grade factor × stretch factor × (1 + 0.5 × incomingSpeed/30)`.
+  `σ = 0.35 m × grade factor × stretch factor × (1 + 0.5 × incomingSpeed/30)`, × 1.6 on a serve
+  return (added 2026-10-22: return errors give the server its edge). The balance sim tuned these
+  numbers; the current ones are in `tuning.ts` (`scatter`).
 - `T` also gets `× (1 + 0.10·g·n3)`, g = grade factor × stretch factor: a shorter T is a faster,
   flatter ball (the landing point does not move), so rushed and stretched shots from low contact
   points risk the net.
@@ -246,7 +261,9 @@ the effective gravity before the bounce and the bounce behaviour. Every segment 
 | Slice key | Slice | 34 | 1.00 | 0.45 m | 0.72 / 0.50, curves: lateral acceleration 3 m/s² toward the wide side |
 | Lob key | Kick | 27 | 1.60 | 0.60 m | 0.70 / 0.85 |
 
-  (A slice serve's lateral acceleration is part of the segment's `a`; still closed form.)
+  (A slice serve's lateral acceleration is part of the segment's `a`; still closed form.) The tuned
+  speeds are in `tuning.ts`; after playtesting (2026-10-22) they are 37 / 34 / 27 m/s, so that a
+  human's reaction (about 0.3 s) can return most serves.
 - **Aim**: left/right held at contact → toward that side of the service box: wide or T, depending
   on the side; none → body (box centre line). The depth target is `serviceLine − margin`.
 - **Faults**: the serve's first bounce outside the diagonal service box, or a net ball → fault. Two
@@ -273,7 +290,8 @@ the effective gravity before the bounce and the bounce behaviour. Every segment 
   sees the public state (positions, the current flight) and has its own RNG stream
   (`forkSeed(seed, 20 + player)`); it never reads the opponent's RNG.
 - **15 levels** with the typing game's ranks and labels (`core/belts`), White belt to Black belt 3rd
-  dan. Each level's profile is interpolated between five milestone rows:
+  dan. Each level's profile is interpolated between five milestone rows (the starting values below;
+  the balance sim tuned them, and the current rows are `ARCADE_CPU_MILESTONES` in `tuning.ts`):
 
 | Milestone | Reaction (ms) | Read error (m) | Speed × | Press timing σ (ms) | Aggression |
 |---|---|---|---|---|---|
@@ -292,7 +310,10 @@ the effective gravity before the bounce and the bounce behaviour. Every segment 
     predicted contact point; a speed factor below 1 is applied by holding the direction on only that
     share of ticks (a deterministic accumulator), since inputs carry no speed.
   - **Commit**: it commits so that contact falls `chargeMs + perfectWindowMs/2` after the commit,
-    plus normal noise with the level's σ; low belts are often rushed or merely clean.
+    plus normal noise with the level's σ; low belts are often rushed or merely clean. Since a commit
+    plants it (§4.3), it commits on that lead only within 0.6 m of its spot; further off it keeps
+    running and commits 0.2 s before the predicted contact at the latest. While committed it holds
+    its aim direction.
   - **Shot choice**: by aggression: attack a corner (topspin, aiming away from the opponent) vs
     rally deep through the middle; slice when stretched; lob when the opponent is within 4 m of the
     net (more often at higher aggression); approach the net after a short opponent ball at high
@@ -300,9 +321,12 @@ the effective gravity before the bounce and the bounce behaviour. Every segment 
   - **Aim**: through the same direction keys, held only for the last 2 ticks before the predicted
     contact (so aiming barely moves it). Corner aim with probability `0.25 + 0.6 × aggression`, else
     neutral (deep middle).
-  - **Serve**: a first serve is flat with probability = aggression, else slice; a second serve is
-    kick. It aims wide/T/body at random weighted by aggression. It tosses 0.6–1.2 s after the set-up
-    starts and presses with its timing σ around the perfect window.
+  - **Serve**: by the belt's serve columns (added 2026-10-22): a first serve is flat with
+    probability `serveFlat`, kick with `serveKick`, else slice; a second serve is kick. It aims wide
+    or down the T with probability `serveAim` (either at random), else at the body. White serves
+    kick and slice at the body (0 / 0.6 / 0.1); the shares rise to 0.75 / 0 / 0.7 at Black 3rd dan.
+    It tosses 0.6–1.2 s after the set-up starts and presses with its timing σ around the perfect
+    window.
   - **Recovery**: after hitting, it moves to a spot behind the centre of its baseline, shifted 0.6 m
     toward the side its shot went to (covering the angle); after a short ball approach, it stays at
     the net (~2.5 m from it).
@@ -374,9 +398,15 @@ once "Progress can't be saved in this browser mode".
 - **Guard tests**: the boundary and maths checks of §3.
 - **Balance sim** (`tests/arcade/balance.test.ts`; full run with `BBT_SIM=1`, a smoke subset in
   `npm test`): CPU vs CPU at Normal pace. Targets for equal belts (Green, Brown, Black): median
-  rally 4–10 shots, server wins 55–70 % of points, aces 3–15 %, double faults 2–10 %, no point over
-  60 s, perfect hits 15–60 % at Black. Across belts: each milestone beats the one below in ≥ 75 % of
-  short sets; Black 3rd dan beats White in ≥ 99 %.
+  rally 4–10 shots, server wins 53–70 % of points, aces at most 15 %, double faults 2–10 %, 99 % of
+  points within 45 s and none over 90 s, perfect hits 15–60 % at Black. Across belts: each milestone
+  beats the one below in ≥ 75 % of short sets; Black 3rd dan beats White in ≥ 99 %. Against a
+  **seasoned-human stand-in** (a CPU profile with 0.28 s reaction, 0.45 m read error, 70 ms timing σ;
+  an assumption): it beats White and Yellow in ≥ 90 % of short sets and Green in ≥ 60 %, wins 30–70 %
+  against Brown and 5–35 % against Black, and Black 3rd dan beats it in ≥ 90 %; White and Yellow ace
+  it on ≤ 2 % of their service points, every belt on ≤ 15 %. *(Targets revised 2026-10-22: the first
+  tuning was against CPUs only, and a seasoned player found White hard and many serves
+  unreturnable.)*
 - **Typing game unchanged**: the full existing suite, typecheck and build stay green;
   `dist/index.html` is unchanged in behaviour and `dist/arcade/index.html` exists.
 - **In the browser**: `scripts/devshot.mjs` screenshots of `arcade/index.html` (title, a match in
