@@ -13,7 +13,8 @@ const TYPING_ONLY = [
   'render/prompts', 'render/plates', 'render/layout', 'render/leaders', 'render/renderer', 'render/players', 'render/world',
   'render/hud', 'render/ball',
   'game/keyboard', 'game/localSession', 'game/hostSession', 'game/guestSession', 'game/training', 'game/onlineLink',
-  'ui/keySounds', 'ui/attract', 'app',
+  'net/protocol', 'net/transport', 'net/peer',
+  'ui/keySounds', 'ui/attract', 'ui/screens/lobby', 'ui/screens/online', 'app',
 ];
 
 /** Every .ts file under `dir`, recursively. */

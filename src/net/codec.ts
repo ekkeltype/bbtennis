@@ -26,6 +26,11 @@ const utf8 = new TextEncoder();
 
 const jsonBytes = (json: string): number => utf8.encode(json).byteLength;
 
+/** Size of any message on a JSON wire: the UTF-8 byte length of its JSON (what a jsonCodec's `bytes` measures). */
+export function wireBytes(m: unknown): number {
+  return jsonBytes(JSON.stringify(m));
+}
+
 /**
  * The JSON codec of a protocol whose received values `parse` validates (returning a clean copy, or
  * null). `parse` gets values whose size was already checked, so it need not measure them again.
@@ -50,7 +55,7 @@ export function jsonCodec<M>(parse: (raw: unknown) => M | null): Codec<M> {
       return parse(raw);
     },
     bytes(m) {
-      return jsonBytes(JSON.stringify(m));
+      return wireBytes(m);
     },
   };
 }
