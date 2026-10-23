@@ -9,7 +9,7 @@ import { TimeSync } from '../../src/arcade/game/timeSync';
  */
 function run(offsetMs: number, latencyMs: number, seconds: number) {
   const TICK = 1000 / 60;
-  const sides = [0, 1].map(() => ({ tick: 0, acc: 0, lastRemote: NET.inputDelay, sync: new TimeSync(), started: false }));
+  const sides = [0, 1].map(() => ({ tick: 0, acc: 0, lastRemote: NET.inputDelay as number, sync: new TimeSync(), started: false }));
   const wires: { at: number; lastInput: number; adv: number }[][] = [[], []];
   const gaps: number[] = [];
   for (let now = 0; now <= seconds * 1000; now += 1) {
