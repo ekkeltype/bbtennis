@@ -52,6 +52,13 @@ describe('How to Play', () => {
     for (const shot of ['Topspin', 'Slice', 'Lob', 'smash']) expect(text).toContain(shot);
   });
 
+  it('says how online play works (online spec §5)', () => {
+    const text = root.textContent ?? '';
+    expect(text).toContain('ONLINE');
+    expect(text).toMatch(/code or invite link/);
+    expect(text).toMatch(/never pauses/);
+  });
+
   it('Back returns to the menu', () => {
     [...root.querySelectorAll('button')].find((b) => b.textContent === 'BACK')!.click();
     expect(router.current).toBe('mainMenu');

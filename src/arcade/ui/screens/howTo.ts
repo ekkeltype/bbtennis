@@ -15,8 +15,8 @@ const CONTROLS: readonly { action: string; keys: readonly [readonly string[], re
   { action: 'PAUSE', keys: [['ESC', 'TAB'], ['ESC', 'TAB']], either: true },
 ];
 
-/** The rules in short paragraphs (spec §4.3–§4.8): heading and text. */
-const RULES: Readonly<Record<'swing' | 'aim' | 'serve' | 'shots', { title: string; text: string }>> = {
+/** The rules in short paragraphs (spec §4.3–§4.8, online spec §5): heading and text. */
+const RULES: Readonly<Record<'swing' | 'aim' | 'serve' | 'shots' | 'online', { title: string; text: string }>> = {
   swing: {
     title: 'SWING',
     text:
@@ -40,6 +40,10 @@ const RULES: Readonly<Record<'swing' | 'aim' | 'serve' | 'shots', { title: strin
       'Topspin: fast and dipping. Slice: low and skidding; played short, a drop shot. Lob: high and deep, over a player at the net. ' +
       'A high ball near the net is a smash, whatever the key.',
   },
+  online: {
+    title: 'ONLINE',
+    text: 'Host a game and send a friend its code or invite link. You both play from the bottom of your own screen, and the match never pauses.',
+  },
 };
 
 /** A cell of keycaps; alternatives get a " / " between them. */
@@ -58,7 +62,7 @@ function controlsTable(): HTMLElement {
 
 const rule = (r: { title: string; text: string }): HTMLElement => h('p', { class: 'rule' }, h('span', { class: 'rule-title' }, r.title), ' ', r.text);
 
-/** How to Play (spec §6.3): the controls table, then the swing timing, aim, serve and shot types. */
+/** How to Play (spec §6.3): the controls table, then the swing timing, aim, serve, shot types and online play. */
 export function howToScreen(ctx: Pick<ArcadeContext, 'router'>): ScreenFactory {
   return () => {
     const el = h(
@@ -70,7 +74,7 @@ export function howToScreen(ctx: Pick<ArcadeContext, 'router'>): ScreenFactory {
         h(
           'div',
           { class: 'how-body' },
-          h('div', { class: 'col' }, controlsTable(), rule(RULES.serve)),
+          h('div', { class: 'col' }, controlsTable(), rule(RULES.serve), rule(RULES.online)),
           h('div', { class: 'col' }, rule(RULES.swing), rule(RULES.aim), rule(RULES.shots)),
         ),
         h('div', { class: 'actions' }, button('BACK', () => ctx.router.back(), 'primary')),

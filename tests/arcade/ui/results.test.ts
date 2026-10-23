@@ -2,7 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { simulateMatch } from '../../../src/arcade/core/sim';
 import type { ArcadeState, ArcadeStats, PlayerId } from '../../../src/arcade/core/types';
-import { resultsScreen } from '../../../src/arcade/ui/screens/results';
+import { resultsScreen, type OnlineResults } from '../../../src/arcade/ui/screens/results';
 import { setLine } from '../../../src/core/scoring';
 import { Router } from '../../../src/ui/router';
 
@@ -10,12 +10,14 @@ let root: HTMLElement;
 let router: Router;
 let result: ArcadeState;
 
-function show(viewer: PlayerId) {
+function show(viewer: PlayerId, online?: OnlineResults) {
   const ctx = { rematch: vi.fn(), quitMatch: vi.fn() };
   router.register('results', resultsScreen(ctx));
-  router.go('results', { result, viewer });
+  router.go('results', { result, viewer, online });
   return ctx;
 }
+
+const title = (): string => root.querySelector('.panel-title')?.textContent ?? '';
 
 /** The cells of the stats row labelled `label`. */
 function statCells(label: string): string[] {
@@ -107,5 +109,60 @@ describe('Results screen', () => {
     expect(ctx.quitMatch).toHaveBeenCalledOnce();
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     expect(ctx.quitMatch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Results screen online (online spec §5)', () => {
+  const ONLINE: OnlineResults = { canRematch: true, forfeitBy: null, opponentGone: null, endedBy: null };
+
+  it('a played-out match reads as vs CPU; Rematch asks the opponent and waits', () => {
+    const ctx = show(result.winner!, ONLINE);
+    expect(title()).toBe('YOU WIN!');
+    const rematch = buttonNamed('REMATCH');
+    expect(rematch.disabled).toBe(false);
+    rematch.click();
+    expect(ctx.rematch).toHaveBeenCalledTimes(1);
+    expect(rematch.textContent).toBe('WAITING FOR OPPONENT...');
+    expect(rematch.disabled).toBe(true);
+  });
+
+  it('a forfeit names who forfeited, and the other player won', () => {
+    show(0, { ...ONLINE, forfeitBy: 1 });
+    expect(title()).toBe(`${result.players[1].name.toUpperCase()} FORFEITS`);
+    expect(root.querySelector('.panel.results')?.classList.contains('win')).toBe(true);
+    expect(root.querySelector('table.score tbody tr.won th')?.textContent).toBe(result.players[0].name.toUpperCase());
+  });
+
+  it('an opponent who left mid-match is the heading; Rematch is disabled and Menu is the main action', () => {
+    show(0, { canRematch: false, forfeitBy: null, opponentGone: 'left', endedBy: 'left' });
+    expect(title()).toBe('OPPONENT LEFT');
+    expect(root.querySelector('.opponent-gone')).toBeNull();
+    expect(buttonNamed('REMATCH').disabled).toBe(true);
+    expect(buttonNamed('MENU').classList.contains('primary')).toBe(true);
+  });
+
+  it('a match cut short shows the set it stopped in: the games, or the points of a Tiebreak-format match', () => {
+    const full = result;
+    try {
+      result = { ...structuredClone(full), status: 'playing', winner: null };
+      result.score = { ...result.score, setGames: [[6, 4]], setTiebreaks: [null], games: [2, 3] };
+      show(0, { ...ONLINE, forfeitBy: 0 });
+      const rows = () => [...root.querySelectorAll('table.score tbody tr')].map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent));
+      expect([...root.querySelectorAll('table.score thead th')].map((th) => th.textContent)).toEqual(['', 'SET 1', 'SET 2']);
+      expect(rows()).toEqual([['6', '2'], ['4', '3']]);
+      result.score = { ...result.score, format: 'tiebreak', setGames: [], setTiebreaks: [], games: [0, 0], points: [5, 3] };
+      show(0, { ...ONLINE, forfeitBy: 1 });
+      expect([...root.querySelectorAll('table.score thead th')].map((th) => th.textContent)).toEqual(['', 'POINTS']);
+      expect(rows()).toEqual([['5'], ['3']]);
+    } finally {
+      result = full;
+    }
+  });
+
+  it('an opponent who dropped after the match gets a note under the stats', () => {
+    show(result.winner!, { canRematch: false, forfeitBy: null, opponentGone: 'disconnect', endedBy: null });
+    expect(title()).toBe('YOU WIN!');
+    expect(root.querySelector('.opponent-gone')?.textContent).toBe('OPPONENT DISCONNECTED');
+    expect(buttonNamed('REMATCH').disabled).toBe(true);
   });
 });

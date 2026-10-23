@@ -1,17 +1,22 @@
 import { drawBanner, type Banner } from '../../render/banner';
+import { textWidth } from '../../render/font';
 import { drawPauseIcon, drawServeClock, message, readout, speedAlpha } from '../../render/hudParts';
 import { H, W } from '../../render/projection';
 import { drawScoreboard } from '../../render/scoreboard';
 import { serveClockLeft } from '../core/match';
 import { ARCADE, DT, TICK_HZ } from '../core/tuning';
 import type { ArcadeEvent, ArcadeState, CallKind, PlayerId } from '../core/types';
-import type { ArcadeView } from '../game/session';
+import type { ArcadeOverlay, ArcadeView } from '../game/session';
 
 /** A banner over a span of ticks; `endTick` is Infinity for the match banner, which stays. */
 export interface HudBanner { lines: string[]; startTick: number; endTick: number; small: boolean }
 
 /** The serve clock shows in its last seconds only. */
 const CLOCK_SHOW_S = 5;
+/** Centre row of "CONNECTION UNSTABLE...": its 24 px box sits at the bottom centre. */
+const UNSTABLE_CY = H - 14;
+/** Centre row of the focus-lost box. */
+const FOCUS_CY = H / 2;
 
 const CALL_TEXT: Record<CallKind, string> = {
   fault: 'FAULT',
@@ -87,6 +92,12 @@ export function serveKmhShown(s: Readonly<ArcadeState>, recent: readonly ArcadeE
   return null;
 }
 
+/** The online notes of an overlay (online spec §5): the round trip readout, "CONNECTION UNSTABLE..." and the lost focus. */
+export function onlineNotes(o: ArcadeOverlay): { rtt: string | null; unstable: boolean; focusLost: boolean } {
+  const rtt = o.net?.rttMs ?? null;
+  return { rtt: rtt === null ? null : `RTT ${Math.round(rtt)} MS`, unstable: o.net?.unstable ?? false, focusLost: o.focusLost ?? false };
+}
+
 /** A tick-span banner as the banner painter wants it at sim time `t` (s): all lines join at once. */
 function toBanner(b: HudBanner, t: number): Banner {
   const ageMs = (t - b.startTick * DT) * 1000;
@@ -97,7 +108,8 @@ function toBanner(b: HudBanner, t: number): Banner {
 /**
  * The Arcade HUD (spec §6.1): the shared scoreboard, the serve clock in its last 5 s, the serve
  * speed for 2 s then fading (bottom right), the pause icon, the call / score / situation banners and the 3-2-1
- * resume countdown. A spectator (the attract demo behind the menus) gets none of it, as in the
+ * resume countdown; online also the round trip (bottom left), "CONNECTION UNSTABLE..." and the lost
+ * focus (online spec §5). A spectator (the attract demo behind the menus) gets none of it, as in the
  * typing game. `clockMs` (the renderer's wall clock) is unused: every part runs on sim time
  * (`view.t`), so it freezes with the sim.
  */
@@ -113,4 +125,9 @@ export function drawArcadeHud(ctx: CanvasRenderingContext2D, view: ArcadeView, r
   const banner = bannerAt(s, recent);
   if (banner) drawBanner(ctx, toBanner(banner, view.t));
   if (view.overlay.countdown !== null) message(ctx, String(view.overlay.countdown), null, H / 2);
+  const notes = onlineNotes(view.overlay);
+  // readout() is right-aligned: the round trip sits in the bottom-left corner, clear of the serve speed.
+  if (notes.rtt !== null) readout(ctx, notes.rtt, textWidth(notes.rtt) + 8, H - 12, 1);
+  if (notes.unstable) message(ctx, 'CONNECTION UNSTABLE...', null, UNSTABLE_CY);
+  if (notes.focusLost) message(ctx, 'CLICK TO FOCUS', "YOUR KEYS AREN'T REACHING THE GAME", FOCUS_CY);
 }

@@ -1,9 +1,13 @@
 import { BELTS } from '../../core/belts';
 import type { Router } from '../../ui/router';
 import type { ArcadeConfig, ArcadeState } from '../core/types';
+import type { NetStats } from './onlineSession';
 
 /** Frames drawn after the hooks are installed before the page reports `__shotReady` (so the canvas has drawn). */
 export const SHOT_READY_FRAMES = 45;
+
+/** Most added one-way delay `?lag=` accepts (ms). */
+const MAX_LAG_MS = 2000;
 
 /** Screens `screen(name)` and `?screen=` can show, each as if reached from the main menu (past the gate). */
 export const DEBUG_SCREENS: readonly string[] = ['title', 'mainMenu', 'cpuSetup', 'customize', 'options', 'howTo', 'match', 'pause'];
@@ -18,6 +22,8 @@ export interface ArcadeDebugHooks {
   demo(): void;
   /** Shows screen `name` (one of DEBUG_SCREENS) as if reached from the main menu; a match in progress is left first. */
   screen(name: string): void;
+  /** The current online match's netcode numbers (ticks, rollbacks, stalls, desyncs, hashes sent, round trip), or null. */
+  net(): NetStats | null;
 }
 
 /** The app as the hooks drive it (ArcadeApp). */
@@ -27,6 +33,8 @@ export interface ArcadeDebugTarget {
   readonly cpuSetup: Readonly<{ level: number } & ArcadeConfig>;
   /** The current match's live state, or null. */
   matchState(): Readonly<ArcadeState> | null;
+  /** The current online match's netcode numbers, or null. */
+  netStats(): NetStats | null;
   startCpuMatch(level: number, config: ArcadeConfig, seed?: number): void;
   /** Starts the CPU-vs-CPU demo match of `demo()`. */
   startDemoMatch(): void;
@@ -51,6 +59,17 @@ declare global {
   interface Window {
     __arcade?: ArcadeDebugHooks;
   }
+}
+
+/**
+ * The one-way delay (ms) a debug page adds to everything it sends online (`?lag=<ms>`, online spec
+ * §1.2): in dev builds and on pages opened with `?debug`, a whole number up to 2000; else 0.
+ */
+export function debugLagMs(search: string, dev: boolean = import.meta.env.DEV): number {
+  const q = new URLSearchParams(search);
+  const lag = Number(q.get('lag'));
+  if ((!dev && !q.has('debug')) || !Number.isInteger(lag) || lag < 0 || lag > MAX_LAG_MS) return 0;
+  return lag;
 }
 
 /** The match options of a CPU setup. */
@@ -98,6 +117,7 @@ export function installArcadeDebug(
     },
     demo: () => app.startDemoMatch(),
     screen,
+    net: () => app.netStats(),
   };
   host.__arcade = hooks;
 

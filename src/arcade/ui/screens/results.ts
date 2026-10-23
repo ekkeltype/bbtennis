@@ -3,10 +3,20 @@ import { button, panel } from '../../../ui/controls';
 import { h } from '../../../ui/dom';
 import type { ScreenFactory } from '../../../ui/router';
 import type { ArcadeState, ArcadeStats, PlayerId } from '../../core/types';
+import type { Departure } from '../../game/onlineSession';
 import type { ArcadeContext } from '../context';
 
-/** Params of the Results screen: the finished match and whose results these are. */
-export interface ResultsParams { result: Readonly<ArcadeState>; viewer: PlayerId }
+/**
+ * Online Results (online spec §3.6, §5): whether Rematch can still be asked for, who forfeited, and how
+ * the opponent went away (`opponentGone`) and whether that cut the match short (`endedBy`).
+ */
+export interface OnlineResults { canRematch: boolean; forfeitBy: PlayerId | null; opponentGone: Departure | null; endedBy: Departure | null }
+
+/** Params of the Results screen: the finished match, whose results these are, and online how it ended. */
+export interface ResultsParams { result: Readonly<ArcadeState>; viewer: PlayerId; online?: OnlineResults }
+
+/** What Results say of an opponent who has gone (online spec §3.6). */
+const GONE: Readonly<Record<Departure, string>> = { left: 'OPPONENT LEFT', disconnect: 'OPPONENT DISCONNECTED' };
 
 const NONE = '-';
 const PLAYERS = [0, 1] as const;
@@ -24,8 +34,17 @@ const STATS: readonly { label: string; cell(s: ArcadeStats): string }[] = [
 
 const nameOf = (r: Readonly<ArcadeState>, p: PlayerId): string => r.players[p].name.toUpperCase();
 
-/** "YOU WIN!" for the viewer, else "<WINNER> WINS". */
-function headline(r: Readonly<ArcadeState>, viewer: PlayerId): string {
+/** The winner: the match's, or the one who did not forfeit; null for a match cut short by a departure. */
+function winnerOf(p: ResultsParams): PlayerId | null {
+  const forfeitBy = p.online?.forfeitBy ?? null;
+  return forfeitBy !== null ? (forfeitBy === 0 ? 1 : 0) : p.result.winner;
+}
+
+/** "OPPONENT LEFT" / "OPPONENT DISCONNECTED" when that ended the match, "<NAME> FORFEITS", "YOU WIN!" for the viewer, else "<WINNER> WINS". */
+function headline(p: ResultsParams): string {
+  const { result: r, viewer, online } = p;
+  if (online?.endedBy) return GONE[online.endedBy];
+  if (online?.forfeitBy != null) return `${nameOf(r, online.forfeitBy)} FORFEITS`;
   if (r.winner === null) return 'MATCH OVER';
   return r.winner === viewer ? 'YOU WIN!' : `${nameOf(r, r.winner)} WINS`;
 }
@@ -33,15 +52,20 @@ function headline(r: Readonly<ArcadeState>, viewer: PlayerId): string {
 /**
  * The final score, as the scoreboard shows it: a row per player with each set's games (the
  * tiebreak loser's points as a superscript beside the winner's games), or the points of a
- * Tiebreak-format match.
+ * Tiebreak-format match. A match cut short online (a forfeit, a player gone) also shows the set it
+ * stopped in: its games, or in the Tiebreak format the points so far.
  */
-function scoreTable(r: Readonly<ArcadeState>): HTMLElement {
+function scoreTable(r: Readonly<ArcadeState>, winner: PlayerId | null): HTMLElement {
   const line = setLine(r.score);
+  if (r.status !== 'over') {
+    const now = r.score.format === 'tiebreak' ? r.score.points : r.score.games;
+    for (const p of PLAYERS) line[p].push({ value: now[p], sup: null });
+  }
   const head = r.score.format === 'tiebreak' ? ['POINTS'] : line[0].map((_, i) => `SET ${i + 1}`);
   const row = (p: PlayerId): HTMLElement =>
     h(
       'tr',
-      { class: r.winner === p ? 'won' : '' },
+      { class: winner === p ? 'won' : '' },
       h('th', {}, nameOf(r, p)),
       ...line[p].map((c) => h('td', {}, String(c.value), c.sup === null ? null : h('sup', {}, String(c.sup)))),
     );
@@ -64,19 +88,49 @@ function statTable(r: Readonly<ArcadeState>): HTMLElement {
   );
 }
 
-/** Results (spec §6.3): the winner, the final score and the stats; Rematch (same setup, new seed) or Menu (also Esc). */
+/** Rematch: vs CPU at once; online it asks the opponent and waits, and is disabled once the opponent has gone (online spec §3.6). */
+function rematchButton(ctx: Pick<ArcadeContext, 'rematch'>, online: OnlineResults | undefined): HTMLButtonElement {
+  const b = button(
+    'REMATCH',
+    () => {
+      ctx.rematch();
+      if (online === undefined) return;
+      b.textContent = 'WAITING FOR OPPONENT...';
+      b.disabled = true;
+    },
+    'primary',
+  );
+  b.disabled = online?.canRematch === false;
+  return b;
+}
+
+/**
+ * Results (spec §6.3): the winner, the final score and the stats; Rematch (vs CPU: same setup, new
+ * seed; online: asks the opponent) or Menu (also Esc). Online (online spec §5) the heading says who
+ * forfeited or that the opponent's going ended the match, a note says when they went afterwards, and
+ * Rematch is disabled once they have gone.
+ */
 export function resultsScreen(ctx: Pick<ArcadeContext, 'rematch' | 'quitMatch'>): ScreenFactory {
   return (params) => {
-    const { result, viewer } = params as ResultsParams;
+    const p = params as ResultsParams;
+    const { result, viewer, online } = p;
+    const winner = winnerOf(p);
+    const gone = online?.opponentGone ?? null;
     const el = h(
       'div',
       { class: 'screen dim' },
       panel(
-        headline(result, viewer),
-        `results ${result.winner === viewer ? 'win' : 'loss'}`,
-        scoreTable(result),
+        headline(p),
+        `results ${winner === viewer ? 'win' : 'loss'}`,
+        scoreTable(result, winner),
         statTable(result),
-        h('div', { class: 'actions' }, button('REMATCH', () => ctx.rematch(), 'primary'), button('MENU', () => ctx.quitMatch())),
+        gone !== null && gone !== online?.endedBy ? h('p', { class: 'note opponent-gone' }, GONE[gone]) : null,
+        h(
+          'div',
+          { class: 'actions' },
+          rematchButton(ctx, online),
+          button('MENU', () => ctx.quitMatch(), online?.canRematch === false ? 'primary' : ''),
+        ),
       ),
     );
     return { el, onBack: () => ctx.quitMatch() };

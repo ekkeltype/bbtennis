@@ -4,7 +4,7 @@ import { createMatch, step } from '../../../src/arcade/core/match';
 import { ARCADE, DT } from '../../../src/arcade/core/tuning';
 import { NO_INPUT } from '../../../src/arcade/core/types';
 import type { ArcadeEvent, ArcadeState, HitEvent } from '../../../src/arcade/core/types';
-import { bannerAt, serveClockShown, serveKmhShown } from '../../../src/arcade/render/hud';
+import { bannerAt, onlineNotes, serveClockShown, serveKmhShown } from '../../../src/arcade/render/hud';
 import { CONFIG, PLAYERS, forPlayer, matchInSetup, ofType, press, runTicks, runUntil, serveAce, untilType } from '../matchHelpers';
 
 /** Its coin toss goes to player 0 ('ANA'). */
@@ -119,5 +119,20 @@ describe('HUD readouts', () => {
     expect(serveKmhShown(s, ev)?.alpha).toBeCloseTo(0.5, 6);
     ev.push(...runTicks(s, ticks(0.25)));
     expect(serveKmhShown(s, ev)).toBeNull();
+  });
+});
+
+describe('onlineNotes (online spec §5)', () => {
+  it('shows nothing for a local match', () => {
+    expect(onlineNotes({ paused: false, countdown: null })).toEqual({ rtt: null, unstable: false, focusLost: false });
+  });
+
+  it('shows the round trip once measured, CONNECTION UNSTABLE and the lost focus online', () => {
+    expect(onlineNotes({ paused: false, countdown: null, net: { rttMs: null, unstable: false } }).rtt).toBeNull();
+    expect(onlineNotes({ paused: false, countdown: null, net: { rttMs: 83.6, unstable: true }, focusLost: true })).toEqual({
+      rtt: 'RTT 84 MS',
+      unstable: true,
+      focusLost: true,
+    });
   });
 });

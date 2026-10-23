@@ -22,16 +22,18 @@ export interface ArcadeContext {
   openGate(): void;
   /** Starts a match against the CPU at belt `level` (0..14). */
   startCpuMatch(level: number, config: ArcadeConfig): void;
-  /** Results' Rematch: the same setup with a new seed. */
+  /** Results' Rematch: vs CPU the same setup with a new seed; online, asks the opponent (online spec §3.6). */
   rematch(): void;
-  /** Opens the pause menu (and pauses the match). */
+  /** Opens the in-match menu (and pauses a local match). */
   pauseMatch(): void;
-  /** Closes the pause menu: back to the match, which resumes after a 3-2-1 countdown. */
+  /** Closes the in-match menu: back to the match (a local one resumes after a 3-2-1 countdown). */
   resumeMatch(): void;
   /** Restarts the current match: the same setup with a new seed. */
   restartMatch(): void;
   /** Leaves the current match for the main menu. */
   quitMatch(): void;
+  /** Online: gives the match up (online spec §3.6). */
+  forfeitMatch(): void;
   toggleFullscreen(): void;
   /** Puts the keyboard focus back on the game (a click on the match). */
   focusGame(): void;

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMatch } from '../../src/arcade/core/match';
 import type { ArcadeConfig, ArcadeState, PlayerInfo } from '../../src/arcade/core/types';
-import { type ArcadeDebugHost, type ArcadeDebugTarget, DEBUG_SCREENS, installArcadeDebug, SHOT_READY_FRAMES } from '../../src/arcade/game/debug';
+import { type ArcadeDebugHost, type ArcadeDebugTarget, DEBUG_SCREENS, debugLagMs, installArcadeDebug, SHOT_READY_FRAMES } from '../../src/arcade/game/debug';
 
 const host = (search: string): ArcadeDebugHost => ({ location: { search } });
 
@@ -34,6 +34,7 @@ function fakeApp(level = 4): ArcadeDebugTarget & { calls: string[]; match: Arcad
       calls.push('quitMatch');
       app.match = null;
     },
+    netStats: () => null,
   };
   return app;
 }
@@ -172,5 +173,15 @@ describe('showStartScreen (?screen=)', () => {
     expect(installArcadeDebug(app, host('?debug&screen=bogus'), false)!.showStartScreen()).toBe(false);
     expect(app.calls).toEqual([]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('?screen=bogus'));
+  });
+});
+
+describe('debugLagMs (online spec §1.2)', () => {
+  it('reads ?lag= on debug pages only, as a whole number of ms up to 2000', () => {
+    expect(debugLagMs('?debug&lag=60', false)).toBe(60);
+    expect(debugLagMs('?lag=60', true)).toBe(60);
+    expect(debugLagMs('?lag=60', false)).toBe(0);
+    expect(debugLagMs('?debug', false)).toBe(0);
+    for (const bad of ['-5', '2001', '1.5', 'x']) expect(debugLagMs(`?debug&lag=${bad}`, false)).toBe(0);
   });
 });

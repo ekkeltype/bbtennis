@@ -7,6 +7,7 @@ import { blurActive } from '../../ui/dom';
 import { Overlay } from '../../ui/overlay';
 import { humanPlayer } from '../../ui/players';
 import { Router } from '../../ui/router';
+import { guardOnlineMatch, hostLobbyScreen, joinScreen, type JoinParams, type LobbyContext } from '../../ui/lobbyScreens';
 import { customizeScreen } from '../../ui/screens/customize';
 import { gateScreen } from '../../ui/screens/gate';
 import { randomSeed } from '../../ui/seed';
@@ -14,13 +15,16 @@ import type { Profile } from '../../ui/settings';
 import { ArcadeDirector } from '../audio/director';
 import { ArcadeCpu } from '../core/cpu';
 import { DT } from '../core/tuning';
-import type { ArcadeConfig, ArcadeState } from '../core/types';
-import { installArcadeDebug, type ArcadeDebug } from '../game/debug';
+import type { ArcadeConfig, ArcadeState, PlayerId } from '../core/types';
+import { debugLagMs, installArcadeDebug, type ArcadeDebug } from '../game/debug';
 import { HeldKeys, KeyboardController } from '../game/keys';
+import type { ArcadeOnlineSession, NetStats } from '../game/onlineSession';
 import { ArcadeSession, type ArcadeView } from '../game/session';
+import type { ArcadeMsg } from '../net/protocol';
 import { ArcadeRenderer } from '../render/renderer';
 import { ArcadeAttract } from './attract';
 import type { ArcadeContext } from './context';
+import { arcadeBrowserEnv, arcadeLobbyGame, type ArcadeOnlineEnv } from './online';
 import { arcadeCpuPlayer } from './players';
 import { cpuSetupScreen } from './screens/cpuSetup';
 import { howToScreen } from './screens/howTo';
@@ -28,7 +32,7 @@ import { mainMenuScreen } from './screens/mainMenu';
 import { matchScreen } from './screens/match';
 import { optionsScreen } from './screens/options';
 import { pauseScreen } from './screens/pause';
-import { resultsScreen, type ResultsParams } from './screens/results';
+import { resultsScreen, type OnlineResults, type ResultsParams } from './screens/results';
 import { arcadeLogo, titleScreen } from './screens/title';
 import { ArcadeStore, type ArcadeSettings, type CpuSetup } from './store';
 
@@ -46,15 +50,49 @@ export interface ArcadeElements { root: HTMLElement; canvas: HTMLCanvasElement; 
 /** What a restart or rematch replays: the CPU's belt, the options, and whether a CPU plays the near side too (the debug demo). */
 interface MatchSetup { level: number; config: ArcadeConfig; demo: boolean }
 
-/** The match against the CPU: its session, its setup, and whether Results were shown. */
-interface Match { session: ArcadeSession; setup: MatchSetup; finished: boolean }
+/** What the app drives: a local ArcadeSession, or one side of an online match. */
+interface MatchSession {
+  frame(dtMs: number): ArcadeView;
+  readonly view: ArcadeView | null;
+  readonly over: boolean;
+  readonly result: Readonly<ArcadeState> | null;
+  pause(): void;
+  resume(): void;
+  dispose(): void;
+}
 
 /**
- * The Arcade app (spec §6.3): owns the canvas Screen and ArcadeRenderer, audio (engine, umpire,
- * director), the HeldKeys, the Router on the `#ui` Overlay, the attract demo and the current match,
- * and drives them from one loop: session.frame → renderer.draw → director.consume. Its saved data
- * is the Arcade's own ArcadeStore. The keys are enabled only on the match screen, which is shown
- * only while the match is not paused.
+ * The match being played: its session; vs CPU, its setup (for Restart and Rematch); online, the
+ * session and what to run once the app is done with it (page guards, the host's game code); whose
+ * side the screen shows; and the Results showing (null while it is played).
+ */
+interface Match {
+  session: MatchSession;
+  setup: MatchSetup | null;
+  online: { session: ArcadeOnlineSession; release: () => void } | null;
+  viewer: PlayerId;
+  results: ResultsParams | null;
+}
+
+/** The match options of a CPU setup (the host lobby starts from them). */
+function configOf(s: Readonly<{ level: number } & ArcadeConfig>): ArcadeConfig {
+  return { format: s.format, deuceRule: s.deuceRule, surface: s.surface, pace: s.pace };
+}
+
+/** What online Results say (online spec §3.6): Rematch while possible, who forfeited, how the opponent went and whether that ended the match. */
+function onlineResults(s: ArcadeOnlineSession): OnlineResults {
+  const gone = s.opponentGone;
+  return { canRematch: s.mayRematch, forfeitBy: s.forfeitBy, opponentGone: gone, endedBy: gone !== null && s.endReason === gone ? gone : null };
+}
+
+/**
+ * The Arcade app (spec §6.3, online spec §5): owns the canvas Screen and ArcadeRenderer, audio
+ * (engine, umpire, director), the HeldKeys, the Router on the `#ui` Overlay, the attract demo and the
+ * current match (vs CPU, or online from the Host / Join screens), and drives them from one loop:
+ * session.frame → renderer.draw → director.consume. Its saved data is the Arcade's own ArcadeStore.
+ * The keys are enabled only on the match screen. A local match pauses behind its menu and on blur, a
+ * hidden tab or leaving fullscreen; an online one never pauses, and shows "CLICK TO FOCUS" after the
+ * window loses the focus instead.
  */
 export class ArcadeApp implements ArcadeContext {
   readonly router: Router;
@@ -71,18 +109,26 @@ export class ArcadeApp implements ArcadeContext {
   private readonly keys: HeldKeys;
   private readonly attract = new ArcadeAttract();
   private match: Match | null = null;
+  private readonly onlineEnv: ArcadeOnlineEnv;
+  /** The window lost the focus during an online match (until a click or the focus comes back). */
+  private blurred = false;
   private gateOpen = false;
   /** The debug hooks (dev builds and `?debug` pages), else null. */
   private debug: ArcadeDebug | null = null;
   private storageNoticeShown = false;
 
-  constructor(el: ArcadeElements) {
+  /** `online`: the network and clock of the online screens; the browser's (with any debug `?lag=`) by default. */
+  constructor(el: ArcadeElements, online?: ArcadeOnlineEnv) {
+    this.onlineEnv = online ?? arcadeBrowserEnv(debugLagMs(location.search));
     this.root = el.root;
     this.screen = new Screen(el.canvas);
     this.renderer = new ArcadeRenderer(this.screen);
     this.umpire = new Umpire(() => this.settings.volumes.master * this.settings.volumes.sfx);
     this.umpire.enabled = false;
-    this.director = new ArcadeDirector(this.audio, this.umpire, { surface: () => this.match?.setup.config.surface ?? 'hard', viewer: () => 0 });
+    this.director = new ArcadeDirector(this.audio, this.umpire, {
+      surface: () => this.match?.session.view?.state.config.surface ?? 'hard',
+      viewer: () => this.match?.viewer ?? 0,
+    });
     this.audio.setVolumes(this.settings.volumes);
 
     this.overlay = new Overlay(el.ui);
@@ -91,13 +137,16 @@ export class ArcadeApp implements ArcadeContext {
     this.screen.onChange((info) => this.overlay.place(info));
 
     this.keys = new HeldKeys(window, () => this.pauseMatch());
-    window.addEventListener('blur', () => this.pauseMatch());
+    window.addEventListener('blur', () => this.autoPause(true));
+    window.addEventListener('focus', () => {
+      this.blurred = false;
+    });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.pauseMatch();
+      if (document.hidden) this.autoPause(true);
     });
     // In fullscreen the browser takes Esc to leave it, so the page never sees that keydown.
     document.addEventListener('fullscreenchange', () => {
-      if (!document.fullscreenElement) this.pauseMatch();
+      if (!document.fullscreenElement) this.autoPause(false);
     });
   }
 
@@ -114,6 +163,16 @@ export class ArcadeApp implements ArcadeContext {
     r.register('match', matchScreen(this));
     r.register('pause', pauseScreen(this));
     r.register('results', resultsScreen(this));
+    const lobby: LobbyContext<ArcadeConfig, ArcadeMsg, ArcadeOnlineSession> = {
+      router: r,
+      profile: () => structuredClone(this.profile),
+      config: () => configOf(this.cpuSetup),
+      env: this.onlineEnv,
+      begin: (session, release) => this.startOnline(session, release),
+    };
+    const game = arcadeLobbyGame(this.onlineEnv, new KeyboardController(this.keys));
+    r.register('host', hostLobbyScreen(lobby, game));
+    r.register('join', joinScreen(lobby, game));
     await fontsReady();
     startLoop((dt) => this.frame(dt));
     this.debug = installArcadeDebug(this);
@@ -155,6 +214,12 @@ export class ArcadeApp implements ArcadeContext {
     void this.audio.unlock();
     this.umpire.enabled = true;
     this.router.go('title');
+    // An invite link (`?join=CODE`) opens Join with the code filled in, Back leading to the main menu.
+    const code = new URLSearchParams(location.search).get('join');
+    if (code === null) return;
+    this.router.go('mainMenu');
+    const params: JoinParams = { code };
+    this.router.go('join', params);
   }
 
   startCpuMatch(level: number, config: ArcadeConfig, seed: number = randomSeed()): void {
@@ -172,19 +237,30 @@ export class ArcadeApp implements ArcadeContext {
     return this.match?.session.view?.state ?? null;
   }
 
-  rematch(): void {
-    this.restartMatch();
+  /** The current online match's netcode numbers, or null without one. */
+  netStats(): NetStats | null {
+    return this.match?.online?.session.netStats() ?? null;
   }
 
-  /** Pauses the match and opens the pause menu (Esc/Tab, the pause icon, blur, a hidden tab, leaving fullscreen): from the match screen only, and not once the match is decided. */
+  rematch(): void {
+    const online = this.match?.online;
+    if (online) online.session.rematch();
+    else this.restartMatch();
+  }
+
+  /**
+   * Opens the in-match menu (Esc/Tab, the pause icon; for a local match also blur, a hidden tab or
+   * leaving fullscreen, see autoPause), pausing a local match: from the match screen only, and not once
+   * the match is decided.
+   */
   pauseMatch(): void {
     const m = this.match;
-    if (!m || this.router.current !== 'match' || m.session.view?.state.status === 'over') return;
+    if (!m || this.router.current !== 'match' || m.results !== null || m.session.view?.state.status === 'over') return;
     m.session.pause();
-    this.router.go('pause');
+    this.router.go('pause', { kind: m.online ? 'online' : 'cpu' });
   }
 
-  /** From the pause menu only (a stray resume would restart the countdown): the match screen, then 3-2-1. */
+  /** From the in-match menu only (a stray resume would restart the countdown): the match screen, then (local) 3-2-1. */
   resumeMatch(): void {
     const m = this.match;
     if (!m || this.router.current !== 'pause') return;
@@ -193,8 +269,15 @@ export class ArcadeApp implements ArcadeContext {
   }
 
   restartMatch(): void {
-    const m = this.match;
-    if (m) this.beginMatch(m.setup, randomSeed());
+    const setup = this.match?.setup;
+    if (setup) this.beginMatch(setup, randomSeed());
+  }
+
+  forfeitMatch(): void {
+    const online = this.match?.online;
+    if (!online) return;
+    online.session.forfeit();
+    if (this.router.current === 'pause') this.router.back();
   }
 
   quitMatch(): void {
@@ -209,6 +292,7 @@ export class ArcadeApp implements ArcadeContext {
 
   focusGame(): void {
     window.focus();
+    this.blurred = false;
     this.root.focus({ preventScroll: true });
   }
 
@@ -221,16 +305,48 @@ export class ArcadeApp implements ArcadeContext {
     this.debug?.frame();
   }
 
-  /** One frame of the match (drawn behind the pause menu and Results too); Results once it is over. */
+  /** One frame of the match (drawn behind the menu and Results too); Results once it is over. */
   private playFrame(m: Match, dt: number): void {
-    const view = m.session.frame(dt);
+    let view = m.session.frame(dt);
+    if (m.online && this.blurred) view = { ...view, overlay: { ...view.overlay, focusLost: true } };
     this.draw(view, dt);
     // Events come from this frame's ticks: their age is the sim time since their tick.
     this.director.consume(view, (e) => (view.t - e.tick * DT) * 1000);
-    if (m.finished || !m.session.over) return;
-    m.finished = true;
-    const params: ResultsParams = { result: view.state, viewer: 0 };
+    this.checkEnd(m, view);
+  }
+
+  /**
+   * Results once the match is over. Online (online spec §3.6) they go back to the match when a
+   * rematch starts, and show again with Rematch disabled once the opponent goes after the match.
+   */
+  private checkEnd(m: Match, view: ArcadeView): void {
+    const online = m.online?.session ?? null;
+    if (m.results !== null) {
+      if (online === null || this.router.current !== 'results') return;
+      if (!online.over) {
+        m.results = null;
+        this.router.go('match');
+      } else if (online.opponentGone !== null && m.results.online?.opponentGone === null) {
+        this.showResults(m, { ...m.results, online: onlineResults(online) });
+      }
+      return;
+    }
+    if (!m.session.over) return;
+    this.showResults(m, { result: m.session.result ?? view.state, viewer: m.viewer, online: online === null ? undefined : onlineResults(online) });
+  }
+
+  private showResults(m: Match, params: ResultsParams): void {
+    m.results = params;
     this.router.go('results', params);
+  }
+
+  /** Blur, a hidden tab or leaving fullscreen: a local match pauses; an online one goes on, and a lost focus is shown. */
+  private autoPause(lostFocus: boolean): void {
+    if (this.match?.online) {
+      if (lostFocus) this.blurred = true;
+      return;
+    }
+    this.pauseMatch();
   }
 
   /** Draws a view once; a match state drawn for the first time gets a fresh renderer (no effects carried over). */
@@ -267,12 +383,37 @@ export class ArcadeApp implements ArcadeContext {
       controllers: [near.controller, new ArcadeCpu(1, setup.level, seed)],
       viewer: 0,
     });
-    this.match = { session, setup, finished: false };
+    this.match = { session, setup, online: null, viewer: 0, results: null };
     this.router.go('match');
   }
 
+  /** An online match the Host or Join screen started: shown from this side's end, with the page guards while it runs. */
+  private startOnline(session: ArcadeOnlineSession, release: () => void): void {
+    this.endMatch();
+    const unguard = guardOnlineMatch(session);
+    this.blurred = false;
+    this.match = {
+      session,
+      setup: null,
+      online: {
+        session,
+        release: () => {
+          unguard();
+          release();
+        },
+      },
+      viewer: session.viewer,
+      results: null,
+    };
+    this.router.go('match');
+  }
+
+  /** Disposes of the current match (an online one leaves, and its guards and game code go). */
   private endMatch(): void {
-    this.match?.session.dispose();
+    const m = this.match;
+    if (!m) return;
+    m.session.dispose();
+    m.online?.release();
     this.match = null;
   }
 
