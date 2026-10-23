@@ -43,9 +43,7 @@ function replay(rec: Recording, local: PlayerId, lag: () => number, batch: () =>
     while (delivered < Math.min(upTo, rec.ticks)) {
       const first = delivered + 1;
       const last = Math.min(upTo, rec.ticks, first + batch() - 1);
-      const got = rb.receive(first, rec.inputs[remote].slice(first, last + 1));
-      expect(got).not.toBeNull();
-      shown.push(...got!);
+      shown.push(...rb.receive(first, rec.inputs[remote].slice(first, last + 1)));
       delivered = last;
     }
   };
@@ -137,11 +135,51 @@ describe('Rollback: prediction and the window', () => {
     expect(inner.remoteIn.size).toBeLessThanOrEqual(NET.keepTicks + 1);
   });
 
-  it('ignores inputs that do not continue the opponent\'s sequence', () => {
+  it('keeps inputs that arrive past a gap until the gap fills, and skips ticks it already has', () => {
     const rb = new Rollback(createMatch(CONFIG, PLAYERS, SEED), 0);
-    expect(rb.receive(D + 2, [NO_INPUT])).toBeNull();
-    expect(rb.receive(D + 1, [])).toBeNull();
+    const right = { ...NO_INPUT, mx: 1 as const };
+    expect(rb.receive(D + 3, [right, right])).toEqual([]);
+    expect(rb.receive(D + 1, [])).toEqual([]);
     expect(rb.lastRemote).toBe(D);
+    rb.receive(D + 1, [NO_INPUT, NO_INPUT]);
+    expect(rb.lastRemote).toBe(D + 4);
+    // A repeat of known ticks changes nothing: the first input of a tick stands.
+    rb.receive(D + 1, [right, right, NO_INPUT, NO_INPUT, right]);
+    expect(rb.lastRemote).toBe(D + 5);
+    const inner = rb as unknown as { remoteIn: Map<number, PlayerInput> };
+    expect(inner.remoteIn.get(D + 1)).toEqual(NO_INPUT);
+    expect(inner.remoteIn.get(D + 3)).toEqual(right);
+  });
+
+  it('out-of-order batches still end on the plain run\'s state', () => {
+    const rb = new Rollback(createMatch(CONFIG, PLAYERS, SEED), 1);
+    const r = seedRng(31);
+    let sent: number = D;
+    const queue: { first: number; inputs: PlayerInput[] }[] = [];
+    for (let n = 1; n <= REC.ticks; n++) {
+      // Batches of 1–3 ticks, 4 ticks behind; now and then two swap places on the way.
+      while (sent < Math.min(n - 4, REC.ticks)) {
+        const first = sent + 1;
+        const last = Math.min(first + intBelow(r, 3), REC.ticks);
+        queue.push({ first, inputs: REC.inputs[0].slice(first, last + 1) });
+        sent = last;
+      }
+      if (queue.length >= 2 && intBelow(r, 4) === 0) queue.splice(0, 2, queue[1]!, queue[0]!);
+      while (queue.length > 1) {
+        const b = queue.shift()!;
+        rb.receive(b.first, b.inputs);
+      }
+      while (!rb.canStep()) {
+        const b = queue.shift();
+        if (b === undefined) break;
+        rb.receive(b.first, b.inputs);
+      }
+      rb.step(n + D <= REC.ticks ? REC.inputs[1][n + D]! : NO_INPUT);
+    }
+    for (const b of queue) rb.receive(b.first, b.inputs);
+    if (sent < REC.ticks) rb.receive(sent + 1, REC.inputs[0].slice(sent + 1, REC.ticks + 1));
+    expect(rb.confirmed).toBe(REC.ticks);
+    expect(rb.state).toEqual(REC.final);
   });
 
   it('hands out its own inputs once each, from tick D + 1', () => {

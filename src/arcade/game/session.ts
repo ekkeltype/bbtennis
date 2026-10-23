@@ -3,7 +3,16 @@ import { DT, TICK_HZ } from '../core/tuning';
 import type { ArcadeConfig, ArcadeEvent, ArcadeState, Controller, PlayerId, PlayerInput } from '../core/types';
 import type { PlayerInfo } from '../../core/types';
 
-export interface ArcadeOverlay { paused: boolean; countdown: number | null }
+/**
+ * What the HUD shows over the match besides the sim: pause and the 3-2-1 resume countdown (local), and
+ * online the round trip and "CONNECTION UNSTABLE..." (`net`) and the lost keyboard focus (`focusLost`).
+ */
+export interface ArcadeOverlay {
+  paused: boolean;
+  countdown: number | null;
+  net?: { rttMs: number | null; unstable: boolean };
+  focusLost?: boolean;
+}
 
 export interface ArcadeView {
   state: Readonly<ArcadeState>;

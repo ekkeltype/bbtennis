@@ -52,7 +52,7 @@ export class Rollback {
   private readonly local: PlayerId;
   /** This side's inputs by the tick they apply on (ticks 1..inputDelay have none: no input). */
   private readonly localIn = new Map<number, PlayerInput>();
-  /** The opponent's true inputs by tick. */
+  /** The opponent's true inputs by tick (also past a gap, while the link catches up). */
   private readonly remoteIn = new Map<number, PlayerInput>();
   private lastLocal: number = NET.inputDelay;
   private sentLocal: number = NET.inputDelay;
@@ -79,7 +79,7 @@ export class Rollback {
     return this.state.tick;
   }
 
-  /** The last tick with the opponent's true input (ticks 1..inputDelay have no input on either side). */
+  /** The last tick up to which every opponent input is known (ticks 1..inputDelay have no input on either side). */
   get lastRemote(): number {
     return this.lastRemoteTick;
   }
@@ -120,16 +120,19 @@ export class Rollback {
   }
 
   /**
-   * The opponent's true inputs from tick `first` on. Rolls back to the first simulated tick whose
-   * opponent input was wrong (or whose prediction changes) and re-simulates to the current tick.
-   * Returns the events not shown before, or null (and changes nothing) when `first` does not
-   * continue the opponent's inputs.
+   * The opponent's true inputs from tick `first` on. Ticks it already knows are skipped (a tick's input
+   * never changes), and inputs past a gap are kept until the gap fills: the link delivers in order, so
+   * that is only a safety net, but one late message must never stop the match. Rolls back to the first
+   * simulated tick whose opponent input was wrong (or whose prediction changes) and re-simulates to the
+   * current tick. Returns the events not shown before.
    */
-  receive(first: number, inputs: readonly PlayerInput[]): ArcadeEvent[] | null {
-    if (first !== this.lastRemoteTick + 1 || inputs.length === 0) return null;
+  receive(first: number, inputs: readonly PlayerInput[]): ArcadeEvent[] {
     const oldLast = this.lastRemoteTick;
-    inputs.forEach((input, i) => this.remoteIn.set(first + i, input));
-    this.lastRemoteTick = first + inputs.length - 1;
+    inputs.forEach((input, i) => {
+      const t = first + i;
+      if (t > oldLast && t <= oldLast + NET.keepTicks && !this.remoteIn.has(t)) this.remoteIn.set(t, input);
+    });
+    while (this.remoteIn.has(this.lastRemoteTick + 1)) this.lastRemoteTick++;
     let from: number | null = null;
     for (let n = oldLast + 1; n <= this.state.tick; n++) {
       const used = this.used.get(n);
@@ -243,7 +246,7 @@ export class Rollback {
     return fresh;
   }
 
-  /** The opponent's input for tick `n`: the true one, else their last true one (no input before any). */
+  /** The opponent's input for tick `n`: the true one, else their last known one (no input before any). */
   private remoteFor(n: number): PlayerInput {
     const known = this.remoteIn.get(n);
     if (known !== undefined) return known;
