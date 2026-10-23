@@ -23,8 +23,8 @@ export type LobbyMsg<C> =
 
 type HelloMsg = Extract<LobbyMsg<unknown>, { type: 'hello' }>;
 
-/** The `type` of every LobbyMsg. */
-const LOBBY_TYPES: ReadonlySet<string> = new Set(['hello', 'welcome', 'reject', 'lobby', 'ready']);
+/** The `type` of every LobbyMsg (a table, so the compiler checks that it names them all). */
+const LOBBY_TYPES: Record<LobbyMsg<unknown>['type'], true> = { hello: true, welcome: true, reject: true, lobby: true, ready: true };
 
 /**
  * The one place the lobby's messages meet a protocol's messages `M`. `M`'s union includes LobbyMsg<C>
@@ -33,7 +33,7 @@ const LOBBY_TYPES: ReadonlySet<string> = new Set(['hello', 'welcome', 'reject', 
  * message's (null for every other message).
  */
 const asMsg = <M, C>(m: LobbyMsg<C>): M => m as unknown as M;
-const asLobby = <C>(m: { type: string }): LobbyMsg<C> | null => (LOBBY_TYPES.has(m.type) ? (m as LobbyMsg<C>) : null);
+const asLobby = <C>(m: { type: string }): LobbyMsg<C> | null => (Object.hasOwn(LOBBY_TYPES, m.type) ? (m as LobbyMsg<C>) : null);
 
 /**
  * A version mismatch (spec §5.4) between the host's protocol and this side's: with both versions when
