@@ -151,7 +151,7 @@ describe('generic lobby: versions', () => {
     await flush();
     s.advance(30);
     expect(lobby.phase).toBe('failed');
-    expect(lobby.error).toBe('Versions differ — reload with Ctrl+Shift+R');
+    expect(lobby.error).toBe('Versions differ — both players reload with Ctrl+Shift+R');
     expect(lobby.error).not.toContain('(host v');
     expect(host.phase).toBe('waiting');
   });

@@ -136,6 +136,9 @@ describe('Results screen online (online spec §5)', () => {
   it('an opponent who left mid-match is the heading; Rematch is disabled and Menu is the main action', () => {
     show(0, { canRematch: false, forfeitBy: null, opponentGone: 'left', endedBy: 'left' });
     expect(title()).toBe('OPPONENT LEFT');
+    // The one still there is shown as the winner.
+    expect(root.querySelector('.panel.results')?.classList.contains('win')).toBe(true);
+    expect(root.querySelector('table.score tbody tr.won th')?.textContent).toBe(result.players[0].name.toUpperCase());
     expect(root.querySelector('.opponent-gone')).toBeNull();
     expect(buttonNamed('REMATCH').disabled).toBe(true);
     expect(buttonNamed('MENU').classList.contains('primary')).toBe(true);

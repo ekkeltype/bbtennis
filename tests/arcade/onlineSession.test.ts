@@ -3,8 +3,9 @@ import { ArcadeCpu } from '../../src/arcade/core/cpu';
 import { createMatch, step } from '../../src/arcade/core/match';
 import { NO_INPUT, type ArcadeConfig, type ArcadeState, type Controller, type PlayerInfo, type PlayerInput } from '../../src/arcade/core/types';
 import { ArcadeOnlineSession, STALL_MS, type MatchStart } from '../../src/arcade/game/onlineSession';
-import { NET } from '../../src/arcade/game/rollback';
+import { NET, type Rollback } from '../../src/arcade/game/rollback';
 import { ARCADE_CODEC, unpackInput, type ArcadeMsg } from '../../src/arcade/net/protocol';
+import type { Look, Profile } from '../../src/core/types';
 import { VirtualScheduler } from '../../src/game/clock';
 import { loopbackPair, type Transport } from '../../src/net/channel';
 
@@ -64,7 +65,7 @@ interface Duel {
  * reading its own side's (predicted) state. The guest's session starts once the host's `start` has
  * reached it, as the join screen hands it over.
  */
-function duel(o: { latencyMs: number; jitterMs: number; seed?: number; levels?: [number, number] }): Duel {
+function duel(o: { latencyMs: number; jitterMs: number; seed?: number; levels?: [number, number]; players?: [Profile, Profile] }): Duel {
   const s = new VirtualScheduler(1000);
   const [a, b] = loopbackPair(s, { latencyMs: o.latencyMs, jitterMs: o.jitterMs, seed: 5 }, ARCADE_CODEC);
   const hostNet = wire(a);
@@ -72,7 +73,7 @@ function duel(o: { latencyMs: number; jitterMs: number; seed?: number; levels?: 
   const ticker = (ms: number, fn: () => void): (() => void) => s.every(ms, fn);
   const seed = o.seed ?? 2026;
   const [l0, l1] = o.levels ?? [10, 12];
-  const start: MatchStart = { config: CONFIG, seed, players: [HANA, GUS] };
+  const start: MatchStart = { config: CONFIG, seed, players: o.players ?? [HANA, GUS] };
   let rematchSeed = 7000;
   const host = new ArcadeOnlineSession({
     transport: hostNet,
@@ -218,6 +219,49 @@ describe('the end of a match (online spec §3.6)', () => {
     expect(d.host.result).not.toBeNull();
   });
 
+  it('both screens show the same Results after a forfeit, wherever it falls, even 120 ms apart', () => {
+    for (let k = 0; k < 12; k++) {
+      const d = duel({ latencyMs: 120, jitterMs: 40, seed: 300 + k });
+      play(d, () => false, 2000 + k * 731);
+      (k % 2 === 0 ? d.host : d.guest).forfeit();
+      play(d, bothOver(d), 2000);
+      expect(d.host.endReason).toBe('forfeit');
+      expect(d.guest.endReason).toBe('forfeit');
+      expect(JSON.stringify(d.guest.result), `forfeit ${k}`).toBe(JSON.stringify(d.host.result));
+      // Later inputs change nothing on show.
+      const shown = JSON.stringify(d.host.result);
+      play(d, () => false, 500);
+      expect(JSON.stringify(d.host.result)).toBe(shown);
+      d.host.dispose();
+      d.guest.dispose();
+    }
+  });
+
+  it('a forfeit once the match is decided does nothing: its Results come as played out', () => {
+    const d = duel({ latencyMs: 30, jitterMs: 10 });
+    play(d, () => d.host.view?.state.status === 'over', 15 * 60_000);
+    d.host.forfeit();
+    expect(d.host.over).toBe(false);
+    expect(d.hostNet.sent.some((m) => m.type === 'forfeit')).toBe(false);
+    play(d, bothOver(d), 10_000);
+    expect(d.host.endReason).toBe('finished');
+    expect(d.guest.endReason).toBe('finished');
+  });
+
+  it('an opponent who leaves once the match is decided does not undo it: played out, with the departure noted (Review Focus 4)', () => {
+    const d = duel({ latencyMs: 30, jitterMs: 10 });
+    play(d, () => d.host.view?.state.status === 'over' && d.guest.view?.state.status === 'over', 15 * 60_000);
+    play(d, () => false, 500);
+    expect(d.host.over).toBe(false); // the 3 s celebration is still on
+    d.guest.leave();
+    play(d, () => d.host.over, 1000);
+    expect(d.host.endReason).toBe('finished');
+    expect(d.host.opponentGone).toBe('left');
+    expect(d.host.result?.status).toBe('over');
+    expect(d.host.result?.winner).not.toBeNull();
+    expect(d.host.mayRematch).toBe(false);
+  });
+
   it('a player who leaves mid-match ends it for the other as left; leaving twice tells once', () => {
     const d = duel({ latencyMs: 30, jitterMs: 10 });
     play(d, () => false, 2000);
@@ -270,11 +314,60 @@ describe('the end of a match (online spec §3.6)', () => {
     d.host.rematch();
     d.guest.rematch();
     play(d, () => !d.guest.over, 1000);
-    const late: ArcadeMsg = { type: 'in', m: 1, t: 3, i: [36, 36, 36], adv: 0 };
-    // The guest's side hears an old-match message: nothing changes, nothing is shown.
-    (d.guest as unknown as { receive(m: ArcadeMsg): void }).receive(late);
-    play(d, () => false, 500);
-    expect(d.guest.netStats().desyncs).toBe(0);
+    play(d, () => false, 3000);
+    const g = d.guest as unknown as { rb: Rollback; receive(m: ArcadeMsg): void };
+    const last = g.rb.lastRemote;
+    // Old-match inputs that would continue match 2's are not taken…
+    g.receive({ type: 'in', m: 1, t: last + 1, i: [36, 36, 36], adv: 0 });
+    expect(g.rb.lastRemote).toBe(last);
+    // …while the same with match 2's number would be.
+    g.receive({ type: 'in', m: 2, t: last + 1, i: [36, 36, 36], adv: 0 });
+    expect(g.rb.lastRemote).toBe(last + 3);
+  });
+});
+
+describe('profiles and hidden tabs', () => {
+  it('a host whose stored look has another key order and an extra key still hashes the states the guest does', () => {
+    const odd = { name: 'Hana', look: { racket: 1, shorts: 5, shirt: 4, hair: 3, hairStyle: 2, skin: 1, headband: null, extra: 9 } as unknown as Look };
+    const warn = vi.spyOn(console, 'warn');
+    const d = duel({ latencyMs: 40, jitterMs: 10, players: [odd, GUS] });
+    play(d, () => false, 8000);
+    expect(d.host.netStats().desyncs + d.guest.netStats().desyncs).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    expect(Object.keys(d.host.view!.state.players[0].look)).toEqual(['skin', 'hairStyle', 'hair', 'shirt', 'shorts', 'headband', 'racket']);
+  });
+
+  it('back from a hidden spell, the first frame does not replay the backlog: only the last 300 ms of events, and the current call\'s', () => {
+    const d = duel({ latencyMs: 30, jitterMs: 10 });
+    play(d, () => false, 2000);
+    play(d, () => false, 30_000, { host: true, guest: false });
+    const waiting = (d.guest as unknown as { events: unknown[] }).events.length;
+    expect(waiting).toBeLessThan(300);
+    const v = d.guest.frame(16);
+    const call = v.state.point.call?.tick;
+    expect(v.events.every((e) => e.tick > v.state.tick - 18 || e.tick === call)).toBe(true);
+  });
+});
+
+describe('a state the sim cannot run (online spec §4, a modified host)', () => {
+  it('ends the match on that side as a lost link, keeps the page working, and tells the opponent', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const d = duel({ latencyMs: 30, jitterMs: 10 });
+    play(d, () => false, 3000);
+    const g = d.guest as unknown as { rb: Rollback; receive(m: ArcadeMsg): void };
+    const before = JSON.stringify(g.rb.state);
+    // Past the protocol's checks (say a hole in them): a toss by a player who does not exist.
+    const { tick, state } = g.rb.confirmedState();
+    state.phase = { kind: 'toss', at: tick };
+    state.toss = { tick, player: 5 as 0 };
+    g.receive({ type: 'state', m: 1, t: tick, s: state });
+    expect(d.guest.endReason).toBe('disconnect');
+    expect(error).toHaveBeenCalledWith('[bbt] online: the match failed', expect.anything());
+    expect(JSON.stringify(g.rb.state)).toBe(before);
+    expect(() => d.guest.frame(16)).not.toThrow();
+    expect(d.guest.result?.tick).toBeLessThanOrEqual(g.rb.state.tick);
+    play(d, () => d.host.over, 1000);
+    expect(d.host.endReason).toBe('left');
   });
 });
 

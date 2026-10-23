@@ -309,10 +309,14 @@ export class ArcadeApp implements ArcadeContext {
   private playFrame(m: Match, dt: number): void {
     let view = m.session.frame(dt);
     if (m.online && this.blurred) view = { ...view, overlay: { ...view.overlay, focusLost: true } };
-    this.draw(view, dt);
-    // Events come from this frame's ticks: their age is the sim time since their tick.
-    this.director.consume(view, (e) => (view.t - e.tick * DT) * 1000);
-    this.checkEnd(m, view);
+    try {
+      this.draw(view, dt);
+      // Events come from this frame's ticks: their age is the sim time since their tick.
+      this.director.consume(view, (e) => (view.t - e.tick * DT) * 1000);
+    } finally {
+      // Results come whatever the drawing did, so a match that cannot be drawn can still be left.
+      this.checkEnd(m, view);
+    }
   }
 
   /**

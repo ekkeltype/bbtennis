@@ -37,7 +37,7 @@ export function errorText(e: NetError, code?: string): string {
     case 'version':
       return e.versions
         ? `Versions differ (host v${e.versions.host}, you v${e.versions.you}) — reload with Ctrl+Shift+R`
-        : 'Versions differ — reload with Ctrl+Shift+R';
+        : 'Versions differ — both players reload with Ctrl+Shift+R';
     case 'full':
       return 'That game already has two players';
     case 'timeout':

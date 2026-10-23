@@ -34,10 +34,12 @@ const STATS: readonly { label: string; cell(s: ArcadeStats): string }[] = [
 
 const nameOf = (r: Readonly<ArcadeState>, p: PlayerId): string => r.players[p].name.toUpperCase();
 
-/** The winner: the match's, or the one who did not forfeit; null for a match cut short by a departure. */
+/** The winner: the one who did not forfeit, the one still there when the opponent's going cut the match short, else the match's. */
 function winnerOf(p: ResultsParams): PlayerId | null {
   const forfeitBy = p.online?.forfeitBy ?? null;
-  return forfeitBy !== null ? (forfeitBy === 0 ? 1 : 0) : p.result.winner;
+  if (forfeitBy !== null) return forfeitBy === 0 ? 1 : 0;
+  if (p.online?.endedBy) return p.viewer;
+  return p.result.winner;
 }
 
 /** "OPPONENT LEFT" / "OPPONENT DISCONNECTED" when that ended the match, "<NAME> FORFEITS", "YOU WIN!" for the viewer, else "<WINNER> WINS". */

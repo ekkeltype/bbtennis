@@ -43,7 +43,7 @@ export type ArcadeMsg =
   | { type: 'ping'; id: number }
   | { type: 'pong'; id: number }
   | { type: 'rematch'; want: boolean }
-  | { type: 'forfeit' }
+  | { type: 'forfeit'; m: number; t: number; s: ArcadeState }
   | { type: 'leave' };
 
 function buildId(v: unknown): string {
@@ -95,20 +95,120 @@ function parseInputs(v: unknown): number[] | null {
 }
 
 const PHASES = { intro: true, setup: true, toss: true, rally: true, dead: true, over: true } as const;
+const SHOT_KEYS = { topspin: true, slice: true, lob: true } as const;
+const SHOT_TYPES = { topspin: true, slice: true, lob: true, smash: true, serveFlat: true, serveSlice: true, serveKick: true } as const;
+const GRADES = { perfect: true, clean: true, rushed: true } as const;
+const STROKES = { forehand: true, backhand: true, smash: true, serve: true } as const;
+const CALLS = { fault: true, out: true, net: true, ace: true, winner: true, doubleFault: true, timeViolation: true, ballDropped: true } as const;
+const KINDS = { human: true, cpu: true, remote: true } as const;
+/** Most segments and bounces a flight has (the sim makes at most a handful). */
+const MAX_FLIGHT_PARTS = 16;
+/** Most sets a score lists (best of 3 sets; Full is one set). */
+const MAX_SETS = 5;
 
-const isVec2 = (v: unknown): boolean => isRec(v) && isNum(v.x) && isNum(v.y);
+type Check = (v: unknown) => boolean;
 
-/** A player of a state: a profile (sanitized and clamped) and its kind and CPU level as sent. */
+const isPlayerId = (v: unknown): boolean => v === 0 || v === 1;
+const isVec2: Check = (v) => isRec(v) && isNum(v.x) && isNum(v.y);
+const isVec3: Check = (v) => isRec(v) && isNum(v.x) && isNum(v.y) && isNum(v.z);
+const isPair = (v: unknown): boolean => Array.isArray(v) && v.length === 2 && isCount(v[0], 0) && isCount(v[1], 0);
+const nullOr = (check: Check): Check => (v) => v === null || check(v);
+const listOf = (check: Check, max: number): Check => (v) => Array.isArray(v) && v.length <= max && v.every(check);
+const isRngState: Check = (v) => isRec(v) && isUint32(v.a) && isUint32(v.b) && isUint32(v.c) && isUint32(v.d);
+
+/** A player of a state: a profile (sanitized and clamped) with its kind and CPU level; null when malformed. */
 function parsePlayer(v: unknown): PlayerInfo | null {
   const profile = parseProfile(v);
-  return profile && isRec(v) ? ({ ...v, ...profile } as unknown as PlayerInfo) : null;
+  if (!profile || !isRec(v) || !isKey(KINDS, v.kind) || !(v.cpuLevel === null || isCount(v.cpuLevel, 0))) return null;
+  return { ...profile, kind: v.kind, cpuLevel: v.cpuLevel };
 }
 
+const isPhase: Check = (v) => {
+  if (!isRec(v) || !isKey(PHASES, v.kind)) return false;
+  switch (v.kind) {
+    case 'intro':
+      return isCount(v.until, 0);
+    case 'setup':
+    case 'over':
+      return isCount(v.since, 0);
+    case 'toss':
+      return isCount(v.at, 0);
+    case 'dead':
+      return isCount(v.until, 0) && (v.next === 'setup' || v.next === 'over');
+    default:
+      return true;
+  }
+};
+
+const isScore: Check = (v) =>
+  isRec(v) &&
+  isKey(FORMATS, v.format) &&
+  isKey(DEUCE_RULES, v.deuceRule) &&
+  listOf(isPair, MAX_SETS)(v.setGames) &&
+  listOf(nullOr(isPair), MAX_SETS)(v.setTiebreaks) &&
+  isPair(v.games) &&
+  isPair(v.points) &&
+  isBool(v.inTiebreak) &&
+  isPair(v.setsWon) &&
+  isPlayerId(v.firstServerOfMatch) &&
+  isPlayerId(v.gameServer) &&
+  nullOr(isPlayerId)(v.winner);
+
+const isPlayerState: Check = (v) =>
+  isRec(v) &&
+  isVec2(v.pos) &&
+  isVec2(v.vel) &&
+  nullOr((c) => isRec(c) && isKey(SHOT_KEYS, c.shot) && isCount(c.tick, 0) && nullOr(isVec2)(c.step))(v.commit) &&
+  nullOr((k) => isKey(SHOT_KEYS, k))(v.pending) &&
+  isRec(v.held) &&
+  isBool(v.held.topspin) &&
+  isBool(v.held.slice) &&
+  isBool(v.held.lob) &&
+  nullOr((w) => isRec(w) && isCount(w.tick, 0) && isKey(STROKES, w.stroke) && isBool(w.stretch))(v.lastSwing);
+
+const isHit: Check = (v) =>
+  isRec(v) &&
+  isCount(v.tick, 0) &&
+  isPlayerId(v.player) &&
+  isKey(SHOT_TYPES, v.type) &&
+  isKey(GRADES, v.grade) &&
+  isBool(v.stretch) &&
+  isBool(v.volley) &&
+  isNum(v.power) &&
+  isVec3(v.contact) &&
+  isVec2(v.target) &&
+  isNum(v.T);
+
+const isFlight: Check = (v) =>
+  isRec(v) &&
+  isHit(v.hit) &&
+  Array.isArray(v.segments) &&
+  v.segments.length >= 1 &&
+  listOf((g) => isRec(g) && isNum(g.t0) && isVec3(g.p0) && isVec3(g.v0) && isVec3(g.a), MAX_FLIGHT_PARTS)(v.segments) &&
+  listOf((b) => isRec(b) && isNum(b.t) && isVec2(b.at), MAX_FLIGHT_PARTS)(v.bounces) &&
+  nullOr(isNum)(v.netT) &&
+  isBool(v.net) &&
+  isNum(v.tEnd) &&
+  isNum(v.tGone);
+
+const isPoint: Check = (v) =>
+  isRec(v) &&
+  (v.serveNo === 1 || v.serveNo === 2) &&
+  isCount(v.hits, 0) &&
+  isBool(v.serveUnbounced) &&
+  nullOr((c) => isRec(c) && isKey(CALLS, c.call) && isPlayerId(c.player) && isCount(c.tick, 0))(v.call);
+
+const isStats: Check = (v) =>
+  isRec(v) &&
+  ['pointsWon', 'aces', 'doubleFaults', 'winners', 'errors', 'hits', 'perfectHits'].every((k) => isCount(v[k], 0)) &&
+  isNum(v.fastestServeKmh);
+
 /**
- * Structural check of a match state (the host's, for a resync, online spec §3.4): its version, tick,
- * options, both players (names sanitized, looks clamped), phase, the two player states' positions,
- * the flight, score, stats and RNG streams by shape. The rest passes through: it comes from a host on
- * the same build, so a deeper check would only repeat the sim's own types.
+ * Check of a whole match state from the other player (the host's resync, online spec §3.4, or a
+ * forfeit's final state, §3.6), field by field, so that no state it accepts can make the sim or the
+ * renderer throw: every number finite, every index a player, every enum known, every list bounded.
+ * Names are sanitized and looks clamped. Returns the state (players replaced by their clean copies),
+ * or null.
  */
 function parseState(v: unknown): ArcadeState | null {
   if (!isRec(v) || v.v !== 1 || !isCount(v.tick, 0) || !parseConfig(v.config)) return null;
@@ -116,13 +216,29 @@ function parseState(v: unknown): ArcadeState | null {
   const p0 = parsePlayer(v.players[0]);
   const p1 = parsePlayer(v.players[1]);
   if (!p0 || !p1) return null;
-  if (!isRec(v.phase) || !isKey(PHASES, v.phase.kind) || !isRec(v.score) || !isRec(v.point)) return null;
-  if (!Array.isArray(v.p) || v.p.length !== 2 || !v.p.every((p) => isRec(p) && isVec2(p.pos) && isVec2(p.vel) && isRec(p.held))) return null;
-  if (v.flight !== null && !(isRec(v.flight) && isRec(v.flight.hit) && Array.isArray(v.flight.segments) && Array.isArray(v.flight.bounces))) return null;
-  if (!Array.isArray(v.stats) || v.stats.length !== 2 || !v.stats.every(isRec)) return null;
-  if (!isRec(v.rng) || !Array.isArray(v.rng.hits) || v.rng.hits.length !== 2 || !isRec(v.rng.match)) return null;
-  if (v.status !== 'playing' && v.status !== 'over') return null;
-  return { ...(v as unknown as ArcadeState), players: [p0, p1] };
+  const ok =
+    isPhase(v.phase) &&
+    isScore(v.score) &&
+    Array.isArray(v.p) &&
+    v.p.length === 2 &&
+    v.p.every(isPlayerState) &&
+    nullOr(isFlight)(v.flight) &&
+    nullOr((t) => isRec(t) && isCount(t.tick, 0) && isPlayerId(t.player))(v.toss) &&
+    isPoint(v.point) &&
+    nullOr((n) => isCount(n, 0))(v.serveClockFrom) &&
+    Array.isArray(v.stats) &&
+    v.stats.length === 2 &&
+    v.stats.every(isStats) &&
+    isCount(v.longestRally, 0) &&
+    isCount(v.pointNo, 0) &&
+    (v.status === 'playing' || v.status === 'over') &&
+    nullOr(isPlayerId)(v.winner) &&
+    isRec(v.rng) &&
+    Array.isArray(v.rng.hits) &&
+    v.rng.hits.length === 2 &&
+    v.rng.hits.every(isRngState) &&
+    isRngState(v.rng.match);
+  return ok ? { ...(v as unknown as ArcadeState), players: [p0, p1] } : null;
 }
 
 function parseFields(m: Rec): ArcadeMsg | null {
@@ -160,18 +276,18 @@ function parseFields(m: Rec): ArcadeMsg | null {
     }
     case 'sum':
       return isCount(m.m, 1) && isCount(m.t, 0) && isUint32(m.h) ? { type: 'sum', m: m.m, t: m.t, h: m.h } : null;
-    case 'state': {
+    case 'state':
+    case 'forfeit': {
       const s = parseState(m.s);
-      return isCount(m.m, 1) && isCount(m.t, 0) && s ? { type: 'state', m: m.m, t: m.t, s } : null;
+      return isCount(m.m, 1) && isCount(m.t, 0) && s !== null && s.tick === m.t ? { type: m.type, m: m.m, t: m.t, s } : null;
     }
     case 'ping':
     case 'pong':
       return isInt(m.id) ? { type: m.type, id: m.id } : null;
     case 'rematch':
       return isBool(m.want) ? { type: 'rematch', want: m.want } : null;
-    case 'forfeit':
     case 'leave':
-      return { type: m.type };
+      return { type: 'leave' };
     default:
       return null;
   }

@@ -33,8 +33,8 @@ with it, both press READY, and the match starts. Controls must feel like the vs-
 - **Host = player 0, guest = player 1.** Each sees their own player at the bottom (the guest's court is
   rotated 180°, as in the typing game). The coin toss from the seed decides who serves.
 - **Same build only.** The app id in the hello carries the build id (`bbtennis-arcade@<git hash>`); a
-  different build is rejected as "Versions differ — reload with Ctrl+Shift+R", because the two sims
-  must be the same code.
+  different build is rejected as "Versions differ — both players reload with Ctrl+Shift+R" (the stale
+  tab may be the host's), because the two sims must be the same code.
 - **No pausing online.** Esc opens a menu (Resume / Forfeit / Fullscreen) while the match goes on, as
   in the typing game.
 - **Lobby options**: format, deuce rule, court and pace (the vs-CPU options without the belt); the
@@ -79,8 +79,10 @@ with it, both press READY, and the match starts. Controls must feel like the vs-
 - **Confirmed** tick = min(last remote input tick, current tick): everything up to it is final.
   Snapshots at or before it are dropped.
 - **Events** (sounds, effects, banners) are shown when a tick is first simulated. A re-simulation
-  shows only events not shown before for that tick (same tick and same content). An event a
-  correction removes stays heard; the state (score, banners, which read the state) corrects itself.
+  shows only events not shown before for that tick: a hit is the same event at the same tick by the
+  same hitter (a late change of aim moves the ball but does not sound twice), a bounce or net cord the
+  same at the same tick, anything else by its content. An event a correction removes stays heard; the
+  state (score, banners, which read the state) corrects itself.
 - The sim may run at most `MAX_PREDICT` = 15 ticks past the last remote input. Beyond that it
   **stalls** (the picture holds). After 1 s of stall the HUD says "CONNECTION UNSTABLE...".
 
@@ -89,9 +91,11 @@ with it, both press READY, and the match starts. Controls must feel like the vs-
 - Each side sends with its inputs its advantage `adv = currentTick − (lastRemoteInputTick − D)`.
   With latency `L` ticks and this side `X` ticks ahead, `adv_local = X + L` and `adv_remote = −X + L`,
   so `ahead = (adv_local − adv_remote)/2 = X` without knowing `L`.
-- Each side smooths `ahead` (moving average) and, while it is more than 1 tick ahead, runs its clock
-  at 0.9× until it is less than 0.5 ahead. The side behind never speeds up. So the two clocks meet,
-  and neither side's predictions run longer than the other's.
+- Each side averages its last 10 estimates of `ahead` and, beyond half a tick ahead, runs its clock
+  slower in proportion: 6 % slower per tick of lead, never below 0.85×. The side behind never speeds
+  up. So the two clocks meet without overshooting, and neither side's predictions run longer than the
+  other's. *(The first rule, 0.9× until under half a tick, overshot and settled 2 ticks apart at 120 ms;
+  the proportional one settles within a tick at every latency tested.)*
 - The host's clock starts when it sends `start`, the guest's on receiving it. The host is therefore
   about half a round trip ahead at first, and time sync closes that during the 2 s intro.
 
@@ -108,7 +112,9 @@ with it, both press READY, and the match starts. Controls must feel like the vs-
 - The sim advances by wall time (the scheduler's clock), at most 15 ticks per pump; time beyond that
   is dropped (the other side then waits, and time sync evens things out). It is pumped on every
   animation frame and by a Worker ticker every 16 ms, so a hidden tab keeps playing (its player
-  stands still: held keys clear when the page is hidden) and the opponent is not stalled.
+  stands still: held keys clear when the page is hidden) and the opponent is not stalled. Back from a
+  hidden spell, events more than 300 ms old are not shown (except the current call's, for its banner),
+  so the backlog's sparks and cheers are not replayed.
 - Messages are handled as they arrive.
 
 ### 3.6 The match on both sides
@@ -119,15 +125,26 @@ with it, both press READY, and the match starts. Controls must feel like the vs-
 - Inputs, sums and states carry `m`; a message of another match is ignored.
 - A played-out match is over 3 s after its last point, as vs CPU (`overHold`). The Results show the
   winner, score and stats.
-- **Forfeit** (menu): `forfeit` to the other side; both go to Results at once, headed
-  "<NAME> FORFEITS"; the score so far is shown.
+- **Results show one state on both screens.** A played-out match shows its final state. A forfeit
+  (menu) sends `forfeit` with the state after the forfeiting side's confirmed tick; both go to Results
+  at once with that state, headed "<NAME> FORFEITS", showing the score so far (the set it stopped in
+  too). A forfeit once the match is decided does nothing (its Results are coming). *(Added after the
+  final review: Results read each side's own predicted state, and 5 % of forfeits at 120 ms showed
+  different scores.)*
 - **Rematch**: each Results' REMATCH sends `rematch{want: true}` ("WAITING FOR OPPONENT..."); when the
   host has both, it starts match `m + 1` with a new seed. Menu leaves; the other side's Rematch is
   disabled with "OPPONENT LEFT".
 - **Leaving and disconnects** (the typing game's heartbeat, §5.3): a ping every 2 s; 3 s of silence
   shows "CONNECTION UNSTABLE..."; 8 s of silence or a closed connection ends the match ("OPPONENT
   DISCONNECTED"); `leave` ends it ("OPPONENT LEFT"). Results of a match cut short say so in the
-  heading. Page `pagehide` sends `leave`; closing the page during a match asks first.
+  heading, show the player still there as the winner, and show the state after the last tick both
+  had confirmed. A match already decided when the opponent goes stays a played-out match ("YOU WIN!"
+  with the departure as a note). Page `pagehide` sends `leave`; closing the page during a match asks
+  first.
+- **A broken or modified opponent** must not wedge the page: every state from the other side is
+  checked field by field (§4); adopting one is all or nothing, with a dry run of the next tick; every
+  step and receive puts the live state back if the sim throws; and anything the sim cannot run ends
+  the match on that side as a lost link (`[bbt] online: the match failed`), telling the opponent.
 
 ## 4. Protocol (`src/arcade/net/protocol.ts`)
 
@@ -149,9 +166,12 @@ sanitized, look indices clamped):
 | `state` | host → guest | `m, t, s` (ArcadeState, structurally checked) |
 | `ping` / `pong` | both | `id` |
 | `rematch` | both | `want` |
-| `forfeit`, `leave` | both | — |
+| `forfeit` | both | `m, t, s` (the forfeiting side's confirmed state after tick `t`) |
+| `leave` | both | — |
 
-`config` is `{ format, deuceRule, surface, pace }`. Inputs normally continue the sender's sequence
+`config` is `{ format, deuceRule, surface, pace }`. A state (in `state` and `forfeit`) must be for
+the tick its message names, and passes a field-by-field check: every number finite, every player
+index 0 or 1, every enum known, every list bounded. Inputs normally continue the sender's sequence
 (`t` = last tick + 1); ticks the receiver already has are skipped, inputs past a gap wait for it, and
 inputs more than 600 ticks past the receiver's tick are dropped.
 
@@ -190,8 +210,9 @@ specializations that keep their current exports:
   spinners, read-only rows and session factories), the shared lobby pieces (opponent card, Ready,
   ping, clipboard) and the page guards of an online match (from `ui/screens/lobby`, `join`, `online`).
 
-`net/transport`, `net/peer`, `game/onlineLink` and `ui/screens/{lobby,join,online}` keep their
-exports for the typing game. The Arcade boundary test also bans `net/protocol`, `net/transport`,
+`net/transport`, `net/peer`, `game/onlineLink` and `ui/screens/online` keep their exports for the
+typing game; `ui/screens/lobby` is now the typing game's lobby descriptor, and `ui/screens/join` is
+gone (nothing imported its internals). The Arcade boundary test also bans `net/protocol`, `net/transport`,
 `net/peer` and `ui/screens/{lobby,join,online}` from the Arcade.
 
 ## 7. Testing and verification

@@ -2,12 +2,13 @@ import type { Profile } from '../../core/types';
 import type { Scheduler } from '../../game/clock';
 import { workerTicker } from '../../game/loop';
 import type { Transport } from '../../net/channel';
+import { parseProfile } from '../../net/fields';
 import { PeerLink, type Departure } from '../../net/link';
 import { createMatch, finished } from '../core/match';
 import { DT, TICK_HZ } from '../core/tuning';
 import type { ArcadeConfig, ArcadeEvent, ArcadeState, Controller, PlayerId, PlayerInfo } from '../core/types';
 import { MAX_INPUTS_PER_MSG, packInput, unpackInput, type ArcadeMsg } from '../net/protocol';
-import { Rollback } from './rollback';
+import { cloneState, Rollback } from './rollback';
 import type { ArcadeView } from './session';
 import { TimeSync } from './timeSync';
 
@@ -30,6 +31,10 @@ const RESYNC_EVERY_MS = 1000;
 /** The opponent's inputs may run at most this far past this side's tick; further ones are dropped (online spec §4). */
 const MAX_REMOTE_LEAD = 600;
 const TICK_MS = 1000 / TICK_HZ;
+/** Events more than this far behind the sim (300 ms) are not shown when frames come back after a hidden spell (online spec §3.5). */
+const STALE_TICKS = Math.round(0.3 * TICK_HZ);
+/** While no frame takes the events (a hidden tab), at most about this many wait before the stale ones go. */
+const MAX_BACKLOG = 256;
 
 /** The match a host starts: options, seed and both players (host first). */
 export interface MatchStart { config: ArcadeConfig; seed: number; players: [Profile, Profile] }
@@ -61,9 +66,15 @@ export interface NetStats {
   ahead: number;
 }
 
-/** Both players as the sim keeps them: the same on both sides, so their states hash the same. */
+/**
+ * Both players as the sim keeps them: clean copies (a sanitized name and a clamped look in a fixed key
+ * order, as the guest receives them), the same on both sides, so their states hash the same.
+ */
 function playersOf(start: MatchStart): [PlayerInfo, PlayerInfo] {
-  const info = (p: Profile): PlayerInfo => ({ name: p.name, look: { ...p.look }, kind: 'human', cpuLevel: null });
+  const info = (p: Profile): PlayerInfo => {
+    const clean = parseProfile(p) ?? p;
+    return { name: clean.name, look: { ...clean.look }, kind: 'human', cpuLevel: null };
+  };
   return [info(start.players[0]), info(start.players[1])];
 }
 
@@ -93,6 +104,8 @@ export class ArcadeOnlineSession {
   private sentSums: Record<number, number> = {};
   private lastResyncAt = Number.NEGATIVE_INFINITY;
   private why: OnlineEnd | null = null;
+  /** The state an ended match's Results show: the same on both sides (online spec §3.6). */
+  private final: ArcadeState | null = null;
   private loser: PlayerId | null = null;
   private wantRematch = false;
   private theyWantRematch = false;
@@ -138,9 +151,13 @@ export class ArcadeOnlineSession {
     return this.why !== null;
   }
 
-  /** The state of an ended match (also cut short), or null while it is played. */
+  /**
+   * The state of an ended match, or null while it is played: played out, its final state; cut short, the
+   * state after the last tick both sides had confirmed (a forfeit's comes with it), so the two screens
+   * show the same Results.
+   */
   get result(): ArcadeState | null {
-    return this.over && this.rb !== null ? this.rb.state : null;
+    return this.over ? (this.final ?? this.rb?.state ?? null) : null;
   }
 
   get view(): ArcadeView | null {
@@ -180,7 +197,7 @@ export class ArcadeOnlineSession {
     const now = this.o.scheduler.now();
     const rb = this.rb ?? this.placeholder();
     const unstable = this.link.unstable(now) || (this.stalledSince !== null && now - this.stalledSince >= STALL_MS);
-    const events = this.events;
+    const events = this.fresh(this.events, rb);
     this.events = [];
     this.last = {
       state: rb.state,
@@ -205,6 +222,15 @@ export class ArcadeOnlineSession {
     this.lastNow = now;
     const rb = this.rb;
     if (rb === null || this.why !== null) return;
+    try {
+      this.advance(rb, dt, now);
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  /** pump's work: the ticks due, the messages to send, and the end of a played-out match. */
+  private advance(rb: Rollback, dt: number, now: number): void {
     this.acc += Math.max(0, dt) * this.sync.rate();
     let n = 0;
     while (this.acc >= TICK_MS && n < MAX_TICKS_PER_PUMP) {
@@ -219,16 +245,22 @@ export class ArcadeOnlineSession {
       n++;
     }
     if (n === MAX_TICKS_PER_PUMP && this.acc >= TICK_MS) this.acc = 0;
+    if (this.events.length > MAX_BACKLOG) this.events = this.fresh(this.events, rb);
     this.flush(rb, now);
-    if (finished(rb.state) && rb.confirmed === rb.tick) this.why = 'finished';
+    if (finished(rb.state) && rb.confirmed === rb.tick) this.end('finished', cloneState(rb.state));
   }
 
-  /** Gives the match up: the opponent is told, and both go to Results (online spec §3.6). */
+  /**
+   * Gives the match up (online spec §3.6): the opponent gets the state after this side's confirmed tick,
+   * which both Results then show. Nothing happens once the match is decided: its Results are coming.
+   */
   forfeit(): void {
-    if (this.why !== null || this.rb === null) return;
-    this.link.send({ type: 'forfeit' });
-    this.why = 'forfeit';
+    const rb = this.rb;
+    if (this.why !== null || rb === null || rb.state.status === 'over') return;
+    const { tick, state } = rb.confirmedState();
+    this.link.send({ type: 'forfeit', m: this.matchNo, t: tick, s: state });
     this.loser = this.viewer;
+    this.end('forfeit', state);
   }
 
   /** Results' Rematch: asks the opponent; the host starts the next match once both have asked. */
@@ -244,7 +276,7 @@ export class ArcadeOnlineSession {
     if (this.disposed) return;
     this.link.leave();
     this.left = true;
-    this.why ??= 'left';
+    this.end('left', this.agreed());
   }
 
   /** Leaves (if not yet), stops the ticker and closes the transport. */
@@ -286,50 +318,102 @@ export class ArcadeOnlineSession {
     this.stalls++;
   }
 
+  /** A message of the opponent; one the sim cannot run ends the match (fail). */
   private receive(m: ArcadeMsg): void {
     if (this.disposed) return;
+    try {
+      this.apply(m);
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  private apply(m: ArcadeMsg): void {
+    const rb = this.rb;
     switch (m.type) {
       case 'start':
         if (this.o.host === null && m.m > this.matchNo) this.begin(m.m, { config: m.config, seed: m.seed, players: m.players }, false);
-        return;
-      case 'in': {
-        const rb = this.rb;
-        if (rb === null || m.m !== this.matchNo || m.t > rb.tick + MAX_REMOTE_LEAD) return;
-        this.events.push(...rb.receive(m.t, m.i.map(unpackInput)));
-        this.sync.note(TimeSync.advantage(rb.tick, rb.lastRemote), m.adv);
-        return;
-      }
-      case 'sum':
-        if (m.m === this.matchNo) this.rb?.noteRemoteSum(m.t, m.h);
-        return;
-      case 'state':
-        if (this.o.host === null && m.m === this.matchNo && this.rb !== null) this.resync(this.rb, m.t, m.s);
         return;
       case 'rematch':
         this.theyWantRematch = m.want;
         this.maybeRematch();
         return;
       case 'forfeit':
-        if (this.why !== null) return;
-        this.why = 'forfeit';
+        // A match this side has seen decided ends as played out, whatever the other side clicked.
+        if (this.why !== null || rb === null || m.m !== this.matchNo || this.agreed()?.status === 'over') return;
         this.loser = this.viewer === 0 ? 1 : 0;
+        this.end('forfeit', m.s);
+        return;
+      default:
+        break;
+    }
+    // Inputs, hashes and resyncs count only while their match is played.
+    if (rb === null || this.why !== null) return;
+    switch (m.type) {
+      case 'in':
+        if (m.m !== this.matchNo || m.t > rb.tick + MAX_REMOTE_LEAD) return;
+        this.events.push(...rb.receive(m.t, m.i.map(unpackInput)));
+        this.sync.note(TimeSync.advantage(rb.tick, rb.lastRemote), m.adv);
+        return;
+      case 'sum':
+        if (m.m === this.matchNo) rb.noteRemoteSum(m.t, m.h);
+        return;
+      case 'state':
+        // Online spec §3.4: the host's confirmed state. Adopting is all or nothing; one the sim cannot run throws, and the match ends.
+        if (this.o.host === null && m.m === this.matchNo) this.events.push(...rb.adopt(m.t, m.s));
         return;
       default:
         return;
     }
   }
 
-  /** Adopts the host's confirmed state (online spec §3.4); a state the sim cannot run is ignored. */
-  private resync(rb: Rollback, tick: number, state: ArcadeState): void {
-    try {
-      this.events.push(...rb.adopt(tick, state));
-    } catch (err) {
-      console.warn('[bbt] resync failed', err);
-    }
+  /**
+   * The opponent left or dropped: a match already decided (its last point confirmed here) ends as played
+   * out, the departure a note on its Results; any other ends cut short (online spec §3.6).
+   */
+  private gone(why: Departure): void {
+    if (this.why !== null) return;
+    const agreed = this.agreed();
+    this.end(agreed?.status === 'over' ? 'finished' : why, agreed);
   }
 
-  private gone(why: Departure): void {
-    this.why ??= why;
+  /** Ends the match for `why`, its Results showing `final`; a match already ended keeps its end. */
+  private end(why: OnlineEnd, final: ArcadeState | null): void {
+    if (this.why !== null) return;
+    this.why = why;
+    this.final = final;
+  }
+
+  /** A copy of the state after the last tick both sides have confirmed, or null without a match. */
+  private agreed(): ArcadeState | null {
+    return this.rb?.confirmedState().state ?? null;
+  }
+
+  /**
+   * Something the sim cannot run (a broken or modified opponent's message, or a bug): the match ends
+   * here as a lost link, and the opponent is told, so its side ends too instead of waiting.
+   */
+  private fail(err: unknown): void {
+    console.error('[bbt] online: the match failed', err);
+    if (this.why !== null) return;
+    let final: ArcadeState | null = null;
+    try {
+      final = this.agreed();
+    } catch {
+      // The state itself is broken: Results show the live one.
+    }
+    this.end('disconnect', final);
+    this.link.leave();
+  }
+
+  /**
+   * `events` without those more than 300 ms behind the sim, except the current call's (its banner needs
+   * them): after a hidden spell the backlog's sparks and cheers are not replayed (online spec §3.5).
+   */
+  private fresh(events: ArcadeEvent[], rb: Rollback): ArcadeEvent[] {
+    const from = rb.tick - STALE_TICKS;
+    const call = rb.state.point.call?.tick;
+    return events.filter((e) => e.tick > from || e.tick === call);
   }
 
   /** The host starts the next match (a new seed) once both sides asked for it after a played-out or forfeited match. */
@@ -350,6 +434,7 @@ export class ArcadeOnlineSession {
     this.events = [];
     this.stalledSince = null;
     this.why = null;
+    this.final = null;
     this.loser = null;
     this.wantRematch = false;
     this.theyWantRematch = false;

@@ -180,7 +180,7 @@ describe('Arcade online lobby (online spec §5)', () => {
     click(guest.root, 'CONNECT');
     await flush();
     s.advance(50);
-    expect(guest.root.textContent).toContain('Versions differ — reload with Ctrl+Shift+R');
+    expect(guest.root.textContent).toContain('Versions differ — both players reload with Ctrl+Shift+R');
     expect(guest.root.textContent).not.toContain('(host v');
   });
 });

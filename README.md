@@ -166,8 +166,8 @@ The design spec is `docs/superpowers/specs/2026-10-17-arcade-design.md`.
 Game**, you both press **READY**, and the match starts. The host picks the format, deuce rule, court
 and pace. Each of you plays from the bottom of your own screen, and the match never pauses: Esc opens
 a menu with Resume and Forfeit. It uses the same PeerJS connection as the typing game, with its own
-codes (`bbtennis-arcade-<CODE>`), and both players must run the same build (a stale tab is told to
-reload).
+codes (`bbtennis-arcade-<CODE>`), and both players must run the same build (after a deploy, an old
+tab on either side gets "Versions differ — both players reload").
 
 Both browsers run the same deterministic match from the same seed and send each other only their
 keys, 60 times a second. Your own keys act at once (after 2 ticks, 33 ms); the opponent's are

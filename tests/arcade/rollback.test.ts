@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ArcadeCpu } from '../../src/arcade/core/cpu';
 import { createMatch, step } from '../../src/arcade/core/match';
 import { NO_INPUT, type ArcadeEvent, type ArcadeState, type PlayerId, type PlayerInput } from '../../src/arcade/core/types';
-import { NET, Rollback, stateHash } from '../../src/arcade/game/rollback';
+import { cloneState, eventKey, NET, Rollback, stateHash } from '../../src/arcade/game/rollback';
 import { seedRng, intBelow } from '../../src/core/rng';
 import { currentServer } from '../../src/core/scoring';
 import { CONFIG, PLAYERS } from './matchHelpers';
@@ -77,12 +77,12 @@ describe('Rollback: late opponent inputs change nothing but the opponent (Review
     });
   }
 
-  it('every event of the plain run is shown, and none twice', () => {
+  it('every event of the plain run is shown, and no event twice (a hit by its tick and hitter)', () => {
     const r = seedRng(9);
     const { shown } = replay(REC, 0, () => intBelow(r, 13), () => 1 + intBelow(r, 4));
     const seen = new Map<string, number>();
-    for (const e of shown) seen.set(json(e), (seen.get(json(e)) ?? 0) + 1);
-    for (const e of REC.events) expect(seen.get(json(e)), json(e)).toBeGreaterThanOrEqual(1);
+    for (const e of shown) seen.set(eventKey(e), (seen.get(eventKey(e)) ?? 0) + 1);
+    for (const e of REC.events) expect(seen.get(eventKey(e)), json(e)).toBeGreaterThanOrEqual(1);
     expect([...seen.values()].every((n) => n === 1)).toBe(true);
   });
 
@@ -271,6 +271,41 @@ describe('Rollback: adopt', () => {
     expect(rb.state).toBe(live);
   });
 
+  it('is all or nothing: a state the sim cannot run throws and leaves this side exactly as it was', () => {
+    const r = seedRng(23);
+    const rb = new Rollback(createMatch(CONFIG, PLAYERS, SEED), 0);
+    for (let n = 1; n <= 300; n++) {
+      if (n > 6) rb.receive(rb.lastRemote + 1, REC.inputs[1].slice(rb.lastRemote + 1, n - intBelow(r, 5)));
+      rb.step(REC.inputs[0][n + D]!);
+    }
+    const before = JSON.stringify(rb.state);
+    const inner = rb as unknown as { snaps: Map<number, unknown> };
+    const snaps = inner.snaps.size;
+    expect(snaps).toBeGreaterThan(0);
+    // A toss by a player who does not exist: the sim reads s.p[5] and throws.
+    const bad = structuredClone(rb.confirmedState());
+    bad.state.phase = { kind: 'toss', at: bad.tick };
+    bad.state.toss = { tick: bad.tick, player: 5 as 0 };
+    expect(() => rb.adopt(bad.tick, bad.state)).toThrow();
+    expect(JSON.stringify(rb.state)).toBe(before);
+    expect(inner.snaps.size).toBe(snaps);
+    // And it plays on to the plain run's state.
+    for (let n = 301; n <= REC.ticks; n++) {
+      rb.receive(rb.lastRemote + 1, REC.inputs[1].slice(rb.lastRemote + 1, n));
+      rb.step(n + D <= REC.ticks ? REC.inputs[0][n + D]! : NO_INPUT);
+    }
+    rb.receive(rb.lastRemote + 1, REC.inputs[1].slice(rb.lastRemote + 1, REC.ticks + 1));
+    expect(rb.state).toEqual(REC.final);
+  });
+
+  it('ignores the opponent\'s hashes for ticks far from its own', () => {
+    const rb = new Rollback(createMatch(CONFIG, PLAYERS, SEED), 0);
+    for (let k = 1; k <= 100; k++) rb.noteRemoteSum(NET.keepTicks + k * NET.sumEvery, 7);
+    expect((rb as unknown as { remoteSums: Map<number, number> }).remoteSums.size).toBe(0);
+    rb.noteRemoteSum(NET.sumEvery, 7);
+    expect((rb as unknown as { remoteSums: Map<number, number> }).remoteSums.size).toBe(1);
+  });
+
   it('a state for a tick not reached yet is adopted on reaching it', () => {
     const rb = new Rollback(createMatch(CONFIG, PLAYERS, SEED), 1);
     const s = createMatch(CONFIG, PLAYERS, SEED);
@@ -281,6 +316,33 @@ describe('Rollback: adopt', () => {
     rb.step(NO_INPUT);
     rb.step(NO_INPUT);
     expect(rb.state.p[0].pos.x).toBe(1.25);
+  });
+});
+
+describe('eventKey', () => {
+  it('a hit is the same event at the same tick by the same hitter, wherever it goes; other events by their content', () => {
+    const hit = REC.events.find((e) => e.type === 'hit')!;
+    if (hit.type !== 'hit') throw new Error('no hit');
+    const corrected = { ...hit, kmh: hit.kmh + 9, hit: { ...hit.hit, target: { x: hit.hit.target.x + 1, y: hit.hit.target.y } } };
+    expect(eventKey(corrected)).toBe(eventKey(hit));
+    expect(eventKey({ ...hit, hit: { ...hit.hit, player: hit.hit.player === 0 ? 1 : 0 } })).not.toBe(eventKey(hit));
+    expect(eventKey({ tick: 5, type: 'bounce', at: { x: 1, y: 2 }, inCourt: true })).toBe(eventKey({ tick: 5, type: 'bounce', at: { x: 3, y: 2 }, inCourt: false }));
+    expect(eventKey({ tick: 5, type: 'call', call: 'out', player: 0 })).not.toBe(eventKey({ tick: 5, type: 'call', call: 'net', player: 0 }));
+  });
+});
+
+describe('cloneState', () => {
+  it('copies a match state exactly (key order and the sign of zero too) and shares nothing with it', () => {
+    const s = structuredClone(REC.final);
+    s.p[1].vel.x = -0;
+    const c = cloneState(s);
+    expect(c).toEqual(structuredClone(s));
+    expect(Object.is(c.p[1].vel.x, -0)).toBe(true);
+    expect(JSON.stringify(c)).toBe(JSON.stringify(s));
+    c.p[0].pos.x += 1;
+    c.score.games[0] += 1;
+    expect(s.p[0].pos.x).toBe(REC.final.p[0].pos.x);
+    expect(s.score.games[0]).toBe(REC.final.score.games[0]);
   });
 });
 

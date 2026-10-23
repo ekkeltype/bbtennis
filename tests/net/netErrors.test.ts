@@ -42,7 +42,7 @@ describe('errorText', () => {
   it('shows both protocol versions for a version mismatch', () => {
     expect(errorText(new NetError('version', 'rejected', { host: 2, you: 1 })))
       .toBe('Versions differ (host v2, you v1) — reload with Ctrl+Shift+R');
-    expect(errorText(new NetError('version'))).toBe('Versions differ — reload with Ctrl+Shift+R');
+    expect(errorText(new NetError('version'))).toBe('Versions differ — both players reload with Ctrl+Shift+R');
   });
 
   it('NetError is an Error carrying its kind', () => {

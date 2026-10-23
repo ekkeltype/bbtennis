@@ -13,6 +13,19 @@ export const NET = {
   keepTicks: 600,
 } as const;
 
+/**
+ * A copy of a match state. The state is plain data (objects, arrays, numbers, strings, booleans,
+ * null), so a plain recursive copy is exact, keeping key order and the sign of zero, and it is
+ * several times faster than structuredClone: rollback copies the state every predicted tick.
+ */
+export function cloneState<T>(v: T): T {
+  if (typeof v !== 'object' || v === null) return v;
+  if (Array.isArray(v)) return v.map(cloneState) as T;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(v)) out[k] = cloneState((v as Record<string, unknown>)[k]);
+  return out as T;
+}
+
 /** FNV-1a (32 bits) of a state's JSON: the same on every machine for the same state (online spec §3.4). */
 export function stateHash(s: Readonly<ArcadeState>): number {
   const json = JSON.stringify(s);
@@ -22,6 +35,23 @@ export function stateHash(s: Readonly<ArcadeState>): number {
     h = Math.imul(h, 0x01000193);
   }
   return h >>> 0;
+}
+
+/**
+ * What makes two events the same event for showing it once (online spec §3.2): a hit by its tick and
+ * hitter, a bounce or net cord by its tick (a correction that only moves the ball, say a late change of
+ * aim, does not sound or spark twice); any other event by its whole content.
+ */
+export function eventKey(e: ArcadeEvent): string {
+  switch (e.type) {
+    case 'hit':
+      return `${e.tick}:hit:${e.hit.player}`;
+    case 'bounce':
+    case 'netHit':
+      return `${e.tick}:${e.type}`;
+    default:
+      return JSON.stringify(e);
+  }
 }
 
 const sameInput = (a: PlayerInput, b: PlayerInput): boolean =>
@@ -60,7 +90,7 @@ export class Rollback {
   /** Per predicted tick: the state before it and the opponent input it used. */
   private readonly snaps = new Map<number, ArcadeState>();
   private readonly used = new Map<number, PlayerInput>();
-  /** Per predicted tick: the events already shown (by their JSON). */
+  /** Per predicted tick: the events already shown (by eventKey). */
   private readonly shown = new Map<number, Set<string>>();
   /** Hashes of the state after checkpoint ticks (the latest simulation of each), ours and the opponent's. */
   private readonly sums = new Map<number, number>();
@@ -94,19 +124,25 @@ export class Rollback {
     return !finished(this.state) && this.state.tick + 1 - this.lastRemoteTick <= NET.maxPredict;
   }
 
-  /** Simulates the next tick; `local` is this side's input sampled now, for tick + 1 + inputDelay. Returns the new events. */
+  /**
+   * Simulates the next tick; `local` is this side's input sampled now, for tick + 1 + inputDelay. Returns
+   * the new events. If the sim throws (only a broken state from the other side can make it), the live
+   * state is put back as it was and the error is rethrown.
+   */
   step(local: PlayerInput): ArcadeEvent[] {
-    const n = this.state.tick + 1;
-    this.lastLocal = n + NET.inputDelay;
-    this.localIn.set(this.lastLocal, local);
-    const events = this.simulate(n);
-    const pending = this.pendingAdopt;
-    if (pending !== null && pending.tick <= this.state.tick) {
-      this.pendingAdopt = null;
-      events.push(...this.adopt(pending.tick, pending.state));
-    }
-    this.settle();
-    return events;
+    return this.guarded(() => {
+      const n = this.state.tick + 1;
+      this.lastLocal = n + NET.inputDelay;
+      this.localIn.set(this.lastLocal, local);
+      const events = this.simulate(n);
+      const pending = this.pendingAdopt;
+      if (pending !== null && pending.tick <= this.state.tick) {
+        this.pendingAdopt = null;
+        events.push(...this.adopt(pending.tick, pending.state));
+      }
+      this.settle();
+      return events;
+    });
   }
 
   /** This side's inputs not handed out yet, from tick `first` on; null when there are none. */
@@ -127,6 +163,11 @@ export class Rollback {
    * current tick. Returns the events not shown before.
    */
   receive(first: number, inputs: readonly PlayerInput[]): ArcadeEvent[] {
+    return this.guarded(() => this.take(first, inputs));
+  }
+
+  /** receive's work. */
+  private take(first: number, inputs: readonly PlayerInput[]): ArcadeEvent[] {
     const oldLast = this.lastRemoteTick;
     inputs.forEach((input, i) => {
       const t = first + i;
@@ -158,9 +199,9 @@ export class Rollback {
     return out;
   }
 
-  /** The opponent's hash of its state after `tick`; it is compared with ours once both are final. */
+  /** The opponent's hash of its state after `tick`; it is compared with ours once both are final. Ticks far from ours are ignored. */
   noteRemoteSum(tick: number, hash: number): void {
-    if (tick % NET.sumEvery !== 0 || tick < this.confirmed - NET.keepTicks) return;
+    if (tick % NET.sumEvery !== 0 || tick < this.confirmed - NET.keepTicks || tick > this.state.tick + NET.keepTicks) return;
     this.remoteSums.set(tick, hash);
     this.compare();
   }
@@ -176,14 +217,15 @@ export class Rollback {
   confirmedState(): { tick: number; state: ArcadeState } {
     const c = this.confirmed;
     const after = c === this.state.tick ? this.state : this.snaps.get(c + 1);
-    return { tick: c, state: structuredClone(after ?? this.state) };
+    return { tick: c, state: cloneState(after ?? this.state) };
   }
 
   /**
    * Adopts the host's state after its confirmed tick `tick` (online spec §3.4) and re-simulates to the
    * current tick with the inputs this side has; a tick not reached yet is adopted on reaching it.
    * Events of ticks this side had confirmed are not shown again. Returns the new events, or [] when
-   * `tick` is older than the kept inputs (nothing changes then).
+   * `tick` is older than the kept inputs (nothing changes then). All or nothing: if the sim throws on
+   * the adopted state, this side is put back exactly as it was and the error is rethrown.
    */
   adopt(tick: number, state: ArcadeState): ArcadeEvent[] {
     const now = this.state.tick;
@@ -193,17 +235,51 @@ export class Rollback {
     }
     if (tick < this.confirmed - NET.keepTicks) return [];
     const oldConfirmed = this.confirmed;
-    assign(this.state, state);
-    this.snaps.clear();
-    this.used.clear();
-    const events: ArcadeEvent[] = [];
-    for (let n = tick + 1; n <= now && !finished(this.state); n++) {
-      const produced = this.simulate(n);
-      if (n > oldConfirmed) events.push(...produced);
+    const before = {
+      state: cloneState(this.state),
+      snaps: new Map(this.snaps),
+      used: new Map(this.used),
+      shown: new Map([...this.shown].map(([t, keys]) => [t, new Set(keys)] as const)),
+      sums: new Map(this.sums),
+    };
+    try {
+      assign(this.state, cloneState(state));
+      this.snaps.clear();
+      this.used.clear();
+      const events: ArcadeEvent[] = [];
+      for (let n = tick + 1; n <= now && !finished(this.state); n++) {
+        const produced = this.simulate(n);
+        if (n > oldConfirmed) events.push(...produced);
+      }
+      // A dry run of the next tick, so a state that would throw there is refused now, not adopted.
+      if (!finished(this.state)) step(cloneState(this.state), [NO_INPUT, NO_INPUT]);
+      for (const t of this.sums.keys()) if (t <= tick) this.sums.delete(t);
+      this.settle();
+      return events;
+    } catch (err) {
+      assign(this.state, before.state);
+      for (const [mine, saved] of [
+        [this.snaps, before.snaps],
+        [this.used, before.used],
+        [this.shown, before.shown],
+        [this.sums, before.sums],
+      ] as [Map<number, unknown>, Map<number, unknown>][]) {
+        mine.clear();
+        for (const [k, v] of saved) mine.set(k, v);
+      }
+      throw err;
     }
-    for (const t of this.sums.keys()) if (t <= tick) this.sums.delete(t);
-    this.settle();
-    return events;
+  }
+
+  /** Runs `work` on the live state; if it throws, the live state is put back as it was, and the error is rethrown. */
+  private guarded<T>(work: () => T): T {
+    const before = cloneState(this.state);
+    try {
+      return work();
+    } catch (err) {
+      assign(this.state, before);
+      throw err;
+    }
   }
 
   /** Re-simulates from `from` (a predicted tick) to the current tick. */
@@ -230,17 +306,17 @@ export class Rollback {
     const remote = this.remoteFor(n);
     const predicted = n > this.lastRemoteTick;
     if (predicted) {
-      this.snaps.set(n, structuredClone(this.state));
+      this.snaps.set(n, cloneState(this.state));
       this.used.set(n, remote);
     }
     const local = this.localIn.get(n) ?? NO_INPUT;
     const events = step(this.state, this.local === 0 ? [local, remote] : [remote, local]);
     if (n % NET.sumEvery === 0) this.sums.set(n, stateHash(this.state));
     const seen = this.shown.get(n);
-    const fresh = seen === undefined ? events : events.filter((e) => !seen.has(JSON.stringify(e)));
+    const fresh = seen === undefined ? events : events.filter((e) => !seen.has(eventKey(e)));
     if (predicted) {
       const set = seen ?? new Set<string>();
-      for (const e of fresh) set.add(JSON.stringify(e));
+      for (const e of fresh) set.add(eventKey(e));
       this.shown.set(n, set);
     }
     return fresh;

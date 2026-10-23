@@ -64,7 +64,7 @@ describe('parseArcadeMsg', () => {
       { type: 'ping', id: 4 },
       { type: 'pong', id: 4 },
       { type: 'rematch', want: true },
-      { type: 'forfeit' },
+      { type: 'forfeit', m: 1, t: s.tick, s },
       { type: 'leave' },
     ];
     // Compared as JSON: the wire keeps every value but the sign of a zero (a state's -0 arrives as 0).
@@ -97,24 +97,52 @@ describe('parseArcadeMsg', () => {
       { type: 'sum', m: 1, t: 60, h: -1 },
       { type: 'sum', m: 1, t: 60, h: 2 ** 32 },
       { type: 'state', m: 1, t: 1, s: { v: 2 } },
+      { type: 'forfeit' },
       { type: 'ping', id: 'a' },
       { type: 'rematch', want: 'yes' },
     ];
     for (const raw of bad) expect(parseArcadeMsg(raw)).toBeNull();
   });
 
-  it('a state with a broken part is dropped', () => {
+  it('a state with a broken part is dropped, whatever part (a modified host must not wedge the guest)', () => {
     const s = someState();
-    const broken = [
-      { ...s, tick: -1 },
-      { ...s, players: [s.players[0]] },
-      { ...s, phase: { kind: 'warmup' } },
-      { ...s, p: [s.p[0], { ...s.p[1], pos: { x: 'a', y: 0 } }] },
-      { ...s, flight: { hit: null } },
-      { ...s, rng: { hits: [], match: s.rng.match } },
-      { ...s, status: 'paused' },
+    const flight = s.flight ?? { hit: { tick: 1, player: 0, type: 'topspin', grade: 'clean', stretch: false, volley: false, power: 1, contact: { x: 0, y: 0, z: 1 }, target: { x: 0, y: 1 }, T: 1 }, segments: [{ t0: 0, p0: { x: 0, y: 0, z: 1 }, v0: { x: 0, y: 1, z: 1 }, a: { x: 0, y: 0, z: -9 } }], bounces: [], netT: null, net: false, tEnd: 2, tGone: 3 };
+    const good = { ...s, flight };
+    expect(parseArcadeMsg({ type: 'state', m: 1, t: good.tick, s: good })).not.toBeNull();
+    const broken: unknown[] = [
+      { ...good, tick: -1 },
+      { ...good, players: [good.players[0]] },
+      { ...good, players: [{ ...good.players[0], kind: 'robot' }, good.players[1]] },
+      { ...good, phase: { kind: 'warmup' } },
+      { ...good, phase: { kind: 'dead', until: 5, next: 'later' } },
+      { ...good, p: [good.p[0], { ...good.p[1], pos: { x: 'a', y: 0 } }] },
+      { ...good, p: [good.p[0], { ...good.p[1], commit: { shot: 'drive', tick: 3, step: null } }] },
+      { ...good, p: [{ ...good.p[0], lastSwing: { tick: 1, stroke: 'kick', stretch: false } }, good.p[1]] },
+      { ...good, flight: { ...flight, hit: null } },
+      { ...good, flight: { ...flight, hit: { ...flight.hit, player: 5 } } },
+      { ...good, flight: { ...flight, segments: [] } },
+      { ...good, flight: { ...flight, segments: [{ t0: 0, p0: { x: 0, y: 0 }, v0: { x: 0, y: 0, z: 0 }, a: { x: 0, y: 0, z: 0 } }] } },
+      { ...good, flight: { ...flight, bounces: new Array(17).fill({ t: 1, at: { x: 0, y: 0 } }) } },
+      { ...good, toss: { tick: 3, player: 5 } },
+      { ...good, point: { ...good.point, serveNo: 3 } },
+      { ...good, point: { ...good.point, call: { call: 'let', player: 0, tick: 1 } } },
+      { ...good, score: { ...good.score, gameServer: 7 } },
+      { ...good, score: { ...good.score, games: [1] } },
+      { ...good, score: { ...good.score, setGames: [[6, 1.5]] } },
+      { ...good, stats: [good.stats[0], { ...good.stats[1], hits: -1 }] },
+      { ...good, serveClockFrom: 'soon' },
+      { ...good, winner: 2 },
+      { ...good, rng: { hits: [], match: good.rng.match } },
+      { ...good, rng: { hits: [good.rng.hits[0], { a: 1, b: 2, c: 3 }], match: good.rng.match } },
+      { ...good, status: 'paused' },
     ];
-    for (const b of broken) expect(parseArcadeMsg({ type: 'state', m: 1, t: 1, s: b })).toBeNull();
+    for (const b of broken) expect(parseArcadeMsg({ type: 'state', m: 1, t: (b as { tick: number }).tick, s: b }), JSON.stringify(b).slice(0, 80)).toBeNull();
+  });
+
+  it('a state or forfeit whose state is for another tick than it says is dropped', () => {
+    const s = someState();
+    expect(parseArcadeMsg({ type: 'state', m: 1, t: s.tick + 1, s })).toBeNull();
+    expect(parseArcadeMsg({ type: 'forfeit', m: 1, t: s.tick - 1, s })).toBeNull();
   });
 
   it('sanitizes names and clamps looks, in hello, start and a state', () => {
@@ -123,7 +151,7 @@ describe('parseArcadeMsg', () => {
     const start = parseArcadeMsg({ type: 'start', m: 1, config: CONFIG, seed: 1, players: [{ name: '', look: LOOK }, GUS] });
     expect(start?.type === 'start' && start.players[0].name).toBe('PLAYER');
     const s = someState();
-    const state = parseArcadeMsg({ type: 'state', m: 1, t: 1, s: { ...s, players: [{ ...s.players[0], name: 'a\u0000b' }, s.players[1]] } });
+    const state = parseArcadeMsg({ type: 'state', m: 1, t: s.tick, s: { ...s, players: [{ ...s.players[0], name: 'a\u0000b' }, s.players[1]] } });
     expect(state?.type === 'state' && state.s.players[0].name).toBe('a?b');
   });
 
