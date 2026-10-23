@@ -263,6 +263,28 @@ describe('Rollback: adopt', () => {
     expect(shown).toEqual([]);
   });
 
+  it('a state adopted past the opponent\'s last input makes its tick final: the confirmed state is that state (N2)', () => {
+    const rb = new Rollback(createMatch(CONFIG, PLAYERS, SEED), 1);
+    rb.receive(D + 1, REC.inputs[0].slice(D + 1, 51));
+    for (let n = 1; n <= 64; n++) rb.step(REC.inputs[1][n + D]!);
+    expect(rb.lastRemote).toBe(50);
+    const s = createMatch(CONFIG, PLAYERS, SEED);
+    for (let t = 1; t <= 60; t++) step(s, [REC.inputs[0][t]!, REC.inputs[1][t]!]);
+    rb.adopt(60, s);
+    const c = rb.confirmedState();
+    expect(c.tick).toBe(60);
+    expect(c.state.tick).toBe(60);
+    expect(c.state).toEqual(s);
+    // The host's inputs to tick 60 arriving later change nothing before it, and play goes on to the plain run.
+    rb.receive(51, REC.inputs[0].slice(51, 80));
+    for (let n = 65; n <= REC.ticks; n++) {
+      rb.receive(rb.lastRemote + 1, REC.inputs[0].slice(rb.lastRemote + 1, n));
+      rb.step(n + D <= REC.ticks ? REC.inputs[1][n + D]! : NO_INPUT);
+    }
+    rb.receive(rb.lastRemote + 1, REC.inputs[0].slice(rb.lastRemote + 1, REC.ticks + 1));
+    expect(rb.state).toEqual(REC.final);
+  });
+
   it('keeps the live state object (renderers key on it)', () => {
     const r = seedRng(22);
     const { rb } = replay(REC, 1, () => intBelow(r, 10), () => 2);

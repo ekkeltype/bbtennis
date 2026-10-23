@@ -99,6 +99,8 @@ export class Rollback {
   private mismatches: number[] = [];
   /** A resync state for a tick this side has not reached yet. */
   private pendingAdopt: { tick: number; state: ArcadeState } | null = null;
+  /** The latest tick adopted from the host: final, though the opponent's inputs up to it may still be on their way. */
+  private adopted = 0;
 
   constructor(state: ArcadeState, local: PlayerId) {
     this.state = state;
@@ -114,9 +116,9 @@ export class Rollback {
     return this.lastRemoteTick;
   }
 
-  /** Every tick up to this one was simulated with both sides' true inputs: it is final. */
+  /** Every tick up to this one is final: simulated with both sides' true inputs, or adopted from the host. */
   get confirmed(): number {
-    return Math.min(this.lastRemoteTick, this.state.tick);
+    return Math.max(this.adopted, Math.min(this.lastRemoteTick, this.state.tick));
   }
 
   /** True while the next tick may be simulated: the match still steps and fewer than maxPredict ticks would be predicted. */
@@ -254,6 +256,7 @@ export class Rollback {
       // A dry run of the next tick, so a state that would throw there is refused now, not adopted.
       if (!finished(this.state)) step(cloneState(this.state), [NO_INPUT, NO_INPUT]);
       for (const t of this.sums.keys()) if (t <= tick) this.sums.delete(t);
+      this.adopted = Math.max(this.adopted, tick);
       this.settle();
       return events;
     } catch (err) {

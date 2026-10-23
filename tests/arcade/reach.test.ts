@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFlight, flightPos } from '../../src/arcade/core/flight';
+import { buildFlight, flightPos, MAX_FLIGHT_S, scanEnd } from '../../src/arcade/core/flight';
 import { contactAt, inZone, stepSpot } from '../../src/arcade/core/reach';
 import type { Contact } from '../../src/arcade/core/reach';
 import { ARCADE, DT } from '../../src/arcade/core/tuning';
@@ -207,5 +207,21 @@ describe('stepSpot', () => {
     const near = nearest(wide, pos);
     expect(near.x + ARCADE.plant.sideOffset).toBeGreaterThan(ARCADE.move.maxAbsX); // unclamped, the spot is out of bounds
     expect(stepSpot(1, pos, wide, 0, false)!.x).toBe(ARCADE.move.maxAbsX);
+  });
+});
+
+describe('scans over a flight stop at MAX_FLIGHT_S (online spec §3.6)', () => {
+  it('a flight that says it lasts a billion seconds is scanned for 10 s at most, with the same result', () => {
+    const f = buildFlight({
+      tick: 0, player: 1, type: 'topspin', grade: 'clean', stretch: false, volley: false, power: 1,
+      contact: { x: 0, y: 10, z: 1 }, target: { x: 0, y: -8 }, T: 1.2,
+    });
+    const long = { ...f, tEnd: 1e9 };
+    const t0 = performance.now();
+    const spot = stepSpot(0, { x: 1.5, y: -10 }, long, 0, false);
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(spot).toEqual(stepSpot(0, { x: 1.5, y: -10 }, f, 0, false));
+    expect(scanEnd(long)).toBe(MAX_FLIGHT_S);
+    expect(scanEnd(f)).toBe(f.tEnd);
   });
 });

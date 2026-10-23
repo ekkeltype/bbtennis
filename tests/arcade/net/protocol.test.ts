@@ -11,10 +11,10 @@ const HANA = { name: 'Hana', look: LOOK };
 const GUS = { name: 'Gus', look: { ...LOOK, headband: 3 } };
 const CONFIG: ArcadeConfig = { format: 'tiebreak', deuceRule: 'advantage', surface: 'clay', pace: 'fast' };
 
-/** A short match state, a few seconds in. */
+/** A match state a few seconds in, with a ball in the air. */
 function someState() {
   const s = createMatch(CONFIG, [{ ...HANA, kind: 'human', cpuLevel: null }, { ...GUS, kind: 'human', cpuLevel: null }], 42);
-  for (let i = 0; i < 200; i++) step(s, [{ mx: 1, my: 0, topspin: i % 50 === 0, slice: false, lob: false }, { mx: 0, my: 1, topspin: false, slice: false, lob: false }]);
+  for (let i = 0; i < 200 || s.flight === null; i++) step(s, [{ mx: 1, my: 0, topspin: i % 50 === 0, slice: false, lob: false }, { mx: 0, my: 1, topspin: i % 50 === 0, slice: false, lob: false }]);
   return s;
 }
 
@@ -137,6 +137,42 @@ describe('parseArcadeMsg', () => {
       { ...good, status: 'paused' },
     ];
     for (const b of broken) expect(parseArcadeMsg({ type: 'state', m: 1, t: (b as { tick: number }).tick, s: b }), JSON.stringify(b).slice(0, 80)).toBeNull();
+  });
+
+  it('a state whose numbers run out of bounds is dropped: nothing the sim scans can run long (I1)', () => {
+    const s = someState();
+    const flight = s.flight!;
+    expect(flight).not.toBeNull();
+    const out: unknown[] = [
+      { ...s, flight: { ...flight, tEnd: 1e9 } },
+      { ...s, flight: { ...flight, tGone: 21 } },
+      { ...s, flight: { ...flight, netT: -1 } },
+      { ...s, flight: { ...flight, hit: { ...flight.hit, T: 1e6 } } },
+      { ...s, flight: { ...flight, hit: { ...flight.hit, tick: s.tick + 1 } } },
+      { ...s, flight: { ...flight, hit: { ...flight.hit, power: 1e3 } } },
+      { ...s, flight: { ...flight, segments: [{ ...flight.segments[0]!, t0: 1e7 }] } },
+      { ...s, flight: { ...flight, segments: [{ ...flight.segments[0]!, v0: { x: 1e5, y: 0, z: 0 } }] } },
+      { ...s, flight: { ...flight, bounces: [{ t: 99, at: { x: 0, y: 0 } }] } },
+      { ...s, p: [{ ...s.p[0], pos: { x: 1e6, y: 0 } }, s.p[1]] },
+      { ...s, p: [s.p[0], { ...s.p[1], vel: { x: 0, y: -1e4 } }] },
+      { ...s, p: [{ ...s.p[0], commit: { shot: 'topspin', tick: s.tick + 5, step: null } }, s.p[1]] },
+      { ...s, phase: { kind: 'dead', until: s.tick + 1e6, next: 'setup' } },
+      { ...s, phase: { kind: 'setup', since: s.tick + 1 } },
+      { ...s, serveClockFrom: s.tick + 1 },
+      { ...s, score: { ...s.score, points: [1e7, 0] } },
+      { ...s, stats: [{ ...s.stats[0], fastestServeKmh: 1e9 }, s.stats[1]] },
+    ];
+    for (const b of out) expect(parseArcadeMsg({ type: 'state', m: 1, t: s.tick, s: b }), JSON.stringify(b).slice(0, 60)).toBeNull();
+  });
+
+  it('old ticks are fine: a last swing from minutes ago, a call from a long point (no lower bound)', () => {
+    const s = someState();
+    s.tick += 20_000;
+    s.p[1].lastSwing = { tick: 3, stroke: 'forehand', stretch: false };
+    s.point.call = { call: 'ace', player: 1, tick: 5 };
+    if (s.flight) s.flight = { ...s.flight, hit: { ...s.flight.hit, tick: s.tick - 30 } };
+    if (s.phase.kind === 'rally') s.serveClockFrom = null;
+    expect(parseArcadeMsg({ type: 'state', m: 1, t: s.tick, s })).not.toBeNull();
   });
 
   it('a state or forfeit whose state is for another tick than it says is dropped', () => {

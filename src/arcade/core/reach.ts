@@ -1,5 +1,5 @@
 import { endSign } from '../../core/court';
-import { flightPos, flightVel } from './flight';
+import { flightPos, flightVel, scanEnd } from './flight';
 import { clampToBounds } from './movement';
 import { ARCADE, DT } from './tuning';
 import type { Flight, PlayerId, Vec2, Vec3 } from './types';
@@ -45,7 +45,7 @@ export function stepSpot(player: PlayerId, pos: Vec2, f: Flight, tick: number, s
   if (f.net || first === undefined || f.hit.player === player) return null;
   let near: Vec3 | null = null;
   let nearD = Infinity;
-  for (let n = Math.max(tick, f.hit.tick); (n - f.hit.tick) * DT < f.tEnd; n++) {
+  for (let n = Math.max(tick, f.hit.tick); (n - f.hit.tick) * DT < scanEnd(f); n++) {
     const t = (n - f.hit.tick) * DT;
     if (serveUnbounced && t < first.t) continue;
     const b = flightPos(f, t);

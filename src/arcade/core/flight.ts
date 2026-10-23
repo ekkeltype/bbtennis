@@ -60,6 +60,18 @@ function clampT(f: Flight, t: number): number {
   return Math.min(Math.max(t, 0), f.tGone);
 }
 
+/**
+ * No real flight lasts this long (s): the longest end within about 5 s. Scans over a flight's ticks
+ * stop here whatever state they are given, so a state from elsewhere cannot make them run on (online
+ * spec §3.6).
+ */
+export const MAX_FLIGHT_S = 10;
+
+/** Seconds a scan over `f`'s ticks covers: until the ball is dead (tEnd), and at most MAX_FLIGHT_S. */
+export function scanEnd(f: Flight): number {
+  return Math.min(f.tEnd, MAX_FLIGHT_S);
+}
+
 /** Ball position `t` s after the hit; t is clamped to [0, tGone]. */
 export function flightPos(f: Flight, t: number): Vec3 {
   const c = clampT(f, t);

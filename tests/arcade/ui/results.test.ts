@@ -113,7 +113,7 @@ describe('Results screen', () => {
 });
 
 describe('Results screen online (online spec §5)', () => {
-  const ONLINE: OnlineResults = { canRematch: true, forfeitBy: null, opponentGone: null, endedBy: null };
+  const ONLINE: OnlineResults = { canRematch: true, forfeitBy: null, opponentGone: null, endedBy: null, lost: false };
 
   it('a played-out match reads as vs CPU; Rematch asks the opponent and waits', () => {
     const ctx = show(result.winner!, ONLINE);
@@ -134,7 +134,7 @@ describe('Results screen online (online spec §5)', () => {
   });
 
   it('an opponent who left mid-match is the heading; Rematch is disabled and Menu is the main action', () => {
-    show(0, { canRematch: false, forfeitBy: null, opponentGone: 'left', endedBy: 'left' });
+    show(0, { canRematch: false, forfeitBy: null, opponentGone: 'left', endedBy: 'left', lost: false });
     expect(title()).toBe('OPPONENT LEFT');
     // The one still there is shown as the winner.
     expect(root.querySelector('.panel.results')?.classList.contains('win')).toBe(true);
@@ -162,8 +162,15 @@ describe('Results screen online (online spec §5)', () => {
     }
   });
 
+  it('a match this side lost the connection to says so, with Rematch off', () => {
+    show(0, { canRematch: false, forfeitBy: null, opponentGone: null, endedBy: null, lost: true });
+    expect(title()).toBe('CONNECTION LOST');
+    expect(buttonNamed('REMATCH').disabled).toBe(true);
+    expect(buttonNamed('MENU').classList.contains('primary')).toBe(true);
+  });
+
   it('an opponent who dropped after the match gets a note under the stats', () => {
-    show(result.winner!, { canRematch: false, forfeitBy: null, opponentGone: 'disconnect', endedBy: null });
+    show(result.winner!, { canRematch: false, forfeitBy: null, opponentGone: 'disconnect', endedBy: null, lost: false });
     expect(title()).toBe('YOU WIN!');
     expect(root.querySelector('.opponent-gone')?.textContent).toBe('OPPONENT DISCONNECTED');
     expect(buttonNamed('REMATCH').disabled).toBe(true);

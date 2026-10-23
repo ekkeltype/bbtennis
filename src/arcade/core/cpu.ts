@@ -4,7 +4,7 @@ import { forkSeed, normalIH, seedRng, uniform } from '../../core/rng';
 import { currentServer, serveSide } from '../../core/scoring';
 import { other } from '../../core/types';
 import type { PaceId, RngState } from '../../core/types';
-import { flightPos, flightVel } from './flight';
+import { flightPos, flightVel, scanEnd } from './flight';
 import { clampToBounds } from './movement';
 import { tossZ } from './shot';
 import { ARCADE, ARCADE_CPU_MILESTONES, DT, TICK_HZ } from './tuning';
@@ -321,7 +321,7 @@ export class ArcadeCpu implements Controller {
   private scan(f: Flight, pos: Vec2, from: number, o: ScanOpts, bounceT: number, p: Pass): Scored | null {
     const s = endSign(this.player);
     let best: Scored | null = null;
-    for (let n = from; (n - f.hit.tick) * DT < f.tEnd; n++) {
+    for (let n = from; (n - f.hit.tick) * DT < scanEnd(f); n++) {
       const t = (n - f.hit.tick) * DT;
       if (t < bounceT && (!o.volley || o.serveUnbounced)) continue;
       const b = flightPos(f, t);

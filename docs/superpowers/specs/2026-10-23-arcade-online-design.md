@@ -142,9 +142,16 @@ with it, both press READY, and the match starts. Controls must feel like the vs-
   with the departure as a note). Page `pagehide` sends `leave`; closing the page during a match asks
   first.
 - **A broken or modified opponent** must not wedge the page: every state from the other side is
-  checked field by field (§4); adopting one is all or nothing, with a dry run of the next tick; every
-  step and receive puts the live state back if the sim throws; and anything the sim cannot run ends
-  the match on that side as a lost link (`[bbt] online: the match failed`), telling the opponent.
+  checked field by field, every number within bounds (§4); scans over a flight's ticks stop at 10 s
+  whatever a state says (`MAX_FLIGHT_S`; real flights end within about 5 s); adopting a state is all
+  or nothing, with a dry run of the next tick; every step and receive puts the live state back if the
+  sim throws; and anything the sim cannot run ends the match on that side (`[bbt] online: the match
+  failed`), whose Results say "CONNECTION LOST", telling the opponent (whose Results say "OPPONENT
+  LEFT").
+- **An opponent that stops playing** while its link stays up (no inputs for 20 s, though pings still
+  come) is let go the same way: "CONNECTION LOST" on this side, "OPPONENT LEFT" on the other. *(A
+  safety net added after the re-review, which found a forfeit landing just after the match point could
+  otherwise leave the other side waiting forever; that case itself now ends as played out.)*
 
 ## 4. Protocol (`src/arcade/net/protocol.ts`)
 
@@ -170,8 +177,10 @@ sanitized, look indices clamped):
 | `leave` | both | — |
 
 `config` is `{ format, deuceRule, surface, pace }`. A state (in `state` and `forfeit`) must be for
-the tick its message names, and passes a field-by-field check: every number finite, every player
-index 0 or 1, every enum known, every list bounded. Inputs normally continue the sender's sequence
+the tick its message names, and passes a field-by-field check: every number finite and within bounds
+(times of a flight 0–20 s, distances ±100 m, speeds ±500 m/s, past ticks no later than the state's
+own, deadlines at most 3600 ticks ahead), every player index 0 or 1, every enum known, every list
+bounded. Inputs normally continue the sender's sequence
 (`t` = last tick + 1); ticks the receiver already has are skipped, inputs past a gap wait for it, and
 inputs more than 600 ticks past the receiver's tick are dropped.
 
@@ -191,7 +200,7 @@ inputs more than 600 ticks past the receiver's tick are dropped.
 - **Menu** (Esc, Tab, the pause icon): MENU with RESUME / FORFEIT / FULLSCREEN and "THE MATCH GOES ON
   WHILE THIS MENU IS OPEN". Window blur, a hidden tab or leaving fullscreen do not open it online.
 - **Results**: as vs CPU, plus the online cases above (forfeit heading, "OPPONENT LEFT" /
-  "OPPONENT DISCONNECTED" heading or note, Rematch waiting/disabled).
+  "OPPONENT DISCONNECTED" heading or note, "CONNECTION LOST", Rematch waiting/disabled).
 
 ## 6. Shared code (the typing game behaves the same; its tests stay green)
 

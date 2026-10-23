@@ -82,7 +82,13 @@ function configOf(s: Readonly<{ level: number } & ArcadeConfig>): ArcadeConfig {
 /** What online Results say (online spec §3.6): Rematch while possible, who forfeited, how the opponent went and whether that ended the match. */
 function onlineResults(s: ArcadeOnlineSession): OnlineResults {
   const gone = s.opponentGone;
-  return { canRematch: s.mayRematch, forfeitBy: s.forfeitBy, opponentGone: gone, endedBy: gone !== null && s.endReason === gone ? gone : null };
+  return {
+    canRematch: s.mayRematch,
+    forfeitBy: s.forfeitBy,
+    opponentGone: gone,
+    endedBy: gone !== null && s.endReason === gone ? gone : null,
+    lost: s.endReason === 'disconnect' && gone === null,
+  };
 }
 
 /**

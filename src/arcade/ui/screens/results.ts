@@ -7,10 +7,12 @@ import type { Departure } from '../../game/onlineSession';
 import type { ArcadeContext } from '../context';
 
 /**
- * Online Results (online spec §3.6, §5): whether Rematch can still be asked for, who forfeited, and how
- * the opponent went away (`opponentGone`) and whether that cut the match short (`endedBy`).
+ * Online Results (online spec §3.6, §5): whether Rematch can still be asked for, who forfeited, how
+ * the opponent went away (`opponentGone`) and whether that cut the match short (`endedBy`), and
+ * whether this side lost the connection itself (`lost`: the sim failed, or the opponent stopped
+ * playing while the link stayed up).
  */
-export interface OnlineResults { canRematch: boolean; forfeitBy: PlayerId | null; opponentGone: Departure | null; endedBy: Departure | null }
+export interface OnlineResults { canRematch: boolean; forfeitBy: PlayerId | null; opponentGone: Departure | null; endedBy: Departure | null; lost: boolean }
 
 /** Params of the Results screen: the finished match, whose results these are, and online how it ended. */
 export interface ResultsParams { result: Readonly<ArcadeState>; viewer: PlayerId; online?: OnlineResults }
@@ -42,10 +44,11 @@ function winnerOf(p: ResultsParams): PlayerId | null {
   return p.result.winner;
 }
 
-/** "OPPONENT LEFT" / "OPPONENT DISCONNECTED" when that ended the match, "<NAME> FORFEITS", "YOU WIN!" for the viewer, else "<WINNER> WINS". */
+/** "OPPONENT LEFT" / "OPPONENT DISCONNECTED" when that ended the match, "CONNECTION LOST", "<NAME> FORFEITS", "YOU WIN!" for the viewer, else "<WINNER> WINS". */
 function headline(p: ResultsParams): string {
   const { result: r, viewer, online } = p;
   if (online?.endedBy) return GONE[online.endedBy];
+  if (online?.lost) return 'CONNECTION LOST';
   if (online?.forfeitBy != null) return `${nameOf(r, online.forfeitBy)} FORFEITS`;
   if (r.winner === null) return 'MATCH OVER';
   return r.winner === viewer ? 'YOU WIN!' : `${nameOf(r, r.winner)} WINS`;

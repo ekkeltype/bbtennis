@@ -24,6 +24,11 @@ export type OnlineEnd = 'finished' | 'forfeit' | 'disconnect' | 'left';
 export const PUMP_MS = 16;
 /** A stall this long shows "CONNECTION UNSTABLE..." (online spec §3.2). */
 export const STALL_MS = 1000;
+/**
+ * A stall this long ends the match as a lost connection, though the link is up (online spec §3.6): the
+ * opponent's side has stopped playing (a silent link ends after 8 s already).
+ */
+export const STALL_END_MS = 20_000;
 /** At most this many ticks per pump; time beyond that is dropped (online spec §3.5). */
 const MAX_TICKS_PER_PUMP = 15;
 /** A host sends its state for a resync at most this often (online spec §3.4). */
@@ -248,6 +253,7 @@ export class ArcadeOnlineSession {
     if (this.events.length > MAX_BACKLOG) this.events = this.fresh(this.events, rb);
     this.flush(rb, now);
     if (finished(rb.state) && rb.confirmed === rb.tick) this.end('finished', cloneState(rb.state));
+    else if (this.stalledSince !== null && now - this.stalledSince >= STALL_END_MS) this.lose('[bbt] online: no inputs from the opponent for 20 s');
   }
 
   /**
@@ -338,12 +344,18 @@ export class ArcadeOnlineSession {
         this.theyWantRematch = m.want;
         this.maybeRematch();
         return;
-      case 'forfeit':
-        // A match this side has seen decided ends as played out, whatever the other side clicked.
-        if (this.why !== null || rb === null || m.m !== this.matchNo || this.agreed()?.status === 'over') return;
+      case 'forfeit': {
+        if (this.why !== null || rb === null || m.m !== this.matchNo) return;
+        // A match this side has seen decided ends as played out, whatever the other side clicked (its inputs decided it first).
+        const agreed = this.agreed();
+        if (agreed?.status === 'over') {
+          this.end('finished', agreed);
+          return;
+        }
         this.loser = this.viewer === 0 ? 1 : 0;
         this.end('forfeit', m.s);
         return;
+      }
       default:
         break;
     }
@@ -395,7 +407,13 @@ export class ArcadeOnlineSession {
    */
   private fail(err: unknown): void {
     console.error('[bbt] online: the match failed', err);
+    this.lose(null);
+  }
+
+  /** Ends the match as a lost connection (`note` logged), Results showing the last agreed state, and tells the opponent. */
+  private lose(note: string | null): void {
     if (this.why !== null) return;
+    if (note !== null) console.warn(note);
     let final: ArcadeState | null = null;
     try {
       final = this.agreed();

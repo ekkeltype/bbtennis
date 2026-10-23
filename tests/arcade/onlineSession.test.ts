@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ArcadeCpu } from '../../src/arcade/core/cpu';
 import { createMatch, step } from '../../src/arcade/core/match';
 import { NO_INPUT, type ArcadeConfig, type ArcadeState, type Controller, type PlayerInfo, type PlayerInput } from '../../src/arcade/core/types';
-import { ArcadeOnlineSession, STALL_MS, type MatchStart } from '../../src/arcade/game/onlineSession';
+import { ArcadeOnlineSession, STALL_END_MS, STALL_MS, type MatchStart } from '../../src/arcade/game/onlineSession';
 import { NET, type Rollback } from '../../src/arcade/game/rollback';
 import { ARCADE_CODEC, unpackInput, type ArcadeMsg } from '../../src/arcade/net/protocol';
 import type { Look, Profile } from '../../src/core/types';
@@ -22,6 +22,8 @@ interface Wire extends Transport<ArcadeMsg> {
   hold: boolean;
   /** While set, messages are dropped (the side has gone silent). */
   mute: boolean;
+  /** Messages it matches are dropped (a side whose sim stopped while its heartbeat goes on). */
+  drop: ((m: ArcadeMsg) => boolean) | null;
   release(): void;
 }
 
@@ -31,8 +33,9 @@ function wire(t: Transport<ArcadeMsg>): Wire {
     sent: [],
     hold: false,
     mute: false,
+    drop: null,
     send(m) {
-      if (w.mute) return;
+      if (w.mute || w.drop?.(m) === true) return;
       w.sent.push(m);
       if (w.hold) held.push(m);
       else t.send(m);
@@ -195,6 +198,19 @@ describe('a link that stops (online spec §3.2, §3.5)', () => {
     expect(JSON.stringify(d.guest.result)).toBe(JSON.stringify(d.host.result));
   });
 
+  it('an opponent that stops playing while its link stays up is let go after 20 s: CONNECTION LOST here, OPPONENT LEFT there', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const d = duel({ latencyMs: 30, jitterMs: 10 });
+    play(d, () => false, 3000);
+    d.guestNet.drop = (m) => m.type === 'in';
+    play(d, () => d.host.over && d.guest.over, STALL_END_MS + 5000);
+    expect(d.host.endReason).toBe('disconnect');
+    expect(d.host.opponentGone).toBeNull();
+    expect(d.guest.endReason).toBe('left');
+    expect(warn).toHaveBeenCalledWith('[bbt] online: no inputs from the opponent for 20 s');
+    expect(d.host.result).not.toBeNull();
+  });
+
   it('8 s of silence is a disconnect', () => {
     const d = duel({ latencyMs: 20, jitterMs: 0 });
     play(d, () => false, 2000);
@@ -246,6 +262,20 @@ describe('the end of a match (online spec §3.6)', () => {
     play(d, bothOver(d), 10_000);
     expect(d.host.endReason).toBe('finished');
     expect(d.guest.endReason).toBe('finished');
+  });
+
+  it('a forfeit that arrives once this side has the match decided ends it as played out, not stuck waiting (N1)', () => {
+    const d = duel({ latencyMs: 30, jitterMs: 10 });
+    play(d, () => d.host.view?.state.status === 'over' && d.guest.view?.state.status === 'over', 15 * 60_000);
+    play(d, () => false, 300);
+    expect(d.host.over).toBe(false);
+    // The guest's forfeit as if sent a tick before its own side saw the match point.
+    const g = d.guest as unknown as { rb: Rollback };
+    const { tick, state } = g.rb.confirmedState();
+    (d.host as unknown as { receive(m: ArcadeMsg): void }).receive({ type: 'forfeit', m: 1, t: tick, s: state });
+    expect(d.host.endReason).toBe('finished');
+    expect(d.host.forfeitBy).toBeNull();
+    expect(d.host.result?.status).toBe('over');
   });
 
   it('an opponent who leaves once the match is decided does not undo it: played out, with the departure noted (Review Focus 4)', () => {

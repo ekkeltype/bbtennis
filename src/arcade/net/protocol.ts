@@ -108,13 +108,35 @@ const MAX_SETS = 5;
 
 type Check = (v: unknown) => boolean;
 
+/**
+ * Bounds of a state from the other side (online spec §4), well beyond anything the sim makes: times
+ * of a flight (s; the longest ends within about 5 s), distances (m; the court surround is 18 m from
+ * the net), speeds (m/s; the fastest serve is under 50), and how far ahead of the state's own tick a
+ * deadline may lie. Nothing the sim or the renderer loops over can then run long. Past ticks have no
+ * lower bound: a player aced for several points keeps a last swing from minutes ago.
+ */
+const MAX_TIME_S = 20;
+const MAX_DIST = 100;
+const MAX_SPEED = 500;
+const MAX_ACCEL = 100;
+const MAX_POWER = 10;
+const MAX_TICKS_AHEAD = 3600;
+const MAX_COUNT = 1_000_000;
+
 const isPlayerId = (v: unknown): boolean => v === 0 || v === 1;
-const isVec2: Check = (v) => isRec(v) && isNum(v.x) && isNum(v.y);
-const isVec3: Check = (v) => isRec(v) && isNum(v.x) && isNum(v.y) && isNum(v.z);
-const isPair = (v: unknown): boolean => Array.isArray(v) && v.length === 2 && isCount(v[0], 0) && isCount(v[1], 0);
+const within = (v: unknown, lo: number, hi: number): boolean => isNum(v) && v >= lo && v <= hi;
+const isSmall = (v: unknown, max: number): boolean => within(v, -max, max);
+const isTime: Check = (v) => within(v, 0, MAX_TIME_S);
+const isVec2: Check = (v) => isRec(v) && isSmall(v.x, MAX_DIST) && isSmall(v.y, MAX_DIST);
+const isVec3 = (v: unknown, max = MAX_DIST): boolean => isRec(v) && isSmall(v.x, max) && isSmall(v.y, max) && isSmall(v.z, max);
+const isCountUpTo = (v: unknown, max: number): boolean => isCount(v, 0) && v <= max;
+const isPair = (v: unknown): boolean => Array.isArray(v) && v.length === 2 && isCountUpTo(v[0], MAX_COUNT) && isCountUpTo(v[1], MAX_COUNT);
 const nullOr = (check: Check): Check => (v) => v === null || check(v);
 const listOf = (check: Check, max: number): Check => (v) => Array.isArray(v) && v.length <= max && v.every(check);
 const isRngState: Check = (v) => isRec(v) && isUint32(v.a) && isUint32(v.b) && isUint32(v.c) && isUint32(v.d);
+
+/** A tick no later than the state's own `now`. */
+const pastTick = (now: number): Check => (v) => isCount(v, 0) && v <= now;
 
 /** A player of a state: a profile (sanitized and clamped) with its kind and CPU level; null when malformed. */
 function parsePlayer(v: unknown): PlayerInfo | null {
@@ -123,18 +145,20 @@ function parsePlayer(v: unknown): PlayerInfo | null {
   return { ...profile, kind: v.kind, cpuLevel: v.cpuLevel };
 }
 
-const isPhase: Check = (v) => {
+const isPhase = (now: number): Check => (v) => {
   if (!isRec(v) || !isKey(PHASES, v.kind)) return false;
+  const past = pastTick(now);
+  const soon = (t: unknown): boolean => isCount(t, 0) && t <= now + MAX_TICKS_AHEAD;
   switch (v.kind) {
     case 'intro':
-      return isCount(v.until, 0);
+      return soon(v.until);
     case 'setup':
     case 'over':
-      return isCount(v.since, 0);
+      return past(v.since);
     case 'toss':
-      return isCount(v.at, 0);
+      return past(v.at);
     case 'dead':
-      return isCount(v.until, 0) && (v.next === 'setup' || v.next === 'over');
+      return soon(v.until) && (v.next === 'setup' || v.next === 'over');
     default:
       return true;
   }
@@ -154,83 +178,88 @@ const isScore: Check = (v) =>
   isPlayerId(v.gameServer) &&
   nullOr(isPlayerId)(v.winner);
 
-const isPlayerState: Check = (v) =>
+const isPlayerState = (now: number): Check => (v) =>
   isRec(v) &&
   isVec2(v.pos) &&
-  isVec2(v.vel) &&
-  nullOr((c) => isRec(c) && isKey(SHOT_KEYS, c.shot) && isCount(c.tick, 0) && nullOr(isVec2)(c.step))(v.commit) &&
+  isRec(v.vel) &&
+  isSmall(v.vel.x, MAX_SPEED) &&
+  isSmall(v.vel.y, MAX_SPEED) &&
+  nullOr((c) => isRec(c) && isKey(SHOT_KEYS, c.shot) && pastTick(now)(c.tick) && nullOr(isVec2)(c.step))(v.commit) &&
   nullOr((k) => isKey(SHOT_KEYS, k))(v.pending) &&
   isRec(v.held) &&
   isBool(v.held.topspin) &&
   isBool(v.held.slice) &&
   isBool(v.held.lob) &&
-  nullOr((w) => isRec(w) && isCount(w.tick, 0) && isKey(STROKES, w.stroke) && isBool(w.stretch))(v.lastSwing);
+  nullOr((w) => isRec(w) && pastTick(now)(w.tick) && isKey(STROKES, w.stroke) && isBool(w.stretch))(v.lastSwing);
 
-const isHit: Check = (v) =>
+const isHit = (now: number): Check => (v) =>
   isRec(v) &&
-  isCount(v.tick, 0) &&
+  pastTick(now)(v.tick) &&
   isPlayerId(v.player) &&
   isKey(SHOT_TYPES, v.type) &&
   isKey(GRADES, v.grade) &&
   isBool(v.stretch) &&
   isBool(v.volley) &&
-  isNum(v.power) &&
+  within(v.power, 0, MAX_POWER) &&
   isVec3(v.contact) &&
   isVec2(v.target) &&
-  isNum(v.T);
+  isTime(v.T);
 
-const isFlight: Check = (v) =>
+const isSegment: Check = (g) => isRec(g) && isTime(g.t0) && isVec3(g.p0) && isVec3(g.v0, MAX_SPEED) && isVec3(g.a, MAX_ACCEL);
+
+const isFlight = (now: number): Check => (v) =>
   isRec(v) &&
-  isHit(v.hit) &&
+  isHit(now)(v.hit) &&
   Array.isArray(v.segments) &&
   v.segments.length >= 1 &&
-  listOf((g) => isRec(g) && isNum(g.t0) && isVec3(g.p0) && isVec3(g.v0) && isVec3(g.a), MAX_FLIGHT_PARTS)(v.segments) &&
-  listOf((b) => isRec(b) && isNum(b.t) && isVec2(b.at), MAX_FLIGHT_PARTS)(v.bounces) &&
-  nullOr(isNum)(v.netT) &&
+  listOf(isSegment, MAX_FLIGHT_PARTS)(v.segments) &&
+  listOf((b) => isRec(b) && isTime(b.t) && isVec2(b.at), MAX_FLIGHT_PARTS)(v.bounces) &&
+  nullOr(isTime)(v.netT) &&
   isBool(v.net) &&
-  isNum(v.tEnd) &&
-  isNum(v.tGone);
+  isTime(v.tEnd) &&
+  isTime(v.tGone);
 
-const isPoint: Check = (v) =>
+const isPoint = (now: number): Check => (v) =>
   isRec(v) &&
   (v.serveNo === 1 || v.serveNo === 2) &&
-  isCount(v.hits, 0) &&
+  isCountUpTo(v.hits, MAX_COUNT) &&
   isBool(v.serveUnbounced) &&
-  nullOr((c) => isRec(c) && isKey(CALLS, c.call) && isPlayerId(c.player) && isCount(c.tick, 0))(v.call);
+  nullOr((c) => isRec(c) && isKey(CALLS, c.call) && isPlayerId(c.player) && pastTick(now)(c.tick))(v.call);
 
 const isStats: Check = (v) =>
   isRec(v) &&
-  ['pointsWon', 'aces', 'doubleFaults', 'winners', 'errors', 'hits', 'perfectHits'].every((k) => isCount(v[k], 0)) &&
-  isNum(v.fastestServeKmh);
+  ['pointsWon', 'aces', 'doubleFaults', 'winners', 'errors', 'hits', 'perfectHits'].every((k) => isCountUpTo(v[k], MAX_COUNT)) &&
+  within(v.fastestServeKmh, 0, MAX_SPEED * 3.6);
 
 /**
  * Check of a whole match state from the other player (the host's resync, online spec §3.4, or a
  * forfeit's final state, §3.6), field by field, so that no state it accepts can make the sim or the
- * renderer throw: every number finite, every index a player, every enum known, every list bounded.
- * Names are sanitized and looks clamped. Returns the state (players replaced by their clean copies),
- * or null.
+ * renderer throw or run long: every number finite and within bounds (times, distances, speeds, ticks
+ * near the state's own), every index a player, every enum known, every list bounded. Names are
+ * sanitized and looks clamped. Returns the state (players replaced by their clean copies), or null.
  */
 function parseState(v: unknown): ArcadeState | null {
   if (!isRec(v) || v.v !== 1 || !isCount(v.tick, 0) || !parseConfig(v.config)) return null;
+  const now = v.tick;
   if (!Array.isArray(v.players) || v.players.length !== 2) return null;
   const p0 = parsePlayer(v.players[0]);
   const p1 = parsePlayer(v.players[1]);
   if (!p0 || !p1) return null;
   const ok =
-    isPhase(v.phase) &&
+    isPhase(now)(v.phase) &&
     isScore(v.score) &&
     Array.isArray(v.p) &&
     v.p.length === 2 &&
-    v.p.every(isPlayerState) &&
-    nullOr(isFlight)(v.flight) &&
-    nullOr((t) => isRec(t) && isCount(t.tick, 0) && isPlayerId(t.player))(v.toss) &&
-    isPoint(v.point) &&
-    nullOr((n) => isCount(n, 0))(v.serveClockFrom) &&
+    v.p.every(isPlayerState(now)) &&
+    nullOr(isFlight(now))(v.flight) &&
+    nullOr((t) => isRec(t) && pastTick(now)(t.tick) && isPlayerId(t.player))(v.toss) &&
+    isPoint(now)(v.point) &&
+    nullOr(pastTick(now))(v.serveClockFrom) &&
     Array.isArray(v.stats) &&
     v.stats.length === 2 &&
     v.stats.every(isStats) &&
-    isCount(v.longestRally, 0) &&
-    isCount(v.pointNo, 0) &&
+    isCountUpTo(v.longestRally, MAX_COUNT) &&
+    isCountUpTo(v.pointNo, MAX_COUNT) &&
     (v.status === 'playing' || v.status === 'over') &&
     nullOr(isPlayerId)(v.winner) &&
     isRec(v.rng) &&
