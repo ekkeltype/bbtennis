@@ -1,9 +1,10 @@
 import { POWER_MAX } from '../core/power';
 import { sanitizeName } from '../core/text';
-import type {
-  DeuceRule, FormatId, GameEvent, Look, MatchConfig, PaceId, PlayerInfo, Profile, PublicState, Surface, TrainingFlags, WordPackId,
-} from '../core/types';
+import type { GameEvent, Look, MatchConfig, PlayerInfo, Profile, PublicState, TrainingFlags, WordPackId } from '../core/types';
 import { jsonCodec, type Codec, type EncodedMsg } from './codec';
+import {
+  DEUCE_RULES, FORMATS, isBool, isInt, isKey, isNum, isRec, isStr, PACES, parseLook, parseProfile, REJECT_REASONS, SURFACES, type Rec,
+} from './fields';
 
 /** Protocol version; bump on any change to the protocol, PublicState, TurnRunner or key classification (spec §5.3). */
 export const PROTO = 2;
@@ -38,52 +39,12 @@ export type NetMsg =
   | { type: 'forfeit' }
   | { type: 'leave' };
 
-type Rec = Record<string, unknown>;
-
-const FORMATS: Record<FormatId, true> = { tiebreak: true, short: true, full: true, bo3: true };
-const PACES: Record<PaceId, true> = { relaxed: true, normal: true, fast: true, lightning: true };
-const SURFACES: Record<Surface, true> = { hard: true, clay: true, grass: true, dojo: true };
 const WORD_PACKS: Record<WordPackId, true> = { everyday: true, sports: true, dojo: true, mixed: true };
-const DEUCE_RULES: Record<DeuceRule, true> = { advantage: true, golden: true };
-const REJECT_REASONS = { version: true, full: true, 'in-match': true } as const;
 
-/** Highest index of each Look field (spec §4.1). */
-const LOOK_MAX: Record<keyof Look, number> = { skin: 5, hairStyle: 4, hair: 7, shirt: 11, shorts: 11, headband: 11, racket: 5 };
-
-const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
-const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const isInt = (v: unknown): v is number => Number.isSafeInteger(v);
-const isStr = (v: unknown): v is string => typeof v === 'string';
-const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
-const isKey = <K extends string>(table: Record<K, true>, v: unknown): v is K => isStr(v) && Object.hasOwn(table, v);
 const isStrGrid = (v: unknown): v is string[][] => Array.isArray(v) && v.every((row) => Array.isArray(row) && row.every(isStr));
 
 /** A guest key: one lowercase letter or 'toss' (spec §4.5). */
 const isKeyInput = (v: unknown): v is string => isStr(v) && (v === 'toss' || /^[a-z]$/.test(v));
-
-const clampIndex = (v: number, max: number): number => Math.min(max, Math.max(0, Math.floor(v)));
-
-function parseLook(v: unknown): Look | null {
-  if (!isRec(v)) return null;
-  const { skin, hairStyle, hair, shirt, shorts, headband, racket } = v;
-  if (!isNum(skin) || !isNum(hairStyle) || !isNum(hair) || !isNum(shirt) || !isNum(shorts) || !isNum(racket)) return null;
-  if (headband !== null && !isNum(headband)) return null;
-  return {
-    skin: clampIndex(skin, LOOK_MAX.skin),
-    hairStyle: clampIndex(hairStyle, LOOK_MAX.hairStyle),
-    hair: clampIndex(hair, LOOK_MAX.hair),
-    shirt: clampIndex(shirt, LOOK_MAX.shirt),
-    shorts: clampIndex(shorts, LOOK_MAX.shorts),
-    headband: headband === null ? null : clampIndex(headband, LOOK_MAX.headband),
-    racket: clampIndex(racket, LOOK_MAX.racket),
-  };
-}
-
-function parseProfile(v: unknown): Profile | null {
-  if (!isRec(v) || !isStr(v.name)) return null;
-  const look = parseLook(v.look);
-  return look && { name: sanitizeName(v.name), look };
-}
 
 /** null = no training (valid); undefined = invalid. */
 function parseTraining(v: unknown): TrainingFlags | null | undefined {
