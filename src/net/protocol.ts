@@ -3,9 +3,12 @@ import { sanitizeName } from '../core/text';
 import type {
   DeuceRule, FormatId, GameEvent, Look, MatchConfig, PaceId, PlayerInfo, Profile, PublicState, Surface, TrainingFlags, WordPackId,
 } from '../core/types';
+import { jsonCodec, type Codec, type EncodedMsg } from './codec';
 
 /** Protocol version; bump on any change to the protocol, PublicState, TurnRunner or key classification (spec §5.3). */
 export const PROTO = 2;
+
+export { MAX_SEND_BYTES, type EncodedMsg } from './codec';
 
 /** Application id sent in `hello` and `reject`. */
 export const APP_ID = 'bbtennis';
@@ -13,21 +16,9 @@ export const APP_ID = 'bbtennis';
 /** parseMsg drops a value whose JSON is longer than this many characters (spec §5.3). */
 export const MAX_MSG_CHARS = 32 * 1024;
 
-/**
- * Largest message a transport sends, in UTF-8 bytes of its JSON (see msgBytes); transports drop a
- * larger one (see encodeMsg). It is also the most characters decodeMsg accepts in a received string:
- * a string never has more characters than UTF-8 bytes, so every sendable message passes. Well under
- * the 64 KiB a WebRTC data channel always accepts.
- */
-export const MAX_SEND_BYTES = 32000;
-
-const utf8 = new TextEncoder();
-
-const jsonBytes = (json: string): number => utf8.encode(json).byteLength;
-
 /** Size of `msg` on the wire: the UTF-8 byte length of its JSON. */
 export function msgBytes(msg: NetMsg): number {
-  return jsonBytes(JSON.stringify(msg));
+  return NET_CODEC.bytes(msg);
 }
 
 /** Every message exchanged between host and guest (spec §5.3). `τ` is a turn-clock time in ms. */
@@ -237,16 +228,12 @@ function parseSized(raw: unknown): NetMsg | null {
   return isRec(raw) ? parseFields(raw) : null;
 }
 
-/** A message in wire form: its JSON and the UTF-8 byte length of that JSON. */
-export interface EncodedMsg { json: string; bytes: number }
+/** The typing game's wire codec (spec §5.3): JSON strings, size-capped, validated by parseMsg's field checks. */
+export const NET_CODEC: Codec<NetMsg> = jsonCodec(parseSized);
 
 /** The wire form of `msg` with its size, or null with a `[bbt] frame too big` warning when it is over MAX_SEND_BYTES. */
 export function encodeWithBytes(msg: NetMsg): EncodedMsg | null {
-  const json = JSON.stringify(msg);
-  const bytes = jsonBytes(json);
-  if (bytes <= MAX_SEND_BYTES) return { json, bytes };
-  console.warn('[bbt] frame too big', bytes);
-  return null;
+  return NET_CODEC.encode(msg);
 }
 
 /** The wire form of `msg` (its JSON), or null with a `[bbt] frame too big` warning when it is over MAX_SEND_BYTES. */
@@ -260,12 +247,5 @@ export function encodeMsg(msg: NetMsg): string | null {
  * length is its size, so the value is not measured again. Anything else is null.
  */
 export function decodeMsg(data: unknown): NetMsg | null {
-  if (typeof data !== 'string' || data.length > MAX_SEND_BYTES) return null;
-  let raw: unknown;
-  try {
-    raw = JSON.parse(data);
-  } catch {
-    return null;
-  }
-  return parseSized(raw);
+  return NET_CODEC.decode(data);
 }
