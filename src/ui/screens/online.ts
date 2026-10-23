@@ -1,15 +1,17 @@
 import type { KeyClass } from '../../core/typing';
 import type { MatchState, ViewModel } from '../../core/types';
-import { RealScheduler, type Scheduler } from '../../game/clock';
+import { RealScheduler } from '../../game/clock';
 import type { Departure, EndReason, Ticker } from '../../game/onlineLink';
 import type { Session } from '../../game/session';
-import { hostGame, joinGame, type HostHandle, type PeerEnv } from '../../net/peer';
-import type { Transport } from '../../net/transport';
+import { hostGame, joinGame } from '../../net/peer';
+import type { NetMsg } from '../../net/protocol';
+import { guardOnlineMatch, hostLobbyScreen, inFrame, joinScreen, type LobbyEnv } from '../lobbyScreens';
 import type { Router } from '../router';
 import { randomSeed } from '../seed';
 import type { Profile, Settings } from '../settings';
-import { joinScreen } from './join';
-import { hostLobbyScreen } from './lobby';
+import { lobbyContext, typingLobby } from './lobby';
+
+export type { JoinParams } from '../lobbyScreens';
 
 /**
  * What an online match hands the app besides its session: how to forfeit, how to ask for a rematch,
@@ -35,25 +37,13 @@ export interface OnlineDeps {
   startMatch(session: Session, controls: OnlineControls): void;
 }
 
-/** Params of the Join screen: the code from a `?join=CODE` invite link, if any. */
-export interface JoinParams { code: string | null }
-
-/** The network and page the online screens work with; the browser's by default, a test's own in tests. */
-export interface OnlineEnv {
-  /** Registers a game code (spec §5.3). */
-  hostGame(opts: PeerEnv): Promise<HostHandle>;
-  /** Connects to the host of a game code (spec §5.3). */
-  joinGame(code: string, opts: PeerEnv): Promise<Transport>;
-  /** Time and timers of the lobbies and the matches. */
-  scheduler: Scheduler;
+/**
+ * The network and page the online screens work with (ui/lobbyScreens LobbyEnv for the typing game's
+ * messages); the browser's by default, a test's own in tests.
+ */
+export interface OnlineEnv extends LobbyEnv<NetMsg> {
   /** Runs a match session's 50 ms tick; unset, the sessions use their Worker ticker. */
   ticker?: Ticker;
-  /** A fresh seed for the host's match. */
-  seed(): number;
-  /** Where invite links point (VITE_PUBLIC_URL); null or empty: there is no invite link. */
-  publicUrl: string | null;
-  /** True inside an iframe (itch.io), where the invite link is the browser (Pages) build's (spec §8). */
-  framed: boolean;
 }
 
 /** An online session (HostSession or GuestSession) as the screens and the app's controls use it. */
@@ -74,15 +64,6 @@ export interface OnlineContext {
   begin(session: OnlineSession, release: () => void): void;
 }
 
-/** True when the page runs inside another page's frame. */
-function inFrame(): boolean {
-  try {
-    return window.top !== window;
-  } catch {
-    return true;
-  }
-}
-
 /** The browser's online environment: PeerJS, the page clock, crypto seeds and the build's invite URL. */
 export function browserEnv(): OnlineEnv {
   const url: unknown = import.meta.env.VITE_PUBLIC_URL;
@@ -98,18 +79,20 @@ export function browserEnv(): OnlineEnv {
 
 /**
  * An online match as the app runs it (spec §5.3): the session, with the page's guards while it is
- * played. Closing or reloading the page asks first, and a page going away (`pagehide`) tells the
- * opponent with `leave`. Disposing it removes the guards, disposes the session and runs `release`.
+ * played (guardOnlineMatch). Closing or reloading the page asks first, and a page going away
+ * (`pagehide`) tells the opponent with `leave`. Disposing it removes the guards, disposes the session
+ * and runs `release`.
  */
 class OnlineMatch implements Session {
   private disposed = false;
+  /** Removes the page's guards. */
+  private readonly unguard: () => void;
 
   constructor(
     private readonly session: OnlineSession,
     private readonly release: () => void,
   ) {
-    window.addEventListener('beforeunload', this.beforeUnload);
-    window.addEventListener('pagehide', this.pageHide);
+    this.unguard = guardOnlineMatch(session);
   }
 
   get over(): boolean {
@@ -143,22 +126,10 @@ class OnlineMatch implements Session {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    window.removeEventListener('beforeunload', this.beforeUnload);
-    window.removeEventListener('pagehide', this.pageHide);
+    this.unguard();
     this.session.dispose();
     this.release();
   }
-
-  private readonly beforeUnload = (e: Event): void => {
-    if (this.session.over) return;
-    e.preventDefault();
-    // Older browsers ask only when returnValue is set.
-    (e as BeforeUnloadEvent).returnValue = '';
-  };
-
-  private readonly pageHide = (): void => {
-    this.session.leave();
-  };
 }
 
 /**
@@ -183,6 +154,8 @@ export function registerOnlineScreens(router: Router, deps: OnlineDeps, env: Onl
     deps.startMatch(new OnlineMatch(session, release), controls);
   };
   const ctx: OnlineContext = { router, deps, env, begin };
-  router.register('host', hostLobbyScreen(ctx));
-  router.register('join', joinScreen(ctx));
+  const lobby = lobbyContext(ctx);
+  const game = typingLobby(env);
+  router.register('host', hostLobbyScreen(lobby, game));
+  router.register('join', joinScreen(lobby, game));
 }
