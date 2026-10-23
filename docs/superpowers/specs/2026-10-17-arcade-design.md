@@ -18,7 +18,7 @@ networking, and is published from the same repo at `https://ekkeltype.github.io/
 | Hosting | Same repo, second Vite entry, served at `/bbtennis/arcade/` |
 | Controls | Arcade (Mario Tennis / Virtua Tennis family), keyboard only, desktop browser |
 | Swing | Press early, automatic swing; the press-to-contact time nudges angle and cleanness (option C) |
-| Modes | v1: vs CPU. Online with a friend comes next; v1 must not block it |
+| Modes | v1: vs CPU. Online with a friend comes next; v1 must not block it. *(Online added 2026-10-23: `2026-10-23-arcade-online-design.md`.)* |
 | Engine | Shot resolved at contact into a closed-form flight; the player the ball flies toward decides the next hit (approach 1) |
 | Carried over | Karate theme and 15-belt CPU ladder; character customization; formats, deuce rules, surfaces, pace presets |
 | Later | Career stats/progression, guided Training, online, gamepad, touch |
@@ -414,6 +414,10 @@ once "Progress can't be saved in this browser mode".
   the keyboard through a serve and a rally against White belt; no console errors.
 
 ## 8. Online later (not in v1; constraints only)
+
+*(2026-10-23: online play is designed and built in `2026-10-23-arcade-online-design.md`. It uses
+rollback on the shared deterministic sim instead of the per-player authority below; the constraints
+below kept the core ready for either.)*
 
 - The sim must allow each machine to be authoritative for its own player: movement and hits are
   computed from that player's inputs and RNG stream only; a hit is fully described by a `HitEvent`

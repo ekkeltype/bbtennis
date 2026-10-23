@@ -124,8 +124,8 @@ saved and plays on.
 
 A second game in this repository: the same pixel-art tennis, played with arcade controls instead of
 typing. You run around your half and press a shot key as the ball comes: your feet plant, and your
-player swings by itself when the ball arrives. It is singles against the CPU, in a desktop browser
-with a physical keyboard.
+player swings by itself when the ball arrives. It is singles against the CPU or a friend online, in a
+desktop browser with a physical keyboard.
 
 It lives at `/arcade/`, as the second page of the same Vite project (`arcade/index.html`, code in
 `src/arcade/`). `npm run dev` serves it at <http://localhost:5173/arcade/>, and `npm run build`
@@ -137,7 +137,7 @@ writes it to `dist/arcade/`, so the Pages deploy publishes it at `<site>/arcade/
 | Topspin | <kbd>J</kbd> | <kbd>Z</kbd> |
 | Slice | <kbd>K</kbd> | <kbd>X</kbd> |
 | Lob | <kbd>L</kbd> | <kbd>C</kbd> |
-| Pause | <kbd>Esc</kbd> or <kbd>Tab</kbd> | <kbd>Esc</kbd> or <kbd>Tab</kbd> |
+| Pause (online: the menu) | <kbd>Esc</kbd> or <kbd>Tab</kbd> | <kbd>Esc</kbd> or <kbd>Tab</kbd> |
 
 Both layouts always work, and keys are read by position, so WASD works on any keyboard layout.
 
@@ -156,8 +156,27 @@ Both layouts always work, and keys are read by position, so WASD works on any ke
 How it differs from the typing game: nothing is typed, and points are won by where you stand and when
 you press. It keeps the karate belts (all 15 open from the start), the formats, deuce rules, courts
 and pace presets, and its own saved name, look, settings and last CPU setup (under
-`bbtennis-arcade:v1:`). It has a How to Play screen instead of Training, and no online play or career
-record yet. The design spec is `docs/superpowers/specs/2026-10-17-arcade-design.md`.
+`bbtennis-arcade:v1:`). It has a How to Play screen instead of Training, and no career record yet.
+The design spec is `docs/superpowers/specs/2026-10-17-arcade-design.md`.
+
+### Online play
+
+**Play Online → Host Game** gives a 5-character code and an invite link
+(`<VITE_PUBLIC_URL>arcade/?join=CODE`); a friend opens the link or enters the code under **Join
+Game**, you both press **READY**, and the match starts. The host picks the format, deuce rule, court
+and pace. Each of you plays from the bottom of your own screen, and the match never pauses: Esc opens
+a menu with Resume and Forfeit. It uses the same PeerJS connection as the typing game, with its own
+codes (`bbtennis-arcade-<CODE>`), and both players must run the same build (a stale tab is told to
+reload).
+
+Both browsers run the same deterministic match from the same seed and send each other only their
+keys, 60 times a second. Your own keys act at once (after 2 ticks, 33 ms); the opponent's are
+predicted (their last keys held) and, when their real keys arrive and differ, the game rewinds to
+that tick and replays it (rollback). So the opponent, or a ball they just hit, can jump a little on a
+laggy connection, and the game waits when more than 250 ms of their keys are missing. The two
+clocks keep in step on their own, and both sides hash their state every second, so any difference is
+found and the host's state repairs it. The design spec is
+`docs/superpowers/specs/2026-10-23-arcade-online-design.md`.
 
 ### Scripted run (`node scripts/arcadeRun.mjs`)
 
@@ -171,8 +190,21 @@ Results (usually one to three minutes; it adds `results.png`).
 
 The run uses the Arcade's debug hooks, which are on in dev builds and on any page opened with
 `?debug`. `window.__arcade` has `state()`, `startMatch(level, seed?)`, `demo()` (a Black-belt CPU
-plays your side) and `screen(name)`. `?screen=<name>` opens on that screen, for example
-`node scripts/devshot.mjs "arcade/index.html?screen=match" match.png`.
+plays your side), `screen(name)` and `net()` (an online match's ticks, rollbacks, stalls, desyncs
+and hashes). `?screen=<name>` opens on that screen, for example
+`node scripts/devshot.mjs "arcade/index.html?screen=match" match.png`, and `?lag=<ms>` delays
+everything the page sends online by that much (±25 %), to try rollback on one machine.
+
+### Online run (`node scripts/arcadeOnline.mjs`)
+
+[`scripts/arcadeOnline.mjs`](scripts/arcadeOnline.mjs) opens two Chrome pages on a Vite dev server
+and plays an online match between them over the real PeerJS broker, with `?lag=60` on both (change it
+with `--lag=<ms>`). The host hosts, the guest joins by the invite link, both press READY, and each
+page is played from its own end by the same scripted player as `arcadeRun`. After four points it
+checks that neither page found a desync, that both hashed the same states, and the score; then it
+forfeits from the menu, plays a rematch point, and leaves. Screenshots of both views go to
+`artifacts/arcade-online/`. It exits non-zero on any error, desync or mismatch, and prints SKIP when
+the broker can't be reached.
 
 ## Development
 

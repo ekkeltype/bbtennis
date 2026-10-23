@@ -73,7 +73,9 @@ with it, both press READY, and the match starts. Controls must feel like the vs-
 - When remote inputs for ticks `a..b` arrive (contiguous; the data channel is reliable and ordered),
   the side finds the first simulated tick whose used remote input differs from the true one (ticks
   ≤ b) or from the new prediction (ticks > b), restores the snapshot before it, and re-simulates up
-  to its current tick.
+  to its current tick. As a safety net, ticks already known are skipped and inputs past a gap wait
+  for it to fill: one late or reordered message must never stop a match. *(Added during the build:
+  the debug lag first reordered messages, and strict contiguity froze the match for good.)*
 - **Confirmed** tick = min(last remote input tick, current tick): everything up to it is final.
   Snapshots at or before it are dropped.
 - **Events** (sounds, effects, banners) are shown when a tick is first simulated. A re-simulation
@@ -149,8 +151,9 @@ sanitized, look indices clamped):
 | `rematch` | both | `want` |
 | `forfeit`, `leave` | both | — |
 
-`config` is `{ format, deuceRule, surface, pace }`. Inputs must continue the sender's sequence
-(`t` = last tick + 1) and may run at most 600 ticks past the receiver's tick; others are dropped.
+`config` is `{ format, deuceRule, surface, pace }`. Inputs normally continue the sender's sequence
+(`t` = last tick + 1); ticks the receiver already has are skipped, inputs past a gap wait for it, and
+inputs more than 600 ticks past the receiver's tick are dropped.
 
 ## 5. Screens
 
@@ -160,9 +163,11 @@ sanitized, look indices clamped):
   link, opponent card with look and READY state, round trip, errors with Retry/Back), with the four
   Arcade options. The invite link is `<VITE_PUBLIC_URL>arcade/?join=CODE`; opening it goes through
   the start gate to Join with the code filled in.
-- **Match HUD** adds, online: the round trip (`RTT n MS`, bottom right, under the serve speed),
-  "CONNECTION UNSTABLE..." (bottom centre), and "CLICK TO FOCUS / YOUR KEYS AREN'T REACHING THE GAME"
-  after the window loses focus, until a click or the window gets the focus back.
+- **Match HUD** adds, online: the round trip (`RTT n MS`, bottom left; the serve speed keeps the
+  bottom right), "CONNECTION UNSTABLE..." (bottom centre), and "CLICK TO FOCUS / YOUR KEYS AREN'T
+  REACHING THE GAME" after the window loses focus, until a click or the window gets the focus back.
+- **How to Play** gets a short ONLINE paragraph (host, send the code or invite link, both play from
+  the bottom of their own screen, the match never pauses).
 - **Menu** (Esc, Tab, the pause icon): MENU with RESUME / FORFEIT / FULLSCREEN and "THE MATCH GOES ON
   WHILE THIS MENU IS OPEN". Window blur, a hidden tab or leaving fullscreen do not open it online.
 - **Results**: as vs CPU, plus the online cases above (forfeit heading, "OPPONENT LEFT" /
