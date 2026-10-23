@@ -1,9 +1,8 @@
 import type { MatchConfig, Profile } from '../../core/types';
 import { HostSession } from '../../game/hostSession';
-import { LobbyLink } from '../../game/onlineLink';
-import { errorText, NetError, type HostHandle } from '../../net/peer';
+import { HostLobby, type HostPhase } from '../../net/lobby';
+import { errorText } from '../../net/peer';
 import { APP_ID, PROTO, type NetMsg } from '../../net/protocol';
-import type { Transport } from '../../net/transport';
 import { button, panel, spinner } from '../controls';
 import { focusables, h } from '../dom';
 import { icon } from '../icons';
@@ -12,14 +11,10 @@ import { LookPreview } from '../preview';
 import type { ScreenFactory } from '../router';
 import { DEFAULT_PROFILE } from '../settings';
 import { DEUCE_CHOICES, FORMAT_CHOICES, PACE_CHOICES, PACK_CHOICES, SURFACE_CHOICES } from '../options';
-import type { OnlineContext, OnlineEnv } from './online';
+import type { OnlineContext } from './online';
 
 /** How often a lobby screen refreshes the round trip it shows. */
 export const PING_REFRESH_MS = 500;
-/** A connected guest that has not said hello this long is closed (the join screen waits as long for its answer). */
-const HELLO_DEADLINE_MS = 10_000;
-
-type HelloMsg = Extract<NetMsg, { type: 'hello' }>;
 
 // ---------------------------------------------------------------------------------------------
 // Pieces the host lobby and the join screen share
@@ -176,207 +171,8 @@ function selectText(el: HTMLElement): void {
 // ---------------------------------------------------------------------------------------------
 // The host lobby
 
-/** What the host lobby is doing: getting a code, waiting for a guest, with a guest, failed, or handed to the match. */
-export type HostPhase = 'opening' | 'waiting' | 'joined' | 'failed' | 'started';
-
-/** How to set up a host lobby. */
-export interface HostLobbyOptions {
-  env: OnlineEnv;
-  /** The host's name and look. */
-  me: Profile;
-  /** The match config it starts with (the settings' choices). */
-  config: MatchConfig;
-  /** Something shown has changed. */
-  onChange(): void;
-  /** Both are ready: the new match's session, and what releases the game code once the match is done. */
-  onStart(session: HostSession, release: () => void): void;
-}
-
-/**
- * The host side of the lobby (spec §4.6, §5.3). It registers a game code and admits one guest:
- * `hello` → `welcome`, or `reject` with 'version' (another protocol), 'in-match' (the match has
- * started) or 'full' (a guest is in), after which that connection closes. The host edits the match
- * config; each change clears both Ready flags, and every change of config or Ready reaches the guest
- * as `lobby{config, ready}`. Once both are ready the guest's transport goes to a new HostSession,
- * which sends `start` itself; the lobby hears nothing more from it. The code stays registered during
- * the match, turning later guests away, until `release`. A connection that goes away before its
- * hello, or says none within 10 s, is closed.
- */
-export class HostLobby {
-  phase: HostPhase = 'opening';
-  /** The game code, once registered. */
-  code: string | null = null;
-  /** Why registering failed ('failed'). */
-  error: NetError | null = null;
-  /** The admitted guest's name and look. */
-  guest: Profile | null = null;
-  config: MatchConfig;
-  /** Ready flags: [host, guest]. */
-  ready: [boolean, boolean] = [false, false];
-  private abort: AbortController | null = null;
-  private handle: HostHandle | null = null;
-  /** The admitted guest's link. */
-  private link: LobbyLink | null = null;
-  /** Guests that have not said hello yet, each with what cancels its hello deadline. */
-  private readonly pending = new Map<LobbyLink, () => void>();
-
-  constructor(private readonly o: HostLobbyOptions) {
-    this.config = { ...o.config };
-  }
-
-  /** The guest's round trip, or null. */
-  get rttMs(): number | null {
-    return this.link?.rttMs ?? null;
-  }
-
-  /** Registers a game code: at first, and again after a failure. */
-  open(): void {
-    if (this.phase !== 'opening' && this.phase !== 'failed') return;
-    this.phase = 'opening';
-    this.error = null;
-    const abort = new AbortController();
-    this.abort = abort;
-    this.o.env.hostGame({ signal: abort.signal }).then(
-      (handle) => {
-        if (abort.signal.aborted) {
-          handle.close();
-          return;
-        }
-        this.handle = handle;
-        this.code = handle.code;
-        this.phase = 'waiting';
-        handle.onGuest((t) => this.admit(t));
-        this.o.onChange();
-      },
-      (err: unknown) => {
-        if (abort.signal.aborted) return;
-        this.phase = 'failed';
-        this.error = err instanceof NetError ? err : new NetError('broker', String(err));
-        this.o.onChange();
-      },
-    );
-    this.o.onChange();
-  }
-
-  /** Changes the match config: both Ready flags clear, and the guest is told. */
-  setConfig(patch: Partial<MatchConfig>): void {
-    if (this.phase === 'started') return;
-    this.config = { ...this.config, ...patch };
-    this.ready = [false, false];
-    this.sendLobby();
-    this.o.onChange();
-  }
-
-  /** Toggles the host's Ready flag while a guest is in; the match starts when both are ready. */
-  toggleReady(): void {
-    if (this.phase !== 'joined') return;
-    this.ready = [!this.ready[0], this.ready[1]];
-    this.sendLobby();
-    this.maybeStart();
-    this.o.onChange();
-  }
-
-  /** Leaves the lobby (Back, or its screen hides), unless the match has started: registering stops, guests are told, the code is released. */
-  cancel(): void {
-    if (this.phase !== 'started') this.close();
-  }
-
-  private close(): void {
-    this.abort?.abort();
-    for (const l of [...this.pending.keys()]) this.dropPending(l);
-    this.link?.close();
-    this.link = null;
-    this.handle?.close();
-    this.handle = null;
-  }
-
-  /** A guest's connection is open: it has a lobby link, pending until its hello (due within 10 s) is answered. */
-  private admit(t: Transport): void {
-    const scheduler = this.o.env.scheduler;
-    const link: LobbyLink = new LobbyLink(t, scheduler, {
-      message: (m) => this.onMessage(link, m),
-      gone: () => this.onGone(link),
-    });
-    this.pending.set(link, scheduler.after(HELLO_DEADLINE_MS, () => this.dropPending(link)));
-    link.open();
-  }
-
-  /** Takes `link` off the pending guests, cancelling its hello deadline; false when it was not pending. */
-  private takePending(link: LobbyLink): boolean {
-    const cancel = this.pending.get(link);
-    if (cancel === undefined) return false;
-    cancel();
-    this.pending.delete(link);
-    return true;
-  }
-
-  /** A pending guest is let go (no hello in time, gone, or the lobby closes): its link closes, which stops its heartbeat. */
-  private dropPending(link: LobbyLink): void {
-    if (this.takePending(link)) link.close();
-  }
-
-  private onMessage(link: LobbyLink, m: NetMsg): void {
-    if (m.type === 'hello') {
-      if (this.takePending(link)) this.hello(link, m);
-      return;
-    }
-    if (link !== this.link || this.phase !== 'joined' || m.type !== 'ready') return;
-    this.ready = [this.ready[0], m.on];
-    this.sendLobby();
-    this.maybeStart();
-    this.o.onChange();
-  }
-
-  /** Welcomes the guest, or rejects it (version, match on, lobby full) and closes its connection. */
-  private hello(link: LobbyLink, m: HelloMsg): void {
-    const reason = m.proto !== PROTO || m.app !== APP_ID ? 'version' : this.phase === 'started' ? 'in-match' : this.link !== null ? 'full' : null;
-    if (reason !== null) {
-      link.send({ type: 'reject', reason, proto: PROTO, app: APP_ID });
-      link.close();
-      return;
-    }
-    this.link = link;
-    this.guest = { name: m.name, look: m.look };
-    this.ready = [false, false];
-    this.phase = 'joined';
-    link.send({ type: 'welcome', proto: PROTO, hostProfile: this.o.me, config: this.config });
-    this.o.onChange();
-  }
-
-  /** A guest went away: a pending one is closed; the admitted one frees the lobby for the next. */
-  private onGone(link: LobbyLink): void {
-    this.dropPending(link);
-    if (link !== this.link || this.phase !== 'joined') return;
-    link.close();
-    this.link = null;
-    this.guest = null;
-    this.ready = [false, false];
-    this.phase = 'waiting';
-    this.o.onChange();
-  }
-
-  private sendLobby(): void {
-    if (this.phase === 'joined') this.link?.send({ type: 'lobby', config: this.config, ready: this.ready });
-  }
-
-  /** Both are ready: the guest's transport goes to the match session (seeded here; the seed never leaves). */
-  private maybeStart(): void {
-    const { link, guest } = this;
-    if (this.phase !== 'joined' || !this.ready[0] || !this.ready[1] || link === null || guest === null) return;
-    this.phase = 'started';
-    const e = this.o.env;
-    const session = new HostSession({
-      transport: link.handOver(),
-      config: this.config,
-      host: humanPlayer(this.o.me),
-      guest: { name: guest.name, look: { ...guest.look }, kind: 'remote', cpuLevel: null },
-      seed: e.seed(),
-      scheduler: e.scheduler,
-      ticker: e.ticker,
-    });
-    this.o.onStart(session, () => this.close());
-  }
-}
+/** The typing game's host lobby (net/lobby HostLobby): its HostSession keeps the seed, which never leaves. */
+type TypingHostLobby = HostLobby<MatchConfig, NetMsg, HostSession>;
 
 /**
  * Host lobby screen (spec §4.6, §8): the game code at 2× with Copy code and Copy invite link
@@ -389,11 +185,24 @@ export function hostLobbyScreen(ctx: OnlineContext): ScreenFactory {
   return () => {
     const { deps, env } = ctx;
     const st = deps.settings();
-    const lobby = new HostLobby({
-      env,
+    const lobby: TypingHostLobby = new HostLobby({
+      proto: { proto: PROTO, app: APP_ID },
+      host: (opts) => env.hostGame(opts),
+      scheduler: env.scheduler,
+      seed: () => env.seed(),
       me: deps.profile(),
       config: { format: st.format, pace: st.pace, surface: st.surface, wordPack: st.wordPack, deuceRule: st.deuceRule, training: null },
       onChange: () => show(),
+      session: (t, start) =>
+        new HostSession({
+          transport: t,
+          config: start.config,
+          host: humanPlayer(start.me),
+          guest: { name: start.guest.name, look: { ...start.guest.look }, kind: 'remote', cpuLevel: null },
+          seed: start.seed,
+          scheduler: env.scheduler,
+          ticker: env.ticker,
+        }),
       onStart: (session, release) => ctx.begin(session, release),
     });
 
@@ -480,7 +289,7 @@ export function hostLobbyScreen(ctx: OnlineContext): ScreenFactory {
 }
 
 /** The host lobby's status line. */
-function hostStatus(lobby: HostLobby): string {
+function hostStatus(lobby: TypingHostLobby): string {
   switch (lobby.phase) {
     case 'opening':
       return 'Getting a game code…';
