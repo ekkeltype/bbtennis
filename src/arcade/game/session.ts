@@ -1,5 +1,5 @@
-import { createMatch, step } from '../core/match';
-import { DT, ARCADE, TICK_HZ } from '../core/tuning';
+import { createMatch, finished, step } from '../core/match';
+import { DT, TICK_HZ } from '../core/tuning';
 import type { ArcadeConfig, ArcadeEvent, ArcadeState, Controller, PlayerId, PlayerInput } from '../core/types';
 import type { PlayerInfo } from '../../core/types';
 
@@ -53,8 +53,7 @@ export class ArcadeSession {
 
   /** Status 'over' and the over phase has lasted flow.overHold. */
   get over(): boolean {
-    const s = this.state;
-    return s.phase.kind === 'over' && s.tick - s.phase.since >= Math.round(ARCADE.flow.overHold * TICK_HZ);
+    return finished(this.state);
   }
 
   get result(): ArcadeState | null {

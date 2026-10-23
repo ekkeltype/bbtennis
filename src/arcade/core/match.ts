@@ -87,7 +87,7 @@ export function createMatch(config: ArcadeConfig, players: [PlayerInfo, PlayerIn
 }
 
 /** True once the over phase has lasted flow.overHold: the match no longer steps. */
-function finished(s: Readonly<ArcadeState>): boolean {
+export function finished(s: Readonly<ArcadeState>): boolean {
   return s.phase.kind === 'over' && s.tick - s.phase.since >= ticksOf(ARCADE.flow.overHold);
 }
 
