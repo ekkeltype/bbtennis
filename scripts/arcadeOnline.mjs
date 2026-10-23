@@ -1,8 +1,10 @@
 /**
- * `node scripts/arcadeOnline.mjs [--lag=<ms>]` (online spec §7, in the browser): two Chrome pages play
- * an online Arcade match against each other over the real PeerJS broker, against the Vite dev server
- * (scripts/lib/pageShot.mjs), both on `arcade/index.html?debug&lag=<ms>` (60 ms by default: every
- * message a page sends waits that long, ±25 %, so rollback is exercised on one machine).
+ * `node scripts/arcadeOnline.mjs [--lag=<ms>] [--origin=<url>]` (online spec §7, in the browser): two
+ * Chrome pages play an online Arcade match against each other over the real PeerJS broker, against the
+ * Vite dev server (scripts/lib/pageShot.mjs) or, with `--origin`, a deployed site (for example
+ * `--origin=https://ekkeltype.github.io/bbtennis`), both on `arcade/index.html?debug&lag=<ms>` (60 ms
+ * by default: every message a page sends waits that long, ±25 %, so rollback is exercised on one
+ * machine).
  *
  * The host opens PLAY ONLINE → HOST GAME and reads its game code; the guest names itself GUEST in
  * Customize, opens the invite link (`?join=CODE`) and connects; both press READY. Each page is played
@@ -27,6 +29,8 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const OUT = join(ROOT, 'artifacts', 'arcade-online');
 const VIEWPORT = { width: 960, height: 540 };
 const LAG_MS = Number(process.argv.find((a) => a.startsWith('--lag='))?.slice(6) ?? 60);
+/** A deployed site to play on instead of a dev server, without a trailing slash. */
+const ORIGIN = process.argv.find((a) => a.startsWith('--origin='))?.slice(9).replace(/\/+$/, '') ?? null;
 /** Longest wait for a page or a screen, and for the broker. */
 const STEP_MS = 20_000;
 const NET_MS = 30_000;
@@ -274,10 +278,10 @@ async function run(browser, origin) {
 async function main() {
   rmSync(OUT, { recursive: true, force: true });
   mkdirSync(OUT, { recursive: true });
-  const { server, origin } = await startDevServer(ROOT);
+  const { server, origin } = ORIGIN === null ? await startDevServer(ROOT) : { server: null, origin: ORIGIN };
   let browser = null;
   try {
-    log(`vite dev server: ${origin}`);
+    log(ORIGIN === null ? `vite dev server: ${origin}` : `site: ${origin}`);
     browser = await launchChrome();
     await run(browser, origin);
     log('PASS');
@@ -289,7 +293,7 @@ async function main() {
   } finally {
     log(`${shots.length} screenshots in artifacts/arcade-online/: ${shots.join(', ') || '(none)'}`);
     await browser?.close();
-    await server.close();
+    await server?.close();
   }
 }
 

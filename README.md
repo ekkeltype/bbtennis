@@ -204,7 +204,8 @@ page is played from its own end by the same scripted player as `arcadeRun`. Afte
 checks that neither page found a desync, that both hashed the same states, and the score; then it
 forfeits from the menu, plays a rematch point, and leaves. Screenshots of both views go to
 `artifacts/arcade-online/`. It exits non-zero on any error, desync or mismatch, and prints SKIP when
-the broker can't be reached.
+the broker can't be reached. Add `--origin=https://ekkeltype.github.io/bbtennis` to play on the
+deployed site instead of a dev server.
 
 ## Development
 
