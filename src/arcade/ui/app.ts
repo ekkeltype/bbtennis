@@ -24,6 +24,7 @@ import type { ArcadeMsg } from '../net/protocol';
 import { ArcadeRenderer } from '../render/renderer';
 import { ArcadeAttract } from './attract';
 import type { ArcadeContext } from './context';
+import { arcadeLogoCanvas } from './logo';
 import { arcadeBrowserEnv, arcadeLobbyGame, type ArcadeOnlineEnv } from './online';
 import { arcadeCpuPlayer } from './players';
 import { cpuSetupScreen } from './screens/cpuSetup';
@@ -33,7 +34,7 @@ import { matchScreen } from './screens/match';
 import { optionsScreen } from './screens/options';
 import { pauseScreen } from './screens/pause';
 import { resultsScreen, type OnlineResults, type ResultsParams } from './screens/results';
-import { arcadeLogo, titleScreen } from './screens/title';
+import { titleScreen } from './screens/title';
 import { ArcadeStore, type ArcadeSettings, type CpuSetup } from './store';
 
 /** Screens with the attract demo running behind them. */
@@ -159,7 +160,7 @@ export class ArcadeApp implements ArcadeContext {
   /** Registers the screens, waits for the fonts, starts the loop and shows the gate. */
   async start(): Promise<void> {
     const r = this.router;
-    r.register('gate', gateScreen(this, () => arcadeLogo()));
+    r.register('gate', gateScreen(this, arcadeLogoCanvas));
     r.register('title', titleScreen(this));
     r.register('mainMenu', mainMenuScreen(this));
     r.register('cpuSetup', cpuSetupScreen(this));

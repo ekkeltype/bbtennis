@@ -369,8 +369,11 @@ and menu screens. Events older than 300 ms when played are dropped (as today).
 
 ### 6.3 Screens and flow
 
-`gate` (click/press to start, unlocks audio) → `title` (logo "BLACK BELT TENNIS ARCADE", attract demo
-behind) → `mainMenu`: **Play vs CPU**, **Customize**, **Options**, **How to Play**. **CPU setup**: belt (15 levels), format, deuce rule, surface, pace; remembered.
+`gate` (click/press to start, unlocks audio) → `title` (attract demo behind) → `mainMenu`. These three
+look exactly like the typing game's, except that the logo carries a red "ARCADE" rubber stamp,
+tilted 10° on the right end of the belt, its frame a little worn (2026-10-24; it replaced a gold
+"ARCADE" line under the logo).
+`mainMenu`: **Play vs CPU**, **Customize**, **Options**, **How to Play**. **CPU setup**: belt (15 levels), format, deuce rule, surface, pace; remembered.
 **Match** → **Pause** (Esc, Tab or the pause icon: Resume, Restart, Quit to menu; also on window
 blur or tab hidden; resume with 3-2-1) → **Results**: final score, winner, per player aces, double
 faults, winners, errors, perfect hits, fastest serve, longest rally; Rematch / Menu.

@@ -3,7 +3,7 @@ import { button, fullscreenButton, swatch } from '../../../ui/controls';
 import { h } from '../../../ui/dom';
 import type { ScreenFactory } from '../../../ui/router';
 import type { ArcadeContext } from '../context';
-import { arcadeLogo } from './title';
+import { arcadeLogoCanvas } from '../logo';
 
 /**
  * Main menu (spec §6.3, online spec §5): Play vs CPU, Play Online (Host Game / Join Game), Customize,
@@ -39,7 +39,7 @@ export function mainMenuScreen(ctx: Pick<ArcadeContext, 'router' | 'profile' | '
       swatch(RAMPS.cloth[ctx.profile.look.shirt]),
       h('span', { class: 'lines' }, h('span', { class: 'who' }, ctx.profile.name.toUpperCase())),
     );
-    const el = h('div', { class: 'screen main-menu' }, h('div', { class: 'side' }, arcadeLogo(true), h('section', { class: 'panel menu-panel' }, menu), tag));
+    const el = h('div', { class: 'screen main-menu' }, h('div', { class: 'side' }, h('div', { class: 'logo-wrap small' }, arcadeLogoCanvas()), h('section', { class: 'panel menu-panel' }, menu), tag));
     return { el };
   };
 }

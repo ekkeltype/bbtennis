@@ -23,10 +23,9 @@ afterEach(() => {
 });
 
 describe('Arcade title', () => {
-  it('shows the logo with the ARCADE line on the shared title band', () => {
-    const band = root.querySelector('.title-band');
-    expect(band?.querySelector('canvas.logo')).not.toBeNull();
-    expect(band?.querySelector('.arcade-word')?.textContent).toBe('ARCADE');
+  it('shows the logo stamped ARCADE on the shared title band', () => {
+    const logo = root.querySelector('.title-band canvas.logo.stamped');
+    expect(logo?.getAttribute('aria-label')).toBe('Black Belt Tennis Arcade');
   });
 
   it('PRESS ENTER (focused) opens the main menu', () => {
